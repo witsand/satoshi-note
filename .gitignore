@@ -1,0 +1,15 @@
+# Environment — never commit real secrets
+.env
+
+# Runtime data
+.data/
+*.db
+
+# Compiled binary
+satoshi-note
+
+# Go tooling
+vendor/
+*.test
+*.out
+coverage.txt
