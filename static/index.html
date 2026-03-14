@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Satoshi Note — Bitcoin Vouchers</title>
+  <meta name="description" content="Send Bitcoin Lightning vouchers to anyone via WhatsApp.">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<!-- ── QR Modal ──────────────────────────────────────────────────────────────── -->
+<div id="qr-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <div id="modal-title" class="modal-title">QR Code</div>
+    <div style="display:flex;justify-content:center;">
+      <div id="modal-qr-container" class="qr-container"></div>
+    </div>
+    <button id="modal-close-btn" class="modal-close">Close</button>
+  </div>
+</div>
+
+<!-- ── App shell ─────────────────────────────────────────────────────────────── -->
+<div class="app-shell">
+
+  <!-- Header -->
+  <header class="app-header">
+    <div class="app-logo">⚡ Satoshi<span>Note</span></div>
+    <button id="nav-history" class="nav-btn" title="History" aria-label="View history">🗒️</button>
+  </header>
+
+  <!-- Main content -->
+  <main class="main-content">
+
+    <!-- ── Onboarding screen ─────────────────────────────────────────────────── -->
+    <section id="screen-onboarding" class="screen">
+      <div class="onboarding-hero">
+        <span class="onboarding-icon">⚡</span>
+        <h1 class="onboarding-title">Welcome to Satoshi Note</h1>
+        <p class="onboarding-sub">Send Bitcoin to anyone via WhatsApp — no wallet needed to send.</p>
+      </div>
+
+      <div class="card">
+        <p class="card-title">Your refund address</p>
+        <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;">
+          If a voucher isn't claimed, funds are returned here. Enter your Lightning address or LNURL.
+        </p>
+        <div class="form-group">
+          <label for="refund-code-input">Lightning address or LNURL</label>
+          <input
+            type="text"
+            id="refund-code-input"
+            placeholder="you@wallet.com or LNURL1…"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <div id="onboarding-error" class="error-msg"></div>
+        </div>
+        <button id="btn-onboarding-submit" class="btn btn-primary">Get Started</button>
+      </div>
+
+      <p class="text-center" style="font-size:0.8rem;color:var(--text-muted);margin-top:12px;">
+        Try <a href="https://blink.sv" target="_blank" rel="noopener">Blink</a> or
+        <a href="https://walletofsatoshi.com" target="_blank" rel="noopener">Wallet of Satoshi</a>
+        for a Lightning address.
+      </p>
+    </section>
+
+    <!-- ── Main app screen ──────────────────────────────────────────────────── -->
+    <section id="screen-app" class="screen">
+
+      <!-- Tabs -->
+      <div class="tabs">
+        <button class="tab-btn active" data-tab="single">Single Voucher</button>
+        <button class="tab-btn" data-tab="batch">Batch</button>
+      </div>
+
+      <!-- ── Tab: Single Voucher ─────────────────────────────────────────────── -->
+      <div id="tab-single" class="tab-pane active">
+
+        <!-- Step dots -->
+        <div class="step-indicator">
+          <div class="step-dot active"></div>
+          <div class="step-dot"></div>
+          <div class="step-dot"></div>
+          <span style="font-size:0.75rem;color:var(--text-muted);margin-left:6px;" id="step-label">Step 1 of 3</span>
+        </div>
+
+        <!-- Step 1: Phone input -->
+        <div id="single-step-1">
+          <div class="card">
+            <p class="card-title">Recipient's phone number</p>
+            <div class="input-row">
+              <select id="dial-code" aria-label="Dial code"></select>
+              <input
+                type="tel"
+                id="phone-number"
+                placeholder="07911 123456"
+                autocomplete="tel-national"
+              >
+            </div>
+            <div id="single-step1-error" class="error-msg"></div>
+          </div>
+          <div class="notice">
+            A voucher will be created. You'll fund it with any amount of sats using your Lightning wallet.
+          </div>
+          <button id="btn-create-single" class="btn btn-primary">Create Voucher</button>
+        </div>
+
+        <!-- Step 2: Fund QR -->
+        <div id="single-step-2" class="hidden">
+          <div class="card">
+            <p class="card-title">Fund your voucher</p>
+            <div class="qr-wrapper">
+              <div id="single-qr-container" class="qr-container"></div>
+              <p id="single-lnurl-text" class="qr-lnurl"></p>
+            </div>
+            <div class="btn-group">
+              <button id="btn-copy-fund-lnurl" class="btn btn-secondary">Copy LNURL</button>
+              <button id="btn-open-wallet-single" class="btn btn-ghost">Open in Wallet</button>
+            </div>
+          </div>
+          <div class="notice">Send any amount. Check your wallet to confirm payment.</div>
+          <div class="btn-group">
+            <button id="btn-funded-single" class="btn btn-primary">I've funded it →</button>
+            <button id="btn-back-step2" class="btn btn-ghost">← Back</button>
+          </div>
+        </div>
+
+        <!-- Step 3: Share -->
+        <div id="single-step-3" class="hidden">
+          <div class="card">
+            <p class="card-title">Share with recipient</p>
+            <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:12px;">
+              Sending to: <strong id="share-phone-display" style="color:var(--text)"></strong>
+            </p>
+            <div class="btn-group">
+              <button id="btn-whatsapp" class="btn btn-primary">📱 Send via WhatsApp</button>
+              <button id="btn-copy-link" class="btn btn-secondary">Copy Claim Link</button>
+            </div>
+          </div>
+          <div class="notice">
+            The recipient will receive a link to a page where they can scan the QR to claim their sats.
+          </div>
+          <div class="btn-group">
+            <button id="btn-done-single" class="btn btn-ghost">Done — save to history</button>
+            <button id="btn-back-step3" class="btn btn-ghost" style="color:var(--text-muted);">← Back</button>
+          </div>
+        </div>
+
+      </div><!-- /tab-single -->
+
+      <!-- ── Tab: Batch ──────────────────────────────────────────────────────── -->
+      <div id="tab-batch" class="tab-pane">
+
+        <!-- Batch form -->
+        <div id="batch-form">
+          <div class="card">
+            <p class="card-title">Batch details</p>
+
+            <div class="form-group">
+              <label for="batch-name">Batch name</label>
+              <input type="text" id="batch-name" placeholder="e.g. Christmas 2025">
+            </div>
+
+            <div class="form-group">
+              <label for="batch-count">Number of vouchers (1–100)</label>
+              <input type="number" id="batch-count" value="10" min="1" max="100">
+            </div>
+
+            <div class="form-group">
+              <label for="batch-expiry">Expiry</label>
+              <select id="batch-expiry">
+                <option value="86400">1 day</option>
+                <option value="259200" selected>3 days</option>
+                <option value="604800">7 days</option>
+                <option value="2592000">30 days</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <div class="checkbox-row">
+                <input type="checkbox" id="batch-single-use" checked>
+                <label for="batch-single-use">Single use per voucher</label>
+              </div>
+            </div>
+
+            <div id="batch-error" class="error-msg"></div>
+          </div>
+
+          <button id="btn-create-batch" class="btn btn-primary">Create Vouchers</button>
+        </div>
+
+        <!-- Batch fund -->
+        <div id="batch-fund" class="hidden">
+          <div class="card">
+            <p class="card-title">Fund all vouchers</p>
+            <div class="qr-wrapper">
+              <div id="batch-qr-container" class="qr-container"></div>
+              <p id="batch-lnurl-text" class="qr-lnurl"></p>
+            </div>
+            <div class="btn-group">
+              <button id="btn-copy-batch-lnurl" class="btn btn-secondary">Copy LNURL</button>
+              <button id="btn-open-wallet-batch" class="btn btn-ghost">Open in Wallet</button>
+            </div>
+          </div>
+          <div class="notice" id="batch-fund-note">This funds all vouchers equally.</div>
+          <div class="btn-group">
+            <button id="btn-funded-batch" class="btn btn-primary">I've funded them →</button>
+            <button id="btn-back-batch-fund" class="btn btn-ghost">← Back</button>
+          </div>
+        </div>
+
+        <!-- Batch results -->
+        <div id="batch-results" class="hidden">
+          <div class="card">
+            <p class="card-title">Voucher QR codes</p>
+            <div id="batch-results-grid" class="qr-grid"></div>
+          </div>
+          <div class="btn-group">
+            <button id="btn-download-pdf" class="btn btn-primary">Download PDF</button>
+            <button id="btn-done-batch" class="btn btn-ghost">Done — save to history</button>
+            <button id="btn-back-batch-results" class="btn btn-ghost" style="color:var(--text-muted);">← Back</button>
+          </div>
+        </div>
+
+      </div><!-- /tab-batch -->
+
+    </section><!-- /screen-app -->
+
+    <!-- ── History screen ────────────────────────────────────────────────────── -->
+    <section id="screen-history" class="screen">
+      <div class="section-header">
+        <h2 class="section-title">History</h2>
+        <div style="display:flex;gap:10px;align-items:center;">
+          <button id="btn-change-refund" class="btn btn-ghost btn-sm">Change address</button>
+          <button id="nav-back-from-history" class="btn btn-secondary btn-sm">← Back</button>
+        </div>
+      </div>
+      <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:16px;">
+        Refund address: <span id="refund-code-display" style="color:var(--text)"></span>
+      </div>
+      <div id="history-list"></div>
+    </section>
+
+  </main>
+</div>
+
+<script src="/js/qrcode.min.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

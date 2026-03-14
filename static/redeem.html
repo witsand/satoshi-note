@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claim Your Bitcoin Voucher — Satoshi Note</title>
+  <meta name="description" content="You've received a Bitcoin Lightning voucher. Scan the QR code with a Lightning wallet to claim it.">
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    .steps-list {
+      list-style: none;
+      counter-reset: steps;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .steps-list li {
+      counter-increment: steps;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      font-size: 0.875rem;
+      color: var(--text-muted);
+    }
+    .steps-list li::before {
+      content: counter(steps);
+      min-width: 22px;
+      height: 22px;
+      background: var(--orange);
+      color: #000;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.72rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .section-label {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--orange);
+      margin-bottom: 10px;
+    }
+    .wallet-section-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin: 16px 0 8px;
+    }
+    .invalid-state {
+      text-align: center;
+      padding: 60px 20px;
+    }
+    .invalid-state h2 { font-size: 1.2rem; margin-bottom: 10px; }
+    .invalid-state p { color: var(--text-muted); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+
+<div class="app-shell">
+
+  <header class="app-header">
+    <div class="app-logo">⚡ Satoshi<span>Note</span></div>
+  </header>
+
+  <main class="main-content" id="redeem-main">
+    <!-- Filled by JS -->
+  </main>
+
+</div>
+
+<script src="/js/qrcode.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  const params = new URLSearchParams(location.search);
+  const lnurl = params.get('lnurl');
+  const main = document.getElementById('redeem-main');
+
+  if (!lnurl || !lnurl.toUpperCase().startsWith('LNURL1')) {
+    main.innerHTML = `
+      <div class="invalid-state">
+        <div style="font-size:2.5rem;margin-bottom:12px;">❓</div>
+        <h2>Invalid voucher link</h2>
+        <p>This link doesn't contain a valid LNURL voucher.<br>Check the link you received and try again.</p>
+      </div>`;
+    return;
+  }
+
+  // ── Build the page ──────────────────────────────────────────────────────────
+  main.innerHTML = `
+    <!-- Hero -->
+    <div class="redeem-hero">
+      <div style="font-size:2.8rem;margin-bottom:10px;">🎉</div>
+      <h1>You've received Bitcoin!</h1>
+      <p>Someone sent you a Lightning voucher.<br>Scan the QR code below with a Lightning wallet to claim it.</p>
+    </div>
+
+    <!-- QR card -->
+    <div class="card" style="text-align:center;">
+      <p class="card-title">Your voucher QR code</p>
+      <div class="qr-wrapper">
+        <div id="redeem-qr-container" class="qr-container"></div>
+        <p id="redeem-lnurl-text" class="qr-lnurl"></p>
+      </div>
+      <div class="btn-group">
+        <button id="btn-open-wallet-redeem" class="btn btn-primary">⚡ Open wallet and claim</button>
+        <button id="btn-copy-lnurl-redeem" class="btn btn-secondary">Copy Code</button>
+      </div>
+    </div>
+
+    <!-- Wallet guide -->
+    <div class="card">
+      <p class="card-title">Don't have a wallet yet?</p>
+
+      <p class="wallet-section-label">⭐ Beginner-friendly</p>
+      <div class="wallet-grid">
+        <div class="wallet-card">
+          <div class="wallet-card-name">Blink</div>
+          <div class="wallet-card-desc">Simple, custodial, great for first-timers. Free to use.</div>
+          <div class="wallet-card-links">
+            <a class="wallet-link" href="https://blink.sv" target="_blank" rel="noopener">blink.sv</a>
+            <a class="wallet-link" href="https://apps.apple.com/app/blink-bitcoin-wallet/id1641516587" target="_blank" rel="noopener">App Store</a>
+            <a class="wallet-link" href="https://play.google.com/store/apps/details?id=io.galoy.blink" target="_blank" rel="noopener">Play Store</a>
+          </div>
+        </div>
+        <div class="wallet-card">
+          <div class="wallet-card-name">Wallet of Satoshi</div>
+          <div class="wallet-card-desc">Very easy to use. No setup required. Instant receive.</div>
+          <div class="wallet-card-links">
+            <a class="wallet-link" href="https://walletofsatoshi.com" target="_blank" rel="noopener">walletofsatoshi.com</a>
+            <a class="wallet-link" href="https://apps.apple.com/app/wallet-of-satoshi/id1438599608" target="_blank" rel="noopener">App Store</a>
+            <a class="wallet-link" href="https://play.google.com/store/apps/details?id=com.livingroomofsatoshi.wallet" target="_blank" rel="noopener">Play Store</a>
+          </div>
+        </div>
+      </div>
+
+      <p class="wallet-section-label">🔧 Advanced</p>
+      <div class="wallet-grid">
+        <div class="wallet-card">
+          <div class="wallet-card-name">Aqua</div>
+          <div class="wallet-card-desc">Self-custodial, supports Bitcoin + Lightning + Liquid.</div>
+          <div class="wallet-card-links">
+            <a class="wallet-link" href="https://aquawallet.io" target="_blank" rel="noopener">aquawallet.io</a>
+          </div>
+        </div>
+        <div class="wallet-card">
+          <div class="wallet-card-name">Phoenix</div>
+          <div class="wallet-card-desc">Self-custodial Lightning. Automatic channel management.</div>
+          <div class="wallet-card-links">
+            <a class="wallet-link" href="https://phoenix.acinq.co" target="_blank" rel="noopener">phoenix.acinq.co</a>
+          </div>
+        </div>
+      </div>
+
+      <p class="section-label" style="margin-top:16px;">How to claim</p>
+      <ol class="steps-list">
+        <li>Install one of the wallets above</li>
+        <li>Open the app and create your account</li>
+        <li>Tap the scan / receive button (usually a QR icon)</li>
+        <li>Scan the QR code at the top of this page</li>
+        <li>Confirm to receive your Bitcoin ⚡</li>
+      </ol>
+    </div>
+
+    <!-- Big CTA -->
+    <button id="btn-claim-bottom" class="btn btn-primary" style="margin-bottom:20px;">⚡ Open wallet and claim</button>
+
+    <!-- FAQ -->
+    <div class="card" style="margin-bottom:20px;">
+      <p class="card-title">FAQ</p>
+
+      <details class="faq-item">
+        <summary class="faq-question">
+          What is Bitcoin Lightning?
+          <span style="color:var(--text-muted);">＋</span>
+        </summary>
+        <div class="faq-answer">
+          Bitcoin Lightning is a fast, cheap payment network built on top of Bitcoin. Payments settle instantly with near-zero fees, making it great for small amounts. Your voucher uses Lightning so you can receive Bitcoin in seconds.
+        </div>
+      </details>
+
+      <details class="faq-item">
+        <summary class="faq-question">
+          Is this safe?
+          <span style="color:var(--text-muted);">＋</span>
+        </summary>
+        <div class="faq-answer">
+          The voucher is a real Bitcoin Lightning payment. Beginner wallets like Blink and Wallet of Satoshi are custodial — meaning the company holds the funds on your behalf, similar to a bank. Advanced wallets like Aqua and Phoenix are self-custodial, meaning you control your own funds directly.
+        </div>
+      </details>
+
+      <details class="faq-item">
+        <summary class="faq-question">
+          What if I can't claim it?
+          <span style="color:var(--text-muted);">＋</span>
+        </summary>
+        <div class="faq-answer">
+          If you don't claim the voucher before it expires, the funds are automatically returned to the sender. Contact the person who sent you the voucher and ask them to resend if you need more time.
+        </div>
+      </details>
+
+      <details class="faq-item">
+        <summary class="faq-question">
+          Can I scan the QR from a screenshot?
+          <span style="color:var(--text-muted);">＋</span>
+        </summary>
+        <div class="faq-answer">
+          Yes — most Lightning wallets allow you to pick an image from your camera roll instead of scanning live. Look for a gallery or photo icon near the QR scanner in your wallet app.
+        </div>
+      </details>
+    </div>
+  `;
+
+  // Render QR
+  const container = document.getElementById('redeem-qr-container');
+  new QRCode(container, { text: lnurl, width: 256, height: 256, correctLevel: QRCode.CorrectLevel.M });
+
+  // Show truncated LNURL
+  const truncated = lnurl.slice(0, 20) + '…' + lnurl.slice(-6);
+  document.getElementById('redeem-lnurl-text').textContent = truncated;
+
+  // Buttons
+  const openWallet = () => { window.location.href = 'lightning:' + lnurl; };
+  document.getElementById('btn-open-wallet-redeem').addEventListener('click', openWallet);
+  document.getElementById('btn-claim-bottom').addEventListener('click', openWallet);
+
+  document.getElementById('btn-copy-lnurl-redeem').addEventListener('click', async function () {
+    try {
+      await navigator.clipboard.writeText(lnurl);
+      this.textContent = 'Copied!';
+      setTimeout(() => { this.textContent = 'Copy Code'; }, 1500);
+    } catch {
+      prompt('Copy this LNURL:', lnurl);
+    }
+  });
+
+})();
+</script>
+</body>
+</html>

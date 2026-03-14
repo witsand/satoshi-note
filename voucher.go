@@ -7,38 +7,56 @@ import (
 	"fmt"
 )
 
-func (s *Server) createVoucher(refundCode string, expiresAfterSeconds int, singleWithdrawal bool) (*Voucher, error) {
-	voucher, err := newVoucher()
+func (srv *Server) createVoucher(refundCode, batchName, batchID string, expiresAfterSeconds int64, singleUse bool) (*Voucher, error) {
+	v, err := srv.newVoucher(refundCode, batchName, batchID, expiresAfterSeconds, singleUse)
 	if err != nil {
 		return nil, err
 	}
 
-	voucher.RefundCode = refundCode
-	voucher.RefundAfterSeconds = expiresAfterSeconds
-	if voucher.RefundAfterSeconds == 0 {
-		voucher.RefundAfterSeconds = s.cfg.defaultRefundAfterSeconds
-	}
-	if voucher.RefundAfterSeconds > s.cfg.maxRefundAfterSeconds {
-		voucher.RefundAfterSeconds = s.cfg.maxRefundAfterSeconds
-	}
-	voucher.SingleWithdrawal = singleWithdrawal
-	voucher.Active = true
-
-	if err := insertVoucher(s.db, voucher); err != nil {
+	if err := srv.insertVoucher(v); err != nil {
 		return nil, err
 	}
 
-	return voucher, nil
+	return v, nil
 }
 
-func newVoucher() (*Voucher, error) {
-	secret := make([]byte, 16)
-	if _, err := rand.Read(secret); err != nil {
+func (srv *Server) newVoucher(refundCode, batchName, batchID string, refundAfterSeconds int64, singleUse bool) (*Voucher, error) {
+	secretBytes := make([]byte, srv.cfg.randomBytesLength)
+	if _, err := rand.Read(secretBytes); err != nil {
 		return nil, fmt.Errorf("generate secret: %w", err)
 	}
-	hash := sha256.Sum256(secret)
+
+	secretHash := sha256.Sum256(secretBytes)
+	secret := hex.EncodeToString(secretBytes[:srv.cfg.randomBytesLength])
+	// Use the full 32-byte SHA256 hash as the public key to avoid truncation issues.
+	pubKey := hex.EncodeToString(secretHash[:srv.cfg.randomBytesLength])
+
+	claimLNURL, err := lnurlEncode(srv.cfg.baseURL + "/w/" + secret)
+	if err != nil {
+		return nil, fmt.Errorf("encode claim LNURL: %w", err)
+	}
+
+	fundLNURL, err := lnurlEncode(srv.cfg.baseURL + "/f/" + pubKey)
+	if err != nil {
+		return nil, fmt.Errorf("encode fund LNURL: %w", err)
+	}
+
+	batchFundLNURL, err := lnurlEncode(srv.cfg.baseURL + "/fb/" + batchID)
+	if err != nil {
+		return nil, fmt.Errorf("encode batch fund LNURL: %w", err)
+	}
+
 	return &Voucher{
-		Secret: hex.EncodeToString(secret),
-		PubKey: hex.EncodeToString(hash[:16]),
+		Secret:             secret,
+		ClaimLNURL:         claimLNURL,
+		PubKey:             pubKey,
+		FundLNURL:          fundLNURL,
+		BatchName:          batchName,
+		BatchID:            batchID,
+		BatchFundLNURL:     batchFundLNURL,
+		RefundCode:         refundCode,
+		RefundAfterSeconds: refundAfterSeconds,
+		SingleUse:          singleUse,
+		Active:             true,
 	}, nil
 }
