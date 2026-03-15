@@ -3,11 +3,43 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Satoshi Note — Bitcoin Vouchers</title>
+  <title>Satoshi Note</title>
   <meta name="description" content="Send Bitcoin Lightning vouchers to anyone via WhatsApp.">
+  <link rel="manifest" href="/manifest.json">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <meta name="theme-color" content="#F7931A">
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
+
+<!-- ── About modal ──────────────────────────────────────────────────────────── -->
+<div id="about-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+  <div class="modal-box" style="text-align:left;">
+    <div class="modal-title" style="text-align:center;">About Satoshi Note</div>
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
+      Satoshi Note lets you create Bitcoin Lightning vouchers — pre-funded links you can share with anyone via WhatsApp, SMS, or printed QR. Recipients claim sats instantly with any Lightning wallet. No exchange account needed.
+    </p>
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
+      Built on <strong style="color:var(--text);">Bitcoin Lightning</strong> + <strong style="color:var(--text);">Breez SDK</strong>.
+    </p>
+    <p style="font-size:0.8rem;color:var(--text-muted);line-height:1.6;">
+      Open source.
+      <span id="about-github-link-index"></span>
+    </p>
+    <button class="modal-close" id="about-close-index">Close</button>
+  </div>
+</div>
+
+<!-- ── Donate modal ──────────────────────────────────────────────────────────── -->
+<div id="donate-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <div class="modal-title">⚡ Donate</div>
+    <div id="donate-modal-body">
+      <p style="font-size:0.875rem;color:var(--text-muted);">Loading...</p>
+    </div>
+    <button class="modal-close" id="donate-close">Close</button>
+  </div>
+</div>
 
 <!-- ── QR Modal ──────────────────────────────────────────────────────────────── -->
 <div id="qr-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
@@ -16,6 +48,7 @@
     <div style="display:flex;justify-content:center;">
       <div id="modal-qr-container" class="qr-container"></div>
     </div>
+    <p id="modal-lnurl-text" class="qr-lnurl" style="text-align:center;margin-top:8px;cursor:pointer;"></p>
     <button id="modal-close-btn" class="modal-close">Close</button>
   </div>
 </div>
@@ -25,7 +58,7 @@
 
   <!-- Header -->
   <header class="app-header">
-    <div class="app-logo">⚡ Satoshi<span>Note</span></div>
+    <a href="/" style="text-decoration:none;"><div class="app-logo">⚡ Satoshi<span>Note</span></div></a>
     <button id="nav-history" class="nav-btn" title="History" aria-label="View history">🗒️</button>
   </header>
 
@@ -36,8 +69,18 @@
     <section id="screen-onboarding" class="screen">
       <div class="onboarding-hero">
         <span class="onboarding-icon">⚡</span>
-        <h1 class="onboarding-title">Welcome to Satoshi Note</h1>
-        <p class="onboarding-sub">Send Bitcoin to anyone via WhatsApp — no wallet needed to send.</p>
+        <h1 class="onboarding-title">Send Bitcoin. Instantly.</h1>
+        <p class="onboarding-sub">Satoshi Note lets you create Lightning vouchers — pre-funded Bitcoin links you can share with anyone.</p>
+        <p class="onboarding-sub" style="margin-top:8px;">They scan a QR code (or click a link) to claim their sats. No exchange account needed.</p>
+      </div>
+
+      <div class="card" style="margin-bottom:12px;">
+        <p class="card-title">How it works</p>
+        <ol class="steps-list" style="margin-top:0;">
+          <li><strong>Enter your Lightning address</strong> — the wallet that will receive unclaimed funds back.</li>
+          <li><strong>Set the amount and expiry</strong> — fund the voucher via Lightning, your recipient has until expiry to claim.</li>
+          <li><strong>Share the link</strong> — by WhatsApp, SMS, or printed QR code.</li>
+        </ol>
       </div>
 
       <div class="card">
@@ -60,9 +103,8 @@
       </div>
 
       <p class="text-center" style="font-size:0.8rem;color:var(--text-muted);margin-top:12px;">
-        Try <a href="https://blink.sv" target="_blank" rel="noopener">Blink</a> or
-        <a href="https://walletofsatoshi.com" target="_blank" rel="noopener">Wallet of Satoshi</a>
-        for a Lightning address.
+        Need a Lightning address? Try <a href="https://blink.sv" target="_blank" rel="noopener">Blink</a> or
+        <a href="https://walletofsatoshi.com" target="_blank" rel="noopener">Wallet of Satoshi</a>.
       </p>
     </section>
 
@@ -89,17 +131,34 @@
         <!-- Step 1: Phone input -->
         <div id="single-step-1">
           <div class="card">
-            <p class="card-title">Recipient's phone number</p>
+            <p class="card-title">VOUCHER DETAILS</p>
+            <label>Recipient's phone number</label>
             <div class="input-row">
-              <select id="dial-code" aria-label="Dial code"></select>
+              <div id="dial-code-wrapper" class="dial-dropdown">
+                <button type="button" id="dial-code-btn" class="dial-code-trigger">+1</button>
+                <div id="dial-code-panel" class="dial-code-panel hidden">
+                  <input type="text" id="dial-code-search" class="dial-code-search"
+                         placeholder="Search country…" autocomplete="off">
+                  <ul id="dial-code-list" class="dial-code-list"></ul>
+                </div>
+              </div>
               <input
                 type="tel"
                 id="phone-number"
-                placeholder="07911 123456"
+                placeholder="079 123 4567"
                 autocomplete="tel-national"
               >
             </div>
             <div id="single-step1-error" class="error-msg"></div>
+            <div class="form-group">
+            <label>Refund after</label>
+              <div class="pill-group" id="single-expiry-pills">
+                <button type="button" class="pill-btn active" data-secs="259200">3 days</button>
+                <button type="button" class="pill-btn" data-secs="1209600">2 weeks</button>
+                <button type="button" class="pill-btn" data-secs="2592000">1 month</button>
+                <button type="button" class="pill-btn" data-secs="7776000">3 months</button>
+              </div>
+            </div>
           </div>
           <div class="notice">
             A voucher will be created. You'll fund it with any amount of sats using your Lightning wallet.
@@ -111,19 +170,20 @@
         <div id="single-step-2" class="hidden">
           <div class="card">
             <p class="card-title">Fund your voucher</p>
+            <div id="step2-phone-row">
+              <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:12px;">
+                Sending to: <strong id="step2-phone-display" style="color:var(--text)"></strong>
+              </p>
+            </div>
             <div class="qr-wrapper">
               <div id="single-qr-container" class="qr-container"></div>
               <p id="single-lnurl-text" class="qr-lnurl"></p>
             </div>
-            <div class="btn-group">
-              <button id="btn-copy-fund-lnurl" class="btn btn-secondary">Copy LNURL</button>
-              <button id="btn-open-wallet-single" class="btn btn-ghost">Open in Wallet</button>
-            </div>
           </div>
-          <div class="notice">Send any amount. Check your wallet to confirm payment.</div>
+          <div class="notice">Tap the QR code to open your wallet, or tap the code below it to copy.</div>
           <div class="btn-group">
-            <button id="btn-funded-single" class="btn btn-primary">I've funded it →</button>
-            <button id="btn-back-step2" class="btn btn-ghost">← Back</button>
+            <button id="btn-back-step2" class="btn btn-ghost">← Change phone number</button>
+            <button id="btn-next-step2" class="btn btn-ghost">Next →</button>
           </div>
         </div>
 
@@ -131,21 +191,48 @@
         <div id="single-step-3" class="hidden">
           <div class="card">
             <p class="card-title">Share with recipient</p>
-            <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:12px;">
-              Sending to: <strong id="share-phone-display" style="color:var(--text)"></strong>
-            </p>
+            <div id="share-phone-row">
+              <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:12px;">
+                Sending to: <strong id="share-phone-display" style="color:var(--text)"></strong>
+              </p>
+            </div>
             <div class="btn-group">
-              <button id="btn-whatsapp" class="btn btn-primary">📱 Send via WhatsApp</button>
-              <button id="btn-copy-link" class="btn btn-secondary">Copy Claim Link</button>
+              <button id="btn-whatsapp" class="btn btn-primary">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+                     fill="currentColor" aria-hidden="true">
+                  <path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.558 4.117 1.532 5.85L0 24l6.302-1.51A11.94 11.94 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.89 0-3.663-.5-5.2-1.373l-.373-.213-3.74.897.937-3.635-.237-.385A9.96 9.96 0 0 1 2 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm5.44-7.387c-.298-.149-1.765-.87-2.038-.968-.273-.099-.472-.149-.67.149-.198.298-.769.968-.942 1.167-.174.198-.347.224-.645.075-.298-.149-1.258-.464-2.396-1.48-.885-.789-1.482-1.763-1.656-2.061-.173-.298-.018-.459.13-.607.134-.133.298-.347.447-.521.149-.174.199-.298.298-.497.1-.199.05-.373-.025-.521-.075-.149-.67-1.612-.918-2.207-.242-.579-.487-.5-.67-.51l-.57-.01c-.198 0-.521.074-.794.372-.273.298-1.042 1.018-1.042 2.481s1.067 2.878 1.216 3.077c.149.198 2.1 3.205 5.09 4.493.712.307 1.268.49 1.701.627.715.227 1.367.195 1.882.118.574-.085 1.765-.722 2.014-1.42.248-.698.248-1.297.174-1.42-.075-.124-.273-.199-.571-.348z"/>
+                </svg>
+                Send via WhatsApp
+              </button>
+              <button id="btn-share" class="btn btn-secondary">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                     fill="none" stroke="currentColor" stroke-width="2.2"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+                  <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                </svg>
+                Share
+              </button>
+              <button id="btn-add-funds" class="btn btn-ghost">Add More Funds</button>
             </div>
           </div>
+
+          <!-- Add Funds collapsible -->
+          <div id="add-funds-section" class="hidden">
+            <div class="card">
+              <p class="card-title">Add funds</p>
+              <div class="qr-wrapper">
+                <div id="step3-fund-qr-container" class="qr-container"></div>
+                <p id="step3-fund-lnurl-text" class="qr-lnurl"></p>
+              </div>
+            </div>
+          </div>
+
           <div class="notice">
             The recipient will receive a link to a page where they can scan the QR to claim their sats.
           </div>
-          <div class="btn-group">
-            <button id="btn-done-single" class="btn btn-ghost">Done — save to history</button>
-            <button id="btn-back-step3" class="btn btn-ghost" style="color:var(--text-muted);">← Back</button>
-          </div>
+          <button id="btn-done-single" class="btn btn-ghost">Done</button>
         </div>
 
       </div><!-- /tab-single -->
@@ -159,29 +246,34 @@
             <p class="card-title">Batch details</p>
 
             <div class="form-group">
-              <label for="batch-name">Batch name</label>
-              <input type="text" id="batch-name" placeholder="e.g. Christmas 2025">
+              <label for="batch-name">Batch name (optional)</label>
+              <input type="text" id="batch-name" placeholder="e.g. Christmas 2026">
             </div>
 
             <div class="form-group">
-              <label for="batch-count">Number of vouchers (1–100)</label>
-              <input type="number" id="batch-count" value="10" min="1" max="100">
+              <label>Number of vouchers</label>
+              <div class="pill-group" id="batch-count-pills">
+                <button type="button" class="pill-btn" data-count="2">2</button>
+                <button type="button" class="pill-btn active" data-count="8">8</button>
+                <button type="button" class="pill-btn" data-count="32">32</button>
+                <button type="button" class="pill-btn" data-count="64">64</button>
+              </div>
             </div>
 
             <div class="form-group">
-              <label for="batch-expiry">Expiry</label>
-              <select id="batch-expiry">
-                <option value="86400">1 day</option>
-                <option value="259200" selected>3 days</option>
-                <option value="604800">7 days</option>
-                <option value="2592000">30 days</option>
-              </select>
+              <label>Refund after</label>
+              <div class="pill-group" id="batch-expiry-pills">
+                <button type="button" class="pill-btn" data-secs="259200">3 days</button>
+                <button type="button" class="pill-btn active" data-secs="1209600">2 weeks</button>
+                <button type="button" class="pill-btn" data-secs="2592000">1 month</button>
+                <button type="button" class="pill-btn" data-secs="7776000">3 months</button>
+              </div>
             </div>
 
             <div class="form-group">
               <div class="checkbox-row">
                 <input type="checkbox" id="batch-single-use" checked>
-                <label for="batch-single-use">Single use per voucher</label>
+                <label for="batch-single-use">Single use vouchers</label>
               </div>
             </div>
 
@@ -191,27 +283,7 @@
           <button id="btn-create-batch" class="btn btn-primary">Create Vouchers</button>
         </div>
 
-        <!-- Batch fund -->
-        <div id="batch-fund" class="hidden">
-          <div class="card">
-            <p class="card-title">Fund all vouchers</p>
-            <div class="qr-wrapper">
-              <div id="batch-qr-container" class="qr-container"></div>
-              <p id="batch-lnurl-text" class="qr-lnurl"></p>
-            </div>
-            <div class="btn-group">
-              <button id="btn-copy-batch-lnurl" class="btn btn-secondary">Copy LNURL</button>
-              <button id="btn-open-wallet-batch" class="btn btn-ghost">Open in Wallet</button>
-            </div>
-          </div>
-          <div class="notice" id="batch-fund-note">This funds all vouchers equally.</div>
-          <div class="btn-group">
-            <button id="btn-funded-batch" class="btn btn-primary">I've funded them →</button>
-            <button id="btn-back-batch-fund" class="btn btn-ghost">← Back</button>
-          </div>
-        </div>
-
-        <!-- Batch results -->
+        <!-- Batch results (combined: QR grid + fund QR) -->
         <div id="batch-results" class="hidden">
           <div class="card">
             <p class="card-title">Voucher QR codes</p>
@@ -219,8 +291,19 @@
           </div>
           <div class="btn-group">
             <button id="btn-download-pdf" class="btn btn-primary">Download PDF</button>
-            <button id="btn-done-batch" class="btn btn-ghost">Done — save to history</button>
-            <button id="btn-back-batch-results" class="btn btn-ghost" style="color:var(--text-muted);">← Back</button>
+          </div>
+
+          <div class="card" style="margin-top:16px;">
+            <p class="card-title">Fund all vouchers</p>
+            <div class="qr-wrapper">
+              <div id="batch-qr-container" class="qr-container"></div>
+              <p id="batch-lnurl-text" class="qr-lnurl"></p>
+            </div>
+          </div>
+          <div class="notice" id="batch-fund-note">This funds all vouchers equally.</div>
+
+          <div class="btn-group">
+            <button id="btn-done-batch" class="btn btn-ghost">Done</button>
           </div>
         </div>
 
@@ -244,9 +327,66 @@
     </section>
 
   </main>
+
+  <footer class="app-footer">
+    <button class="footer-btn" id="btn-about-index">About</button>
+    <a class="footer-btn" id="footer-github-index" href="#" target="_blank" rel="noopener" style="display:none;">GitHub</a>
+    <button class="footer-btn footer-btn-donate" id="btn-donate-index">⚡ Donate</button>
+  </footer>
+
 </div>
 
 <script src="/js/qrcode.min.js"></script>
 <script src="/js/app.js"></script>
+<script>
+(function () {
+  'use strict';
+  const githubURL = '{{GITHUB_URL}}';
+  const ghLinkEl = document.getElementById('footer-github-index');
+  const ghAboutEl = document.getElementById('about-github-link-index');
+  if (githubURL) {
+    ghLinkEl.href = githubURL;
+    ghLinkEl.style.display = '';
+    if (ghAboutEl) ghAboutEl.innerHTML = 'View the source on <a href="' + githubURL + '" target="_blank" rel="noopener">GitHub</a>.';
+  }
+
+  document.getElementById('btn-about-index').addEventListener('click', function () {
+    document.getElementById('about-modal').classList.remove('hidden');
+  });
+  document.getElementById('about-close-index').addEventListener('click', function () {
+    document.getElementById('about-modal').classList.add('hidden');
+  });
+  document.getElementById('about-modal').addEventListener('click', function (e) {
+    if (e.target === this) this.classList.add('hidden');
+  });
+
+  document.getElementById('btn-donate-index').addEventListener('click', function () {
+    const modal = document.getElementById('donate-modal');
+    const body = document.getElementById('donate-modal-body');
+    const fundLNURL = '{{DONATE_LNURL}}';
+    const truncated = fundLNURL.slice(0, 20) + '…' + fundLNURL.slice(-6);
+    body.innerHTML = '<p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:12px;">Scan to donate — funds server costs.</p>' +
+      '<div style="display:flex;justify-content:center;margin-bottom:12px;"><div id="donate-qr-box" style="background:#fff;padding:10px;border-radius:8px;display:inline-block;cursor:pointer;" title="Tap to open in wallet"></div></div>' +
+      '<p id="donate-lnurl-text" style="font-size:0.72rem;color:var(--text-muted);text-align:center;margin-bottom:12px;cursor:pointer;" title="Tap to copy">' + truncated + '</p>' +
+      '<p style="font-size:0.8rem;color:var(--text-muted);text-align:center;margin-top:4px;">Every sat helps keep the lights on. Thank you! ⚡</p>';
+    modal.classList.remove('hidden');
+    new QRCode(document.getElementById('donate-qr-box'), { text: fundLNURL, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
+    document.getElementById('donate-qr-box').addEventListener('click', function () { window.location.href = 'lightning:' + fundLNURL; });
+    document.getElementById('donate-lnurl-text').addEventListener('click', async function () {
+      try {
+        await navigator.clipboard.writeText(fundLNURL);
+        this.textContent = 'Copied!';
+        setTimeout(() => { this.textContent = truncated; }, 1500);
+      } catch { prompt('Copy LNURL:', fundLNURL); }
+    });
+  });
+  document.getElementById('donate-close').addEventListener('click', function () {
+    document.getElementById('donate-modal').classList.add('hidden');
+  });
+  document.getElementById('donate-modal').addEventListener('click', function (e) {
+    if (e.target === this) this.classList.add('hidden');
+  });
+})();
+</script>
 </body>
 </html>

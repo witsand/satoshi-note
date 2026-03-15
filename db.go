@@ -118,6 +118,22 @@ func initSchema(db *sql.DB) error {
 		return err
 	}
 
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS donations (
+		key              TEXT PRIMARY KEY,
+		amount_msat      INTEGER NOT NULL DEFAULT 0,
+		fee_msat         INTEGER NOT NULL DEFAULT 0,
+		pr               TEXT NOT NULL,
+		payment_hash     TEXT NOT NULL DEFAULT "",
+		payment_preimage TEXT NOT NULL DEFAULT "",
+		comment          TEXT NOT NULL DEFAULT "",
+		status           TEXT NOT NULL,
+		created_at       INTEGER NOT NULL,
+		updated_at       INTEGER NOT NULL DEFAULT 0
+	)`)
+	if err != nil {
+		return err
+	}
+
 	// Indexes for frequently queried columns.
 	indexes := []string{
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_secret  ON vouchers(secret)`,
@@ -127,6 +143,7 @@ func initSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_redeem_sessions_k1      ON redeem_sessions(k1, secret)`,
 		`CREATE INDEX IF NOT EXISTS idx_redeem_txs_voucher_id   ON redeem_txs(voucher_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_refund_txs_refunded     ON refund_txs(refunded)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_donations_pr     ON donations(pr)`,
 	}
 	for _, idx := range indexes {
 		if _, err := db.Exec(idx); err != nil {
@@ -287,6 +304,31 @@ func (srv *Server) getVoucherBySecret(db dbQuerier, secret string) (*Voucher, er
 	}
 
 	return v, nil
+}
+
+type voucherStatus struct {
+	BalanceMsat int64
+	ExpiresAt   int64 // updated_at + refund_after_seconds; 0 means no expiry clock started yet
+	Active      bool
+	Refunded    bool
+}
+
+func (srv *Server) getVoucherStatusBySecret(secret string) (*voucherStatus, error) {
+	row := srv.db.QueryRow(
+		`SELECT balance_msat, updated_at, refund_after_seconds, active, refunded
+		 FROM vouchers WHERE secret = ?`, secret)
+	var s voucherStatus
+	var updatedAt, refundAfterSeconds int64
+	var activeInt, refundedInt int
+	if err := row.Scan(&s.BalanceMsat, &updatedAt, &refundAfterSeconds, &activeInt, &refundedInt); err != nil {
+		return nil, err
+	}
+	s.Active = activeInt == 1
+	s.Refunded = refundedInt == 1
+	if updatedAt != 0 {
+		s.ExpiresAt = updatedAt + refundAfterSeconds
+	}
+	return &s, nil
 }
 
 func (srv *Server) getVouchersByBatchID(db dbQuerier, batchID string) ([]Voucher, error) {
@@ -470,4 +512,77 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+func (srv *Server) insertDonation(pr string, amountMsat, feeMsat int64, comment string) (string, error) {
+	keyBytes := make([]byte, srv.cfg.randomBytesLength)
+	if _, err := rand.Read(keyBytes); err != nil {
+		return "", err
+	}
+	key := hex.EncodeToString(keyBytes)
+	_, err := srv.db.Exec(
+		`INSERT INTO donations (key, pr, amount_msat, fee_msat, comment, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		key, pr, amountMsat, feeMsat, comment, TxPending, time.Now().Unix(),
+	)
+	return key, err
+}
+
+func (srv *Server) getDonationByPR(pr string) (*Donation, error) {
+	row := srv.db.QueryRow(
+		`SELECT key, amount_msat, fee_msat, comment, status, created_at FROM donations WHERE pr = ? AND status = ?`,
+		pr, TxPending,
+	)
+	d := &Donation{PR: pr}
+	var status string
+	if err := row.Scan(&d.Key, &d.AmountMsat, &d.FeeMsat, &d.Comment, &status, &d.CreatedAt); err != nil {
+		return nil, err
+	}
+	d.Status = TxStatus(status)
+	return d, nil
+}
+
+func (srv *Server) markDonationConfirmed(key, paymentHash, preimage string, amountMsat, feeMsat int64) error {
+	_, err := srv.db.Exec(
+		`UPDATE donations SET status = ?, payment_hash = ?, payment_preimage = ?, amount_msat = ?, fee_msat = ?, updated_at = ? WHERE key = ?`,
+		TxConfirmed, paymentHash, preimage, amountMsat, feeMsat, time.Now().Unix(), key,
+	)
+	return err
+}
+
+func (srv *Server) getPendingDonations() ([]Donation, error) {
+	rows, err := srv.db.Query(
+		`SELECT key, amount_msat, fee_msat, pr, created_at FROM donations WHERE status = ?`, TxPending,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ds []Donation
+	for rows.Next() {
+		var d Donation
+		if err := rows.Scan(&d.Key, &d.AmountMsat, &d.FeeMsat, &d.PR, &d.CreatedAt); err != nil {
+			return nil, err
+		}
+		ds = append(ds, d)
+	}
+	return ds, rows.Err()
+}
+
+func (srv *Server) getDonationByKey(key string) (*Donation, error) {
+	row := srv.db.QueryRow(
+		`SELECT payment_hash, payment_preimage, status, pr FROM donations WHERE key = ?`, key,
+	)
+	d := &Donation{Key: key}
+	var status string
+	if err := row.Scan(&d.PaymentHash, &d.PaymentPreimage, &status, &d.PR); err != nil {
+		return nil, err
+	}
+	d.Status = TxStatus(status)
+	return d, nil
+}
+
+func (srv *Server) getDonationStats() (total, confirmed int64, donatedMsat int64, err error) {
+	err = srv.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status='confirmed' THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN status='confirmed' THEN amount_msat ELSE 0 END), 0) FROM donations`).Scan(&total, &confirmed, &donatedMsat)
+	return
 }

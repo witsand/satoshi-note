@@ -3,7 +3,7 @@ module satoshi-note
 go 1.24.0
 
 require (
-	github.com/breez/breez-sdk-spark-go v0.10.0
+	github.com/breez/breez-sdk-spark-go v0.11.0
 	github.com/joho/godotenv v1.5.1
 	modernc.org/sqlite v1.46.1
 )

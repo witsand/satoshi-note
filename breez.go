@@ -14,7 +14,7 @@ type SparkListener struct {
 }
 
 func (l *SparkListener) OnEvent(e spark.SdkEvent) {
-	slog.Info("sdk event", "type", fmt.Sprintf("%T", e))
+	// slog.Info("sdk event", "type", fmt.Sprintf("%T", e))
 
 	ev, ok := e.(spark.SdkEventPaymentSucceeded)
 	if !ok {
@@ -31,19 +31,34 @@ func (l *SparkListener) OnEvent(e spark.SdkEvent) {
 	}
 
 	tx, err := l.srv.getFundTxByPR(details.Invoice)
+	if err == nil {
+		tx.Msat = ev.Payment.Amount.Int64() * 1000
+		tx.FeeMsat = ev.Payment.Fees.Int64() * 1000
+		tx.PaymentHash = details.HtlcDetails.PaymentHash
+		if details.HtlcDetails.Preimage != nil {
+			tx.PaymentPreimage = *details.HtlcDetails.Preimage
+		}
+		if err := l.srv.updateFundTxConfirmed(tx); err != nil {
+			slog.Error("update fund tx confirmed", "err", err)
+		}
+		return
+	}
+
+	// Check if this is a donation payment
+	don, err := l.srv.getDonationByPR(details.Invoice)
 	if err != nil {
-		return // not a fund tx we know about
+		return // not a payment we know about
 	}
 
-	tx.Msat = ev.Payment.Amount.Int64() * 1000
-	tx.FeeMsat = ev.Payment.Fees.Int64() * 1000
-	tx.PaymentHash = details.HtlcDetails.PaymentHash
+	amountMsat := ev.Payment.Amount.Int64() * 1000
+	feeMsat := ev.Payment.Fees.Int64() * 1000
+	paymentHash := details.HtlcDetails.PaymentHash
+	var preimage string
 	if details.HtlcDetails.Preimage != nil {
-		tx.PaymentPreimage = *details.HtlcDetails.Preimage
+		preimage = *details.HtlcDetails.Preimage
 	}
-
-	if err := l.srv.updateFundTxConfirmed(tx); err != nil {
-		slog.Error("update fund tx confirmed", "err", err)
+	if err := l.srv.markDonationConfirmed(don.Key, paymentHash, preimage, amountMsat, feeMsat); err != nil {
+		slog.Error("mark donation confirmed", "err", err)
 	}
 }
 

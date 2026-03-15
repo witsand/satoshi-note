@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin — Satoshi Note</title>
+  <style>
+    :root {
+      --orange: #F7931A;
+      --bg: #0F0F0F;
+      --surface: #1A1A1A;
+      --surface-2: #252525;
+      --text: #F0F0F0;
+      --text-muted: #888;
+      --radius: 14px;
+      --radius-sm: 8px;
+      --green: #6dba6d;
+      --red: #e57373;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .page { max-width: 640px; margin: 0 auto; }
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--surface-2);
+    }
+    .page-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--orange);
+    }
+    .page-title span { color: var(--text); font-weight: 400; }
+    .refresh-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    .btn-refresh {
+      background: var(--surface-2);
+      border: none;
+      color: var(--text);
+      padding: 6px 12px;
+      border-radius: var(--radius-sm);
+      font-size: 0.82rem;
+      cursor: pointer;
+    }
+    .btn-refresh:hover { background: #2e2e2e; }
+
+    /* Token overlay */
+    #token-overlay {
+      position: fixed;
+      inset: 0;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 20px;
+    }
+    #token-overlay.hidden { display: none; }
+    .token-box {
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 28px 24px;
+      width: 100%;
+      max-width: 360px;
+      text-align: center;
+    }
+    .token-box h2 { font-size: 1.1rem; margin-bottom: 8px; }
+    .token-box p { font-size: 0.875rem; color: var(--text-muted); margin-bottom: 20px; }
+    .token-box input {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid transparent;
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 1rem;
+      padding: 12px 14px;
+      outline: none;
+      margin-bottom: 12px;
+    }
+    .token-box input:focus { border-color: var(--orange); }
+    .token-box button {
+      width: 100%;
+      background: var(--orange);
+      color: #000;
+      border: none;
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .token-box button:hover { background: #C97B15; }
+    .token-error { color: var(--red); font-size: 0.85rem; margin-top: 8px; display: none; }
+    .token-error.visible { display: block; }
+
+    /* Section heading */
+    .section-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      color: var(--orange);
+      margin: 20px 0 10px;
+    }
+
+    /* Stat grid */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+    .stat-card {
+      background: var(--surface);
+      border-radius: var(--radius-sm);
+      padding: 16px;
+    }
+    .stat-value {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: -1px;
+      line-height: 1.1;
+      margin-bottom: 4px;
+    }
+    .stat-value.orange { color: var(--orange); }
+    .stat-value.red { color: var(--red); }
+    .stat-value.green { color: var(--green); }
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      line-height: 1.3;
+    }
+
+    /* Health row */
+    .health-row {
+      background: var(--surface);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.875rem;
+    }
+    .health-indicator { font-size: 1.2rem; }
+    .health-msg { color: var(--text-muted); flex: 1; }
+    .health-msg strong { color: var(--text); }
+
+    .last-updated {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      text-align: right;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body>
+
+<!-- Token prompt overlay -->
+<div id="token-overlay">
+  <div class="token-box">
+    <h2>Admin Access</h2>
+    <p>Enter your admin token to view stats.</p>
+    <input type="password" id="token-input" placeholder="Admin token…" autocomplete="off">
+    <button id="token-submit">Unlock</button>
+    <div class="token-error" id="token-error">Invalid token — try again.</div>
+  </div>
+</div>
+
+<!-- Dashboard -->
+<div class="page" id="dashboard" style="display:none;">
+  <div class="page-header">
+    <div class="page-title">⚡ Satoshi<span>Note</span> Admin</div>
+    <div class="refresh-row">
+      <span id="last-refresh-label"></span>
+      <button class="btn-refresh" id="btn-refresh">Refresh</button>
+      <button class="btn-refresh" id="btn-logout" style="color:var(--text-muted);">Logout</button>
+    </div>
+  </div>
+
+  <p class="section-label">Voucher counts</p>
+  <div class="stat-grid">
+    <div class="stat-card"><div class="stat-value" id="s-total">—</div><div class="stat-label">Total created</div></div>
+    <div class="stat-card"><div class="stat-value" id="s-unfunded">—</div><div class="stat-label">Active unfunded</div></div>
+    <div class="stat-card"><div class="stat-value orange" id="s-funded">—</div><div class="stat-label">Active funded</div></div>
+    <div class="stat-card"><div class="stat-value green" id="s-redeemed">—</div><div class="stat-label">Redeemed</div></div>
+    <div class="stat-card"><div class="stat-value" id="s-refunded">—</div><div class="stat-label">Refunded</div></div>
+    <div class="stat-card"><div class="stat-value red" id="s-failed">—</div><div class="stat-label">Failed refunds</div></div>
+  </div>
+
+  <p class="section-label">Sats totals</p>
+  <div class="stat-grid">
+    <div class="stat-card"><div class="stat-value orange" id="s-claimable">—</div><div class="stat-label">Claimable sats</div></div>
+    <div class="stat-card"><div class="stat-value green" id="s-redeemed-sats">—</div><div class="stat-label">Redeemed sats</div></div>
+    <div class="stat-card"><div class="stat-value" id="s-refunded-sats">—</div><div class="stat-label">Refunded sats</div></div>
+    <div class="stat-card"><div class="stat-value" id="s-pending-refund-sats">—</div><div class="stat-label">Pending refund sats</div></div>
+  </div>
+
+  <p class="section-label">Donations</p>
+  <div class="stat-grid">
+    <div class="stat-card"><div class="stat-value" id="s-donations-total">—</div><div class="stat-label">Total donations</div></div>
+    <div class="stat-card"><div class="stat-value green" id="s-donations-confirmed">—</div><div class="stat-label">Confirmed</div></div>
+    <div class="stat-card"><div class="stat-value orange" id="s-donated-sats">—</div><div class="stat-label">Total donated sats</div></div>
+  </div>
+
+  <p class="section-label">Node health</p>
+  <div class="health-row">
+    <span class="health-indicator" id="health-icon">⏳</span>
+    <span class="health-msg" id="health-msg">Loading…</span>
+  </div>
+  <div class="stat-grid">
+    <div class="stat-card"><div class="stat-value" id="s-breez-balance">—</div><div class="stat-label">Breez balance sats</div></div>
+    <div class="stat-card"><div class="stat-value" id="s-claimable-vs-balance">—</div><div class="stat-label">Claimable sats</div></div>
+  </div>
+
+  <div class="last-updated" id="last-updated-ts"></div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const TOKEN_KEY = 'satoshi_note_admin_token';
+  let autoRefreshTimer = null;
+
+  function getToken() { return localStorage.getItem(TOKEN_KEY) || ''; }
+  function saveToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+  function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+
+  function fmt(n) { return Number(n).toLocaleString(); }
+  function fmtSats(msat) {
+    if (msat < 0) return 'N/A';
+    return fmt(Math.floor(msat / 1000));
+  }
+
+  function showDashboard() {
+    document.getElementById('token-overlay').classList.add('hidden');
+    document.getElementById('dashboard').style.display = '';
+  }
+  function showTokenPrompt(errMsg) {
+    document.getElementById('dashboard').style.display = 'none';
+    document.getElementById('token-overlay').classList.remove('hidden');
+    const errEl = document.getElementById('token-error');
+    if (errMsg) { errEl.textContent = errMsg; errEl.classList.add('visible'); }
+    else errEl.classList.remove('visible');
+  }
+
+  async function fetchStats() {
+    const token = getToken();
+    const resp = await fetch('/admin/stats', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (resp.status === 401) {
+      clearToken();
+      showTokenPrompt('Invalid token — try again.');
+      stopAutoRefresh();
+      return;
+    }
+    if (!resp.ok) throw new Error('fetch failed: ' + resp.status);
+    return resp.json();
+  }
+
+  function renderStats(d) {
+    document.getElementById('s-total').textContent = fmt(d.total_vouchers);
+    document.getElementById('s-unfunded').textContent = fmt(d.active_unfunded);
+    document.getElementById('s-funded').textContent = fmt(d.active_funded);
+    document.getElementById('s-redeemed').textContent = fmt(d.total_redeemed);
+    document.getElementById('s-refunded').textContent = fmt(d.total_refunded);
+
+    const failedEl = document.getElementById('s-failed');
+    failedEl.textContent = fmt(d.failed_refunds);
+    failedEl.className = 'stat-value' + (d.failed_refunds > 0 ? ' red' : '');
+
+    document.getElementById('s-claimable').textContent = fmtSats(d.claimable_msat);
+    document.getElementById('s-redeemed-sats').textContent = fmtSats(d.redeemed_msat);
+    document.getElementById('s-refunded-sats').textContent = fmtSats(d.refunded_msat);
+    document.getElementById('s-pending-refund-sats').textContent = fmtSats(d.pending_refund_msat);
+
+    document.getElementById('s-donations-total').textContent = fmt(d.total_donations);
+    document.getElementById('s-donations-confirmed').textContent = fmt(d.confirmed_donations);
+    document.getElementById('s-donated-sats').textContent = fmtSats(d.donated_msat);
+
+    const breezSats = d.breez_balance_msat < 0 ? -1 : Math.floor(d.breez_balance_msat / 1000);
+    const claimableSats = Math.floor(d.claimable_msat / 1000);
+
+    document.getElementById('s-breez-balance').textContent = d.breez_balance_msat < 0 ? 'N/A' : fmt(breezSats);
+    document.getElementById('s-claimable-vs-balance').textContent = fmtSats(d.claimable_msat);
+
+    const healthIcon = document.getElementById('health-icon');
+    const healthMsg = document.getElementById('health-msg');
+    if (d.breez_balance_msat < 0) {
+      healthIcon.textContent = '⚠️';
+      healthMsg.innerHTML = '<strong>Node balance unavailable</strong> — could not reach Breez SDK.';
+    } else if (claimableSats > breezSats) {
+      healthIcon.textContent = '🔴';
+      healthMsg.innerHTML = '⚠️ <strong>Node balance lower than claimable</strong> — possible discrepancy. Claimable: ' + fmt(claimableSats) + ' sats · Node: ' + fmt(breezSats) + ' sats.';
+    } else {
+      healthIcon.textContent = '🟢';
+      healthMsg.innerHTML = '✅ <strong>Node balance sufficient.</strong> Claimable: ' + fmt(claimableSats) + ' sats · Node: ' + fmt(breezSats) + ' sats.';
+    }
+
+    const now = new Date();
+    document.getElementById('last-updated-ts').textContent = 'Last updated: ' + now.toLocaleTimeString();
+    document.getElementById('last-refresh-label').textContent = now.toLocaleTimeString();
+  }
+
+  async function loadStats() {
+    try {
+      const data = await fetchStats();
+      if (data) renderStats(data);
+    } catch (err) {
+      console.error('loadStats error', err);
+    }
+  }
+
+  function startAutoRefresh() {
+    stopAutoRefresh();
+    autoRefreshTimer = setInterval(loadStats, 30000);
+  }
+  function stopAutoRefresh() {
+    if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
+  }
+
+  // Token form submit
+  document.getElementById('token-submit').addEventListener('click', async function () {
+    const token = document.getElementById('token-input').value.trim();
+    if (!token) return;
+    saveToken(token);
+    const resp = await fetch('/admin/stats', { headers: { 'Authorization': 'Bearer ' + token } });
+    if (resp.status === 401) {
+      clearToken();
+      showTokenPrompt('Invalid token — try again.');
+      return;
+    }
+    showDashboard();
+    const data = await resp.json();
+    renderStats(data);
+    startAutoRefresh();
+  });
+  document.getElementById('token-input').addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') document.getElementById('token-submit').click();
+  });
+
+  document.getElementById('btn-refresh').addEventListener('click', loadStats);
+  document.getElementById('btn-logout').addEventListener('click', function () {
+    stopAutoRefresh();
+    clearToken();
+    showTokenPrompt('');
+  });
+
+  // Init
+  const existingToken = getToken();
+  if (existingToken) {
+    showDashboard();
+    loadStats();
+    startAutoRefresh();
+  }
+})();
+</script>
+</body>
+</html>

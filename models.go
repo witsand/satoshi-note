@@ -49,6 +49,35 @@ type RefundTx struct {
 	CreatedAt  int64
 }
 
+type AuditStats struct {
+	TotalVouchers      int64 `json:"total_vouchers"`
+	ActiveUnfunded     int64 `json:"active_unfunded"`
+	ActiveFunded       int64 `json:"active_funded"`
+	TotalRedeemed      int64 `json:"total_redeemed"`
+	TotalRefunded      int64 `json:"total_refunded"`
+	FailedRefunds      int64 `json:"failed_refunds"`
+	ClaimableMsat      int64 `json:"claimable_msat"`
+	RedeemedMsat       int64 `json:"redeemed_msat"`
+	RefundedMsat       int64 `json:"refunded_msat"`
+	PendingRefundMsat  int64 `json:"pending_refund_msat"`
+	BreezBalanceMsat   int64 `json:"breez_balance_msat"` // -1 if unavailable
+	TotalDonations     int64 `json:"total_donations"`
+	ConfirmedDonations int64 `json:"confirmed_donations"`
+	DonatedMsat        int64 `json:"donated_msat"`
+}
+
+type Donation struct {
+	Key             string
+	AmountMsat      int64
+	FeeMsat         int64
+	PR              string
+	PaymentHash     string
+	PaymentPreimage string
+	Comment         string
+	Status          TxStatus
+	CreatedAt       int64
+}
+
 type FundTx struct {
 	Key             string
 	BatchID         string

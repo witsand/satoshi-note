@@ -20,15 +20,33 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 func (srv *Server) ServeAPI() {
 	mux := http.NewServeMux()
+
+	// Static
 	mux.Handle("/", http.FileServer(http.Dir("./static")))
+	mux.HandleFunc("GET /{$}", srv.handleIndexPage)
+	mux.HandleFunc("GET /redeem", srv.handleRedeemPage)
+	mux.HandleFunc("GET /admin", srv.handleAdminPage)
+
+	// App Api
 	mux.HandleFunc("POST /voucher/create", srv.handleCreateVouchers)
+	mux.HandleFunc("GET /voucher/status/{secret}", srv.handleVoucherStatus)
+	mux.HandleFunc("GET /admin/stats", srv.handleAdminStats)
+
+	// LNURL Step 1
+	mux.HandleFunc("GET /donate", srv.handleDonate)
 	mux.HandleFunc("GET /f/{pubKey}", srv.handleLNURLPayVoucher)
 	mux.HandleFunc("GET /fb/{batchID}", srv.handleLNURLPayBatch)
+	mux.HandleFunc("GET /w/{secret}", srv.handleLNURLWithdraw)
+
+	// LNURL Step 2
 	mux.HandleFunc("GET /fund/{pubKey}/callback", srv.handleLNURLPayCallbackVoucher)
 	mux.HandleFunc("GET /fund/batch/{batchID}/callback", srv.handleLNURLPayCallbackBatch)
-	mux.HandleFunc("GET /fv/{key}", srv.handleLNURLVerify)
-	mux.HandleFunc("GET /w/{secret}", srv.handleLNURLWithdraw)
-	mux.HandleFunc("GET /withdraw/{secret}/callback", srv.handleLNURLWithdrawCallback)
+	mux.HandleFunc("GET /donate/callback", srv.handleDonateCallback)
+	mux.HandleFunc("GET /redeem/{secret}/callback", srv.handleLNURLWithdrawCallback)
+
+	// LUD-21 Verify
+	mux.HandleFunc("GET /verify/{key}", srv.handleLNURLVerify)
+	mux.HandleFunc("GET /donate/verify/{key}", srv.handleDonateVerify)
 
 	if err := http.ListenAndServe(":"+srv.cfg.port, corsMiddleware(mux)); err != nil {
 		slog.Error("server", "err", err)

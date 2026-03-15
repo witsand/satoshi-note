@@ -31,6 +31,10 @@ type Config struct {
 	redeemActive            bool
 	refundActive            bool
 	invoiceExpirySeconds    int64
+
+	// Optional features — silently disabled if empty
+	adminToken string // Bearer token for /admin/stats
+	githubURL  string // Shown in About modal and footer
 }
 
 func errMissingEnv(name string) error {
@@ -176,6 +180,9 @@ func loadConfig() (*Server, error) {
 			return nil, err
 		}
 	}
+
+	cfg.adminToken = os.Getenv("ADMIN_TOKEN")
+	cfg.githubURL = os.Getenv("GITHUB_URL")
 
 	return &Server{cfg: cfg}, nil
 }

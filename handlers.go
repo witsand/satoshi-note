@@ -10,7 +10,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
@@ -212,7 +214,7 @@ func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.
 		"status": "OK",
 		"pr":     tx.PR,
 		"routes": []any{},
-		"verify": srv.cfg.baseURL + "/fv/" + tx.Key,
+		"verify": srv.cfg.baseURL + "/verify/" + tx.Key,
 	})
 }
 
@@ -224,14 +226,6 @@ func (srv *Server) handleLNURLPayCallbackBatch(w http.ResponseWriter, r *http.Re
 	}
 
 	tx := &FundTx{}
-
-	var err error
-	tx.Msat, err = srv.getCallbackAmount(r)
-	if err != nil {
-		lnurlError(w, "invalid amount")
-		return
-	}
-
 	tx.BatchID = r.PathValue("batchID")
 
 	vs, err := srv.getVouchersByBatchID(srv.db, tx.BatchID)
@@ -239,6 +233,24 @@ func (srv *Server) handleLNURLPayCallbackBatch(w http.ResponseWriter, r *http.Re
 		lnurlError(w, "batch not found")
 		return
 	}
+
+	msatsStr := r.URL.Query().Get("amount")
+	if msatsStr == "" {
+		lnurlError(w, "missing amount")
+		return
+	}
+	msats, err := strconv.ParseInt(msatsStr, 10, 64)
+	if err != nil {
+		lnurlError(w, "invalid amount")
+		return
+	}
+	batchMin := srv.cfg.minFundAmountMsat * int64(len(vs))
+	batchMax := srv.cfg.maxFundAmountMsat * int64(len(vs))
+	if msats < batchMin || msats > batchMax {
+		lnurlError(w, "amount out of range")
+		return
+	}
+	tx.Msat = msats
 
 	err = srv.getCallbackBolt11(tx, "Fund "+srv.cfg.siteName+" Vouchers ("+strconv.Itoa(len(vs))+") - Batch: "+tx.BatchID)
 	if err != nil {
@@ -258,7 +270,7 @@ func (srv *Server) handleLNURLPayCallbackBatch(w http.ResponseWriter, r *http.Re
 		"status": "OK",
 		"pr":     tx.PR,
 		"routes": []any{},
-		"verify": srv.cfg.baseURL + "/fv/" + tx.Key,
+		"verify": srv.cfg.baseURL + "/verify/" + tx.Key,
 	})
 }
 
@@ -336,7 +348,7 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tag":                "withdrawRequest",
-		"callback":           srv.cfg.baseURL + "/withdraw/" + secret + "/callback",
+		"callback":           srv.cfg.baseURL + "/redeem/" + secret + "/callback",
 		"k1":                 k1,
 		"minWithdrawable":    minRedeemable,
 		"maxWithdrawable":    maxRedeemable,
@@ -517,6 +529,32 @@ func (srv *Server) updateFundBalance(dbTx *sql.Tx, tx *FundTx) error {
 	return nil
 }
 
+func (srv *Server) handleVoucherStatus(w http.ResponseWriter, r *http.Request) {
+	secret := r.PathValue("secret")
+	s, err := srv.getVoucherStatusBySecret(secret)
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	dbTxFee := s.BalanceMsat*srv.cfg.redeemFeeBPS/10000/1000*1000 + 1000
+	if dbTxFee < srv.cfg.minRedeemFeeMsat {
+		dbTxFee = srv.cfg.minRedeemFeeMsat / 1000 * 1000
+	}
+
+	var maxRedeemable int64
+	if s.BalanceMsat > dbTxFee {
+		maxRedeemable = s.BalanceMsat - dbTxFee
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"balance_msat": maxRedeemable,
+		"expires_at":   s.ExpiresAt,
+		"active":       s.Active,
+		"refunded":     s.Refunded,
+	})
+}
+
 func (srv *Server) getCallbackAmount(r *http.Request) (int64, error) {
 	msatsStr := r.URL.Query().Get("amount")
 
@@ -531,4 +569,194 @@ func (srv *Server) getCallbackAmount(r *http.Request) (int64, error) {
 		return 0, fmt.Errorf("amount out of range")
 	}
 	return msats, nil
+}
+
+func (srv *Server) handleRedeemPage(w http.ResponseWriter, r *http.Request) {
+	b, err := os.ReadFile("./static/redeem.html")
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/donate")
+	html := strings.ReplaceAll(string(b), "{{BASE_URL}}", srv.cfg.baseURL)
+	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
+	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(html))
+}
+
+func (srv *Server) handleIndexPage(w http.ResponseWriter, r *http.Request) {
+	b, err := os.ReadFile("./static/index.html")
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/donate")
+	html := strings.ReplaceAll(string(b), "{{BASE_URL}}", srv.cfg.baseURL)
+	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
+	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(html))
+}
+
+// GET /donate — LNURL-pay step 1
+func (srv *Server) handleDonate(w http.ResponseWriter, r *http.Request) {
+	if !srv.cfg.fundActive {
+		lnurlError(w, "donations not enabled")
+		return
+	}
+	metadata := [][]string{{"text/plain", "Donate to " + srv.cfg.siteName}}
+	metaJSON, _ := json.Marshal(metadata)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tag":            "payRequest",
+		"callback":       srv.cfg.baseURL + "/donate/callback",
+		"minSendable":    srv.cfg.minFundAmountMsat,
+		"maxSendable":    srv.cfg.maxFundAmountMsat,
+		"metadata":       string(metaJSON),
+		"commentAllowed": 200,
+	})
+}
+
+// GET /donate/callback?amount=MSATS — LNURL-pay step 2
+func (srv *Server) handleDonateCallback(w http.ResponseWriter, r *http.Request) {
+	if !srv.cfg.fundActive {
+		lnurlError(w, "donations not enabled")
+		return
+	}
+
+	amountMsat, err := srv.getCallbackAmount(r)
+	if err != nil {
+		lnurlError(w, "invalid amount")
+		return
+	}
+
+	comment := r.URL.Query().Get("comment")
+	if len(comment) > 200 {
+		comment = comment[:200]
+	}
+
+	sat := amountMsat / 1000
+	amountMsat = sat * 1000
+	usat, err := Int64ToUint64(sat)
+	if err != nil {
+		lnurlError(w, "invalid amount")
+		return
+	}
+	uexpiry, err := Int64ToUint32(srv.cfg.invoiceExpirySeconds)
+	if err != nil {
+		lnurlError(w, "internal error")
+		return
+	}
+
+	resp, rawErr := srv.ln.ReceivePayment(spark.ReceivePaymentRequest{
+		PaymentMethod: spark.ReceivePaymentMethodBolt11Invoice{
+			AmountSats:  &usat,
+			Description: "Donate to " + srv.cfg.siteName,
+			ExpirySecs:  &uexpiry,
+		},
+	})
+	if err := sdkErr(rawErr); err != nil {
+		slog.Error("create donation invoice", "err", err)
+		lnurlError(w, "failed to create invoice")
+		return
+	}
+
+	var feeMsat int64
+	if resp.Fee != nil {
+		feeMsat = resp.Fee.Int64() * 1000
+	}
+	pr := resp.PaymentRequest
+
+	key, err := srv.insertDonation(pr, amountMsat, feeMsat, comment)
+	if err != nil {
+		slog.Error("insert donation", "err", err)
+		lnurlError(w, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "OK",
+		"pr":     pr,
+		"routes": []any{},
+		"verify": srv.cfg.baseURL + "/donate/verify/" + key,
+	})
+}
+
+func (srv *Server) handleDonateVerify(w http.ResponseWriter, r *http.Request) {
+	key := r.PathValue("key")
+	don, err := srv.getDonationByKey(key)
+	if err != nil {
+		lnurlError(w, "not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":   "OK",
+		"settled":  don.Status == TxConfirmed,
+		"preimage": don.PaymentPreimage,
+		"pr":       don.PR,
+	})
+}
+
+func (srv *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
+	if srv.cfg.adminToken == "" || r.Header.Get("Authorization") != "Bearer "+srv.cfg.adminToken {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	stats, err := srv.getAuditStats()
+	if err != nil {
+		slog.Error("get audit stats", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, stats)
+}
+
+func (srv *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
+	http.ServeFile(w, r, "static/admin.html")
+}
+
+func (srv *Server) getAuditStats() (*AuditStats, error) {
+	s := &AuditStats{}
+
+	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM vouchers`).Scan(&s.TotalVouchers); err != nil {
+		return nil, err
+	}
+	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM vouchers WHERE active=1 AND balance_msat=0`).Scan(&s.ActiveUnfunded); err != nil {
+		return nil, err
+	}
+	if err := srv.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(balance_msat),0) FROM vouchers WHERE active=1 AND balance_msat>0`).Scan(&s.ActiveFunded, &s.ClaimableMsat); err != nil {
+		return nil, err
+	}
+	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM vouchers WHERE active=0 AND refunded=0`).Scan(&s.TotalRedeemed); err != nil {
+		return nil, err
+	}
+	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM vouchers WHERE active=0 AND refunded=1`).Scan(&s.TotalRefunded); err != nil {
+		return nil, err
+	}
+	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM refund_txs WHERE refunded=0 AND error_msg != ''`).Scan(&s.FailedRefunds); err != nil {
+		return nil, err
+	}
+	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(msat),0) FROM redeem_txs WHERE status='confirmed'`).Scan(&s.RedeemedMsat); err != nil {
+		return nil, err
+	}
+	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(amount_msat),0) FROM refund_txs WHERE refunded=1`).Scan(&s.RefundedMsat); err != nil {
+		return nil, err
+	}
+	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(amount_msat),0) FROM refund_txs WHERE refunded=0`).Scan(&s.PendingRefundMsat); err != nil {
+		return nil, err
+	}
+
+	infoResp, err := srv.ln.GetInfo(spark.GetInfoRequest{})
+	if sdkErr(err) == nil {
+		s.BreezBalanceMsat = int64(infoResp.BalanceSats) * 1000
+	} else {
+		s.BreezBalanceMsat = -1
+	}
+
+	s.TotalDonations, s.ConfirmedDonations, s.DonatedMsat, err = srv.getDonationStats()
+	if err != nil {
+		return nil, err
+	}
+
+	return s, nil
 }
