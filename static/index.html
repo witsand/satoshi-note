@@ -3,21 +3,22 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Satoshi Note</title>
+  <title>{{SITE_NAME_FULL}}</title>
   <meta name="description" content="Send Bitcoin Lightning vouchers to anyone via WhatsApp.">
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <meta name="theme-color" content="#F7931A">
   <link rel="stylesheet" href="/css/style.css">
+  <script>window.SITE_NAME = '{{SITE_NAME_FULL}}';</script>
 </head>
 <body>
 
 <!-- ── About modal ──────────────────────────────────────────────────────────── -->
 <div id="about-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
   <div class="modal-box" style="text-align:left;">
-    <div class="modal-title" style="text-align:center;">About Satoshi Note</div>
+    <div class="modal-title" style="text-align:center;">About {{SITE_NAME_FULL}}</div>
     <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      Satoshi Note lets you create Bitcoin Lightning vouchers — pre-funded links you can share with anyone via WhatsApp, SMS, or printed QR. Recipients claim sats instantly with any Lightning wallet. No exchange account needed.
+      {{SITE_NAME_FULL}} lets you create Bitcoin Lightning vouchers — pre-funded links you can share with anyone via WhatsApp, SMS, or printed QR. Recipients claim sats instantly with any Lightning wallet. No exchange account needed.
     </p>
     <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
       Built on <strong style="color:var(--text);">Bitcoin Lightning</strong> + <strong style="color:var(--text);">Breez SDK</strong>.
@@ -58,7 +59,7 @@
 
   <!-- Header -->
   <header class="app-header">
-    <a href="/" style="text-decoration:none;"><div class="app-logo">⚡ Satoshi<span>Note</span></div></a>
+    <a href="/" style="text-decoration:none;"><div class="app-logo">⚡ {{SITE_LOGO_INNER}}</div></a>
     <button id="nav-history" class="nav-btn" title="History" aria-label="View history">🗒️</button>
   </header>
 
@@ -67,33 +68,21 @@
 
     <!-- ── Onboarding screen ─────────────────────────────────────────────────── -->
     <section id="screen-onboarding" class="screen">
+      
       <div class="onboarding-hero">
         <span class="onboarding-icon">⚡</span>
-        <h1 class="onboarding-title">Send Bitcoin. Instantly.</h1>
-        <p class="onboarding-sub">Satoshi Note lets you create Lightning vouchers — pre-funded Bitcoin links you can share with anyone.</p>
-        <p class="onboarding-sub" style="margin-top:8px;">They scan a QR code (or click a link) to claim their sats. No exchange account needed.</p>
-      </div>
-
-      <div class="card" style="margin-bottom:12px;">
-        <p class="card-title">How it works</p>
-        <ol class="steps-list" style="margin-top:0;">
-          <li><strong>Enter your Lightning address</strong> — the wallet that will receive unclaimed funds back.</li>
-          <li><strong>Set the amount and expiry</strong> — fund the voucher via Lightning, your recipient has until expiry to claim.</li>
-          <li><strong>Share the link</strong> — by WhatsApp, SMS, or printed QR code.</li>
-        </ol>
+        <h1 class="onboarding-title">Send Bitcoin to Anyone</h1>
+        <p class="onboarding-sub">Create a voucher, share it via WhatsApp, and the receiver can claim the sats whenever they’re ready. Unclaimed sats automatically return to you.</p>
       </div>
 
       <div class="card">
         <p class="card-title">Your refund address</p>
-        <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;">
-          If a voucher isn't claimed, funds are returned here. Enter your Lightning address or LNURL.
-        </p>
+        <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;">If a voucher isn’t claimed in time, the sats are automatically returned to this Lightning Address.</p>
         <div class="form-group">
-          <label for="refund-code-input">Lightning address or LNURL</label>
           <input
             type="text"
             id="refund-code-input"
-            placeholder="you@wallet.com or LNURL1…"
+            placeholder="name@wallet.com"
             autocomplete="off"
             spellcheck="false"
           >
@@ -102,10 +91,28 @@
         <button id="btn-onboarding-submit" class="btn btn-primary">Get Started</button>
       </div>
 
-      <p class="text-center" style="font-size:0.8rem;color:var(--text-muted);margin-top:12px;">
-        Need a Lightning address? Try <a href="https://blink.sv" target="_blank" rel="noopener">Blink</a> or
-        <a href="https://walletofsatoshi.com" target="_blank" rel="noopener">Wallet of Satoshi</a>.
-      </p>
+      <div class="card" style="margin-bottom:12px;">
+        <p class="card-title">How it works</p>
+        <ol class="steps-list" style="margin-top:0;">
+          <li>
+            <strong>1. Enter a phone number</strong>
+            Create a voucher for the person you want to send sats to.
+          </li>
+          <li>
+            <strong>2. Fund the voucher</strong>
+            Pay the Lightning invoice with any Bitcoin wallet.
+          </li>
+          <li>
+            <strong>3. Send the link</strong>
+            Share the claim link via WhatsApp so they can redeem the sats.
+          </li>
+          <li>
+            <strong>4. They claim the sats</strong>
+            If they don’t claim in time, the sats return to your Lightning Address.
+          </li>
+        </ol>
+      </div>
+
     </section>
 
     <!-- ── Main app screen ──────────────────────────────────────────────────── -->
@@ -114,7 +121,7 @@
       <!-- Tabs -->
       <div class="tabs">
         <button class="tab-btn active" data-tab="single">Single Voucher</button>
-        <button class="tab-btn" data-tab="batch">Batch</button>
+        <button class="tab-btn" data-tab="batch" disabled>Batch - Coming soon</button>
       </div>
 
       <!-- ── Tab: Single Voucher ─────────────────────────────────────────────── -->
@@ -131,8 +138,8 @@
         <!-- Step 1: Phone input -->
         <div id="single-step-1">
           <div class="card">
-            <p class="card-title">VOUCHER DETAILS</p>
-            <label>Recipient's phone number</label>
+            <p class="card-title">Create a Voucher</p>
+            <label>Recipient's Phone Number</label>
             <div class="input-row">
               <div id="dial-code-wrapper" class="dial-dropdown">
                 <button type="button" id="dial-code-btn" class="dial-code-trigger">+1</button>
@@ -142,16 +149,12 @@
                   <ul id="dial-code-list" class="dial-code-list"></ul>
                 </div>
               </div>
-              <input
-                type="tel"
-                id="phone-number"
-                placeholder="079 123 4567"
-                autocomplete="tel-national"
-              >
+              <input type="tel" id="phone-number"
+                placeholder="82 123 4567" autocomplete="off">
             </div>
             <div id="single-step1-error" class="error-msg"></div>
             <div class="form-group">
-            <label>Refund after</label>
+            <label>Voucher Expiry</label>
               <div class="pill-group" id="single-expiry-pills">
                 <button type="button" class="pill-btn active" data-secs="259200">3 days</button>
                 <button type="button" class="pill-btn" data-secs="1209600">2 weeks</button>
@@ -160,9 +163,7 @@
               </div>
             </div>
           </div>
-          <div class="notice">
-            A voucher will be created. You'll fund it with any amount of sats using your Lightning wallet.
-          </div>
+          <div class="notice">Unclaimed sats will automatically return to your Lightning Address. Next you’ll fund the voucher with your Bitcoin wallet.</div>
           <button id="btn-create-single" class="btn btn-primary">Create Voucher</button>
         </div>
 
@@ -170,32 +171,32 @@
         <div id="single-step-2" class="hidden">
           <div class="card">
             <p class="card-title">Fund your voucher</p>
-            <div id="step2-phone-row">
-              <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:12px;">
-                Sending to: <strong id="step2-phone-display" style="color:var(--text)"></strong>
-              </p>
-            </div>
+            <label>Scan the QR code or tap it to open your Bitcoin wallet. Send any amount of sats to fund the voucher.</label>
+            <label id="step2-phone-row">
+            </label>
             <div class="qr-wrapper">
+              <p class="qr-lnurl"><strong>Voucher for: </strong><span id="step2-phone-display"></span></p>
               <div id="single-qr-container" class="qr-container"></div>
               <p id="single-lnurl-text" class="qr-lnurl"></p>
             </div>
+            <p class="qr-wrapper">Waiting for payment...</p>
           </div>
-          <div class="notice">Tap the QR code to open your wallet, or tap the code below it to copy.</div>
           <div class="btn-group">
-            <button id="btn-back-step2" class="btn btn-ghost">← Change phone number</button>
-            <button id="btn-next-step2" class="btn btn-ghost">Next →</button>
+            <button id="btn-back-step2" class="btn btn-ghost">Change Phone Number</button>
+            <button id="btn-next-step2" class="btn btn-ghost">I’ve already sent the payment</button>
           </div>
         </div>
 
         <!-- Step 3: Share -->
         <div id="single-step-3" class="hidden">
           <div class="card">
-            <p class="card-title">Share with recipient</p>
+            <p class="card-title">Voucher Ready</p>
             <div id="share-phone-row">
               <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:12px;">
-                Sending to: <strong id="share-phone-display" style="color:var(--text)"></strong>
+                Voucher for: <span id="share-phone-display"></span>
               </p>
             </div>
+            <label>Share the link so they can claim the sats.</label>
             <div class="btn-group">
               <button id="btn-whatsapp" class="btn btn-primary">
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
@@ -212,7 +213,7 @@
                   <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
                   <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
                 </svg>
-                Share
+                Share Link
               </button>
               <button id="btn-add-funds" class="btn btn-ghost">Add More Funds</button>
             </div>
@@ -221,7 +222,7 @@
           <!-- Add Funds collapsible -->
           <div id="add-funds-section" class="hidden">
             <div class="card">
-              <p class="card-title">Add funds</p>
+              <p class="card-title">Add More Sats</p>
               <div class="qr-wrapper">
                 <div id="step3-fund-qr-container" class="qr-container"></div>
                 <p id="step3-fund-lnurl-text" class="qr-lnurl"></p>
@@ -230,9 +231,9 @@
           </div>
 
           <div class="notice">
-            The recipient will receive a link to a page where they can scan the QR to claim their sats.
+            They can claim the sats whenever they’re ready. Unclaimed sats return to you after the expiry time.
           </div>
-          <button id="btn-done-single" class="btn btn-ghost">Done</button>
+          <button id="btn-done-single" class="btn btn-ghost">Create Another Voucher</button>
         </div>
 
       </div><!-- /tab-single -->
@@ -283,14 +284,15 @@
           <button id="btn-create-batch" class="btn btn-primary">Create Vouchers</button>
         </div>
 
-        <!-- Batch results (combined: QR grid + fund QR) -->
+        <!-- Batch results (template picker + fund QR) -->
         <div id="batch-results" class="hidden">
           <div class="card">
-            <p class="card-title">Voucher QR codes</p>
-            <div id="batch-results-grid" class="qr-grid"></div>
+            <p class="card-title">Choose a template</p>
+            <p class="template-hint">Select a design for your printed vouchers.</p>
+            <div id="template-grid" class="template-grid"></div>
           </div>
           <div class="btn-group">
-            <button id="btn-download-pdf" class="btn btn-primary">Download PDF</button>
+            <button id="btn-print-vouchers" class="btn btn-primary">Print Vouchers</button>
           </div>
 
           <div class="card" style="margin-top:16px;">
@@ -335,6 +337,18 @@
   </footer>
 
 </div>
+
+<!-- ── Template preview modal ────────────────────────────────────────────────── -->
+<div id="template-preview-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+  <div class="modal-box modal-box-wide">
+    <div id="template-preview-title" class="modal-title"></div>
+    <canvas id="template-preview-canvas" style="max-width:100%;height:auto;border-radius:6px;display:block;margin:0 auto;"></canvas>
+    <button class="modal-close" id="template-preview-close">Close</button>
+  </div>
+</div>
+
+<!-- ── Print area ─────────────────────────────────────────────────────────────── -->
+<div id="print-area" style="display:none;"></div>
 
 <script src="/js/qrcode.min.js"></script>
 <script src="/js/app.js"></script>

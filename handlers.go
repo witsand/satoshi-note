@@ -581,6 +581,8 @@ func (srv *Server) handleRedeemPage(w http.ResponseWriter, r *http.Request) {
 	html := strings.ReplaceAll(string(b), "{{BASE_URL}}", srv.cfg.baseURL)
 	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
 	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)
+	html = strings.ReplaceAll(html, "{{SITE_NAME_FULL}}", srv.cfg.siteName)
+	html = strings.ReplaceAll(html, "{{SITE_LOGO_INNER}}", srv.cfg.siteLogoInner)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(html))
 }
@@ -595,6 +597,8 @@ func (srv *Server) handleIndexPage(w http.ResponseWriter, r *http.Request) {
 	html := strings.ReplaceAll(string(b), "{{BASE_URL}}", srv.cfg.baseURL)
 	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
 	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)
+	html = strings.ReplaceAll(html, "{{SITE_NAME_FULL}}", srv.cfg.siteName)
+	html = strings.ReplaceAll(html, "{{SITE_LOGO_INNER}}", srv.cfg.siteLogoInner)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(html))
 }
@@ -712,7 +716,26 @@ func (srv *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (srv *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, "static/admin.html")
+	b, err := os.ReadFile("./static/admin.html")
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	html := strings.ReplaceAll(string(b), "{{SITE_NAME_FULL}}", srv.cfg.siteName)
+	html = strings.ReplaceAll(html, "{{SITE_LOGO_INNER}}", srv.cfg.siteLogoInner)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(html))
+}
+
+func (srv *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
+	b, err := os.ReadFile("./static/manifest.json")
+	if err != nil {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	out := strings.ReplaceAll(string(b), "{{SITE_NAME_FULL}}", srv.cfg.siteName)
+	w.Header().Set("Content-Type", "application/manifest+json")
+	_, _ = w.Write([]byte(out))
 }
 
 func (srv *Server) getAuditStats() (*AuditStats, error) {
@@ -742,7 +765,13 @@ func (srv *Server) getAuditStats() (*AuditStats, error) {
 	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(amount_msat),0) FROM refund_txs WHERE refunded=1`).Scan(&s.RefundedMsat); err != nil {
 		return nil, err
 	}
-	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(amount_msat),0) FROM refund_txs WHERE refunded=0`).Scan(&s.PendingRefundMsat); err != nil {
+	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(amount_msat),0) FROM refund_txs WHERE refunded=0 AND refund_code != ''`).Scan(&s.PendingRefundMsat); err != nil {
+		return nil, err
+	}
+	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(msat),0) FROM fund_txs WHERE status='confirmed'`).Scan(&s.TotalDepositedMsat); err != nil {
+		return nil, err
+	}
+	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(amount_msat),0) FROM refund_txs WHERE refund_code=''`).Scan(&s.ExpiredNoRefundMsat); err != nil {
 		return nil, err
 	}
 
@@ -751,6 +780,12 @@ func (srv *Server) getAuditStats() (*AuditStats, error) {
 		s.BreezBalanceMsat = int64(infoResp.BalanceSats) * 1000
 	} else {
 		s.BreezBalanceMsat = -1
+	}
+
+	if s.BreezBalanceMsat >= 0 {
+		s.SurplusMsat = s.BreezBalanceMsat - s.ClaimableMsat - s.PendingRefundMsat
+	} else {
+		s.SurplusMsat = -1
 	}
 
 	s.TotalDonations, s.ConfirmedDonations, s.DonatedMsat, err = srv.getDonationStats()

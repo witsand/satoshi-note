@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Admin — Satoshi Note</title>
+  <title>Admin — {{SITE_NAME_FULL}}</title>
   <style>
     :root {
       --orange: #F7931A;
@@ -185,7 +185,7 @@
 <!-- Dashboard -->
 <div class="page" id="dashboard" style="display:none;">
   <div class="page-header">
-    <div class="page-title">⚡ Satoshi<span>Note</span> Admin</div>
+    <div class="page-title">⚡ {{SITE_LOGO_INNER}} Admin</div>
     <div class="refresh-row">
       <span id="last-refresh-label"></span>
       <button class="btn-refresh" id="btn-refresh">Refresh</button>
@@ -209,11 +209,13 @@
     <div class="stat-card"><div class="stat-value green" id="s-redeemed-sats">—</div><div class="stat-label">Redeemed sats</div></div>
     <div class="stat-card"><div class="stat-value" id="s-refunded-sats">—</div><div class="stat-label">Refunded sats</div></div>
     <div class="stat-card"><div class="stat-value" id="s-pending-refund-sats">—</div><div class="stat-label">Pending refund sats</div></div>
+    <div class="stat-card"><div class="stat-value" id="s-deposited-sats">—</div><div class="stat-label">Total deposited sats</div></div>
+    <div class="stat-card"><div class="stat-value red" id="s-expired-no-refund-sats">—</div><div class="stat-label">Expired sats (no address)</div></div>
+    <div class="stat-card"><div class="stat-value" id="s-surplus-sats">—</div><div class="stat-label">Surplus sats</div></div>
   </div>
 
   <p class="section-label">Donations</p>
   <div class="stat-grid">
-    <div class="stat-card"><div class="stat-value" id="s-donations-total">—</div><div class="stat-label">Total donations</div></div>
     <div class="stat-card"><div class="stat-value green" id="s-donations-confirmed">—</div><div class="stat-label">Confirmed</div></div>
     <div class="stat-card"><div class="stat-value orange" id="s-donated-sats">—</div><div class="stat-label">Total donated sats</div></div>
   </div>
@@ -291,7 +293,18 @@
     document.getElementById('s-refunded-sats').textContent = fmtSats(d.refunded_msat);
     document.getElementById('s-pending-refund-sats').textContent = fmtSats(d.pending_refund_msat);
 
-    document.getElementById('s-donations-total').textContent = fmt(d.total_donations);
+    document.getElementById('s-deposited-sats').textContent = fmtSats(d.total_deposited_msat);
+    document.getElementById('s-expired-no-refund-sats').textContent = fmtSats(d.expired_no_refund_msat);
+
+    const surplusEl = document.getElementById('s-surplus-sats');
+    if (d.surplus_msat < 0) {
+      surplusEl.textContent = '—';
+      surplusEl.className = 'stat-value';
+    } else {
+      surplusEl.textContent = fmtSats(d.surplus_msat);
+      surplusEl.className = 'stat-value ' + (d.surplus_msat >= 0 ? 'green' : 'red');
+    }
+
     document.getElementById('s-donations-confirmed').textContent = fmt(d.confirmed_donations);
     document.getElementById('s-donated-sats').textContent = fmtSats(d.donated_msat);
 

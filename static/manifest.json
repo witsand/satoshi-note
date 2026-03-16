@@ -1,6 +1,6 @@
 {
-  "name": "Satoshi Note",
-  "short_name": "Satoshi Note",
+  "name": "{{SITE_NAME_FULL}}",
+  "short_name": "{{SITE_NAME_FULL}}",
   "description": "Send Bitcoin Lightning vouchers to anyone.",
   "start_url": "/",
   "display": "standalone",

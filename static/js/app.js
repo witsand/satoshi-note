@@ -222,7 +222,18 @@ let _fundPoller = null;
 let _dialCode = '+1';
 let _singleExpiry = 259200;
 let _batchCount = 8;
-let _batchExpiry = 7776000;
+let _batchExpiry = 1209600;
+let _selectedTemplate = 'classic';
+
+const TEMPLATES = [
+  { id: 'classic',  name: 'Classic',       desc: 'Orange header, single QR'         },
+  { id: 'dual',     name: 'Dual Panel',     desc: 'Two QRs — claim + fund'           },
+  { id: 'giftcard', name: 'Gift Card',      desc: 'Dark premium, Bitcoin feel'       },
+  { id: 'minimal',  name: 'Minimal',        desc: 'Clean white, side-by-side QRs'   },
+  { id: 'darkmode', name: 'Dark Mode',      desc: 'Black background, orange accents' },
+  { id: 'fold',     name: 'Fold-in-Half',   desc: '2 per page, hides redeem QR'     },
+  { id: 'bizcard',  name: 'Business Card',  desc: '5 per page, wallet-sized'         },
+];
 
 function buildDialDropdown(preferred) {
   _dialCode = preferred;
@@ -400,9 +411,17 @@ function daysFromSeconds(secs) {
   return d === 1 ? '1 day' : `${d} days`;
 }
 
+function expiryAfterFundingLabel(refundAfterSeconds) {
+  const days = Math.round(refundAfterSeconds / 86400);
+  if (days < 14) return `Valid for ${days} days after funding`;
+  if (days < 60) return `Valid for ${Math.round(days / 7)} weeks after funding`;
+  const months = Math.round(days / 30);
+  return `Valid for ${months} month${months > 1 ? 's' : ''} after funding`;
+}
+
 // ── WhatsApp message ──────────────────────────────────────────────────────────
 function buildWAMessage(claimLnurl, refundAfterSeconds) {
-  const link = `${window.location.origin}/redeem?lnurl=${encodeURIComponent(claimLnurl)}`;
+  const link = `${window.location.origin}/redeem?lightning=${encodeURIComponent(claimLnurl)}`;
   const dur = daysFromSeconds(refundAfterSeconds);
   return `⚡ You’ve been sent a *Bitcoin voucher.*\n\nSomeone sent you a small amount of Bitcoin to try for yourself.\n\nClaim it here: ${link}\n\nThe page will show you *how to get a wallet and redeem it step-by-step*. It only takes a few minutes.\n\nTip: If you don't have a wallet yet, *Blink* is a great place to start.\n\nThis voucher expires in ${dur}, so make sure to claim it before then.`;
   // return `You've received a Bitcoin voucher! ⚡\n\nTap this link to claim it:\n${link}\n\nYou'll need a Lightning wallet — try Blink (blink.sv) for beginners.\n\nThis voucher expires in ${dur}.`;
@@ -545,7 +564,7 @@ function renderShareStep(voucher) {
     window.open(url, '_blank');
   };
 
-  const redeemLink = `${window.location.origin}/redeem?lnurl=${encodeURIComponent(voucher.claim_lnurl)}`;
+  const redeemLink = `${window.location.origin}/redeem?lightning=${encodeURIComponent(voucher.claim_lnurl)}`;
   const shareBtn = $('btn-share');
   shareBtn.onclick = async () => {
     if (navigator.share) {
@@ -657,26 +676,13 @@ async function handleCreateBatch() {
 }
 
 function renderBatchResults(vouchers) {
-  // Mini QR grid
-  const grid = $('batch-results-grid');
-  grid.innerHTML = '';
-  vouchers.forEach((v, i) => {
-    const card = document.createElement('div');
-    card.className = 'qr-mini-card';
-    const qrDiv = document.createElement('div');
-    qrDiv.className = 'qr-mini-container';
-    new QRCode(qrDiv, { text: v.claim_lnurl, width: 72, height: 72, correctLevel: QRCode.CorrectLevel.M });
-    const label = document.createElement('span');
-    label.textContent = `${i + 1} of ${vouchers.length}`;
-    card.appendChild(qrDiv);
-    card.appendChild(label);
-    grid.appendChild(card);
-  });
+  // Template picker (renders tiles asynchronously)
+  renderTemplatePicker(vouchers);
 
-  // PDF button
-  $('btn-download-pdf').onclick = () => downloadPDF(vouchers, state.batchName, state.batchExpiry);
+  // Print button
+  $('btn-print-vouchers').onclick = () => printVouchers(vouchers, state.batchName, state.batchExpiry);
 
-  // Fund QR — same interaction pattern as single tab
+  // Fund QR
   const batchFundLnurl = vouchers[0].batch_fund_lnurl;
   const container = $('batch-qr-container');
   renderQR(container, batchFundLnurl, 256);
@@ -703,23 +709,35 @@ function resetBatchForm() {
   $('batch-name').value = '';
   $('batch-error').classList.remove('visible');
   $('batch-qr-container').innerHTML = '';
-  $('batch-results-grid').innerHTML = '';
+  $('template-grid').innerHTML = '';
 }
 
-// ── PDF generation ────────────────────────────────────────────────────────────
-async function downloadPDF(vouchers, batchName, refundAfterSeconds) {
-  const btn = $('btn-download-pdf');
-  btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Generating…';
+// ── Print / PDF system ────────────────────────────────────────────────────────
 
+async function printVouchers(vouchers, batchName, refundAfterSeconds) {
+  const btn = $('btn-print-vouchers');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Preparing…';
   try {
     await loadjsPDF();
-    await generatePDF(vouchers, batchName, refundAfterSeconds);
+    const generators = {
+      classic:  generatePDFClassic,
+      dual:     generatePDFDualPanel,
+      giftcard: generatePDFGiftCard,
+      minimal:  generatePDFMinimal,
+      darkmode: generatePDFDarkMode,
+      fold:     generatePDFFold,
+      bizcard:  generatePDFBizCard,
+    };
+    const doc = await generators[_selectedTemplate](vouchers, batchName, refundAfterSeconds);
+    await appendBatchFundPage(doc, vouchers, batchName, refundAfterSeconds);
+    doc.autoPrint();
+    window.open(doc.output('bloburl'), '_blank');
   } catch (err) {
-    alert('PDF generation failed: ' + err.message);
+    alert('Print preparation failed: ' + err.message);
   } finally {
     btn.disabled = false;
-    btn.textContent = 'Download PDF';
+    btn.textContent = 'Print Vouchers';
   }
 }
 
@@ -734,62 +752,962 @@ function loadjsPDF() {
   });
 }
 
-async function generatePDF(vouchers, batchName, refundAfterSeconds) {
+// ── Canvas helpers for QR / rotation ─────────────────────────────────────────
+
+async function drawQROnCanvas(ctx, dataURL, x, y, size) {
+  if (!dataURL) return;
+  const img = new Image();
+  await new Promise(r => { img.onload = r; img.src = dataURL; });
+  ctx.drawImage(img, x, y, size, size);
+}
+
+function rotateCanvas180(src) {
+  const dst = document.createElement('canvas');
+  dst.width = src.width;
+  dst.height = src.height;
+  const ctx = dst.getContext('2d');
+  ctx.translate(dst.width / 2, dst.height / 2);
+  ctx.rotate(Math.PI);
+  ctx.drawImage(src, -src.width / 2, -src.height / 2);
+  return dst;
+}
+
+// ── PDF generators ────────────────────────────────────────────────────────────
+
+async function generatePDFClassic(vouchers, batchName, refundAfterSeconds) {
   const { jsPDF } = window.jspdf;
-  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a5' });
-  // A5 landscape: 210 × 148 mm ... actually jsPDF 'a5' in landscape = 210w × 148h
-  const W = 210, H = 148;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const W = 297, H = 210;
+  const displayName = batchName && !isAutoName(batchName) ? batchName : 'Lightning Voucher';
 
   for (let i = 0; i < vouchers.length; i++) {
     if (i > 0) doc.addPage();
-
     const v = vouchers[i];
 
-    // Orange header strip
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, W, H, 'F');
+
     doc.setFillColor(247, 147, 26);
-    doc.rect(0, 0, W, 18, 'F');
+    doc.rect(0, 0, W, 22, 'F');
     doc.setTextColor(0, 0, 0);
-    doc.setFontSize(10);
+    doc.setFontSize(13);
     doc.setFont('helvetica', 'bold');
-    doc.text('Satoshi Note', 8, 12);
+    doc.text((window.SITE_NAME||'Satoshi Note'), 8, 14);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
-    doc.text('Lightning Voucher', 8, 17);
+    doc.setFontSize(9);
+    doc.text('Lightning Voucher', 8, 20);
 
-    // QR code (left panel, ~60mm wide)
-    const qrDataURL = await qrToDataURL(v.claim_lnurl, 200);
-    if (qrDataURL) {
-      doc.addImage(qrDataURL, 'PNG', 8, 24, 52, 52);
-    }
+    const claimWebURL = `${window.location.origin}/redeem?lightning=${encodeURIComponent(v.claim_lnurl)}`;
+    const qrDataURL = await qrToDataURL(claimWebURL, 220);
+    if (qrDataURL) doc.addImage(qrDataURL, 'PNG', 10, 28, 78, 78);
 
-    // Right panel text
     doc.setTextColor(15, 15, 15);
     doc.setFont('helvetica', 'bold');
+    doc.setFontSize(15);
+    doc.text(displayName, 100, 42);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(10);
+    doc.setTextColor(80, 80, 80);
+    doc.text(expiryAfterFundingLabel(refundAfterSeconds), 100, 54);
+    doc.setFontSize(9);
+    doc.text('How to redeem:', 100, 70);
+    doc.text('1. Install a Lightning wallet (try blink.sv)', 100, 79);
+    doc.text('2. Open the app and tap Receive / Scan', 100, 87);
+    doc.text('3. Scan the QR code on the left', 100, 95);
+    doc.text('4. Confirm to receive your Bitcoin', 100, 103);
+
+    doc.setFillColor(247, 147, 26);
+    doc.rect(0, H - 12, W, 12, 'F');
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(7);
+    doc.text('Scan with a Lightning wallet · blink.sv for beginners', W / 2, H - 4, { align: 'center' });
+  }
+  return doc;
+}
+
+async function generatePDFDualPanel(vouchers, batchName, refundAfterSeconds) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const W = 297, H = 210;
+
+  for (let i = 0; i < vouchers.length; i++) {
+    if (i > 0) doc.addPage();
+    const v = vouchers[i];
+
+    doc.setFillColor(20, 20, 35);
+    doc.rect(0, 0, W, H, 'F');
+    doc.setFillColor(30, 30, 55);
+    doc.rect(0, 0, W, 24, 'F');
+    doc.setTextColor(247, 147, 26);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Lightning Voucher', 10, 16);
+    doc.setTextColor(180, 180, 200);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.text((window.SITE_NAME||'Satoshi Note'), W - 10, 16, { align: 'right' });
+
+    const claimWebURL = `${window.location.origin}/redeem?lightning=${encodeURIComponent(v.claim_lnurl)}`;
+    const claimQR = await qrToDataURL(claimWebURL, 220);
+    if (claimQR) doc.addImage(claimQR, 'PNG', 10, 30, 100, 100);
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
-    doc.text(batchName, 70, 32);
+    doc.text('SCAN TO CLAIM', 10, 140);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(180, 180, 200);
+    doc.text('Open Lightning wallet and scan', 10, 148);
+
+    doc.setDrawColor(60, 60, 90);
+    doc.setLineWidth(0.5);
+    doc.line(W / 2, 24, W / 2, H - 12);
+
+    const fundURL = `lightning:${v.fund_lnurl}`;
+    const fundQR = await qrToDataURL(fundURL, 160);
+    if (fundQR) doc.addImage(fundQR, 'PNG', W / 2 + 10, 34, 75, 75);
+    doc.setTextColor(247, 147, 26);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text('SCAN TO ADD FUNDS', W / 2 + 10, 118);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(180, 180, 200);
+    doc.text(expiryAfterFundingLabel(refundAfterSeconds), W / 2 + 10, 128);
+
+    doc.setFillColor(247, 147, 26);
+    doc.rect(0, H - 12, W, 12, 'F');
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(7);
+    doc.text((window.SITE_NAME||'Satoshi Note') + ' · Bitcoin Lightning Voucher', W / 2, H - 4, { align: 'center' });
+  }
+  return doc;
+}
+
+async function generatePDFGiftCard(vouchers, batchName, refundAfterSeconds) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const W = 297, H = 210;
+
+  for (let i = 0; i < vouchers.length; i++) {
+    if (i > 0) doc.addPage();
+    const v = vouchers[i];
+
+    doc.setFillColor(18, 12, 6);
+    doc.rect(0, 0, W, H, 'F');
+    doc.setFillColor(247, 147, 26);
+    doc.rect(0, 0, 24, H, 'F');
+    doc.setTextColor(0, 0, 0);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text('SATOSHI NOTE', 15, H / 2 + 28, { angle: 90 });
+
+    doc.setTextColor(38, 25, 10);
+    doc.setFontSize(140);
+    doc.text('\u20BF', W * 0.62, H * 0.72, { align: 'center' });
+
+    const claimWebURL = `${window.location.origin}/redeem?lightning=${encodeURIComponent(v.claim_lnurl)}`;
+    const claimQR = await qrToDataURL(claimWebURL, 260);
+    if (claimQR) {
+      doc.setFillColor(255, 255, 255);
+      doc.rect(W / 2 - 50, 22, 100, 100, 'F');
+      doc.addImage(claimQR, 'PNG', W / 2 - 48, 24, 96, 96);
+    }
+    doc.setTextColor(247, 147, 26);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(14);
+    doc.text('SCAN TO CLAIM', W / 2, 132, { align: 'center' });
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(9);
+    doc.setTextColor(200, 180, 160);
+    doc.text(expiryAfterFundingLabel(refundAfterSeconds), W / 2, 142, { align: 'center' });
+
+    const fundURL = `lightning:${v.fund_lnurl}`;
+    const fundQR = await qrToDataURL(fundURL, 120);
+    if (fundQR) {
+      doc.setFillColor(255, 255, 255);
+      doc.rect(W - 54, H - 56, 44, 44, 'F');
+      doc.addImage(fundQR, 'PNG', W - 53, H - 55, 42, 42);
+    }
+    doc.setTextColor(140, 130, 110);
+    doc.setFontSize(7);
+    doc.text('Add funds', W - 32, H - 8, { align: 'center' });
+  }
+  return doc;
+}
+
+async function generatePDFMinimal(vouchers, batchName, refundAfterSeconds) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const W = 297, H = 210;
+  const displayName = batchName && !isAutoName(batchName) ? batchName : 'Lightning Voucher';
+
+  for (let i = 0; i < vouchers.length; i++) {
+    if (i > 0) doc.addPage();
+    const v = vouchers[i];
+
+    doc.setFillColor(250, 250, 250);
+    doc.rect(0, 0, W, H, 'F');
+    doc.setFillColor(247, 147, 26);
+    doc.rect(0, 0, W, 3, 'F');
+    doc.rect(0, H - 3, W, 3, 'F');
+
+    doc.setTextColor(20, 20, 20);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(16);
+    doc.text(displayName, W / 2, 20, { align: 'center' });
+
+    const qrSize = 88;
+    const claimWebURL = `${window.location.origin}/redeem?lightning=${encodeURIComponent(v.claim_lnurl)}`;
+    const claimQR = await qrToDataURL(claimWebURL, 220);
+    const fundURL = `lightning:${v.fund_lnurl}`;
+    const fundQR = await qrToDataURL(fundURL, 220);
+
+    const leftX = W / 2 - qrSize - 12;
+    const rightX = W / 2 + 12;
+    const qrY = 28;
+
+    if (claimQR) doc.addImage(claimQR, 'PNG', leftX, qrY, qrSize, qrSize);
+    if (fundQR) doc.addImage(fundQR, 'PNG', rightX, qrY, qrSize, qrSize);
+
+    doc.setTextColor(40, 40, 40);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text('CLAIM', leftX + qrSize / 2, qrY + qrSize + 10, { align: 'center' });
+    doc.text('TOP UP', rightX + qrSize / 2, qrY + qrSize + 10, { align: 'center' });
 
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    doc.setTextColor(80, 80, 80);
-    doc.text(`Voucher ${i + 1} of ${vouchers.length}`, 70, 40);
-    doc.text(`Expires in: ${daysFromSeconds(refundAfterSeconds)}`, 70, 48);
+    doc.setTextColor(100, 100, 100);
+    doc.text(expiryAfterFundingLabel(refundAfterSeconds), W / 2, H - 10, { align: 'center' });
+  }
+  return doc;
+}
 
-    doc.setFontSize(8);
-    doc.text('How to redeem:', 70, 60);
-    doc.text('1. Install a Lightning wallet (try blink.sv)', 70, 67);
-    doc.text('2. Open the app and tap Receive / Scan', 70, 73);
-    doc.text('3. Scan the QR code on the left', 70, 79);
-    doc.text('4. Confirm to receive your Bitcoin', 70, 85);
+async function generatePDFDarkMode(vouchers, batchName, refundAfterSeconds) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const W = 297, H = 210;
 
-    // Footer strip
+  for (let i = 0; i < vouchers.length; i++) {
+    if (i > 0) doc.addPage();
+    const v = vouchers[i];
+
+    doc.setFillColor(13, 13, 13);
+    doc.rect(0, 0, W, H, 'F');
     doc.setFillColor(247, 147, 26);
-    doc.rect(0, H - 10, W, 10, 'F');
-    doc.setTextColor(0, 0, 0);
-    doc.setFontSize(7);
-    doc.text('Scan with a Lightning wallet · blink.sv for beginners', W / 2, H - 3, { align: 'center' });
+    doc.rect(0, 0, W, 2, 'F');
+    doc.rect(0, H - 2, W, 2, 'F');
+
+    doc.setTextColor(247, 147, 26);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.text('Lightning Voucher', W / 2, 18, { align: 'center' });
+
+    doc.setTextColor(28, 28, 28);
+    doc.setFontSize(110);
+    doc.text('\u20BF', W * 0.73, H * 0.70, { align: 'center' });
+
+    const claimWebURL = `${window.location.origin}/redeem?lightning=${encodeURIComponent(v.claim_lnurl)}`;
+    const claimQR = await qrToDataURL(claimWebURL, 260);
+    if (claimQR) {
+      doc.setFillColor(255, 255, 255);
+      doc.rect(10, 24, 96, 96, 'F');
+      doc.addImage(claimQR, 'PNG', 12, 26, 92, 92);
+    }
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text('SCAN TO CLAIM', 10, 130);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(140, 140, 140);
+    doc.text(expiryAfterFundingLabel(refundAfterSeconds), 10, 140);
+
+    const fundURL = `lightning:${v.fund_lnurl}`;
+    const fundQR = await qrToDataURL(fundURL, 160);
+    if (fundQR) {
+      doc.setFillColor(255, 255, 255);
+      doc.rect(W * 0.42, 30, 70, 70, 'F');
+      doc.addImage(fundQR, 'PNG', W * 0.42 + 1, 31, 68, 68);
+    }
+    doc.setTextColor(247, 147, 26);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9);
+    doc.text('ADD FUNDS', W * 0.42 + 35, 110, { align: 'center' });
+  }
+  return doc;
+}
+
+// ── Canvas strip renderers for Fold + BizCard ─────────────────────────────────
+
+async function renderFoldOutside(v, Wpx, Hpx, batchName, refundAfterSeconds) {
+  const canvas = document.createElement('canvas');
+  canvas.width = Wpx; canvas.height = Hpx;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#fffaf5';
+  ctx.fillRect(0, 0, Wpx, Hpx);
+  const hdr = Math.round(Hpx * 0.14);
+  ctx.fillStyle = '#F7931A';
+  ctx.fillRect(0, 0, Wpx, hdr);
+  ctx.fillStyle = '#000';
+  ctx.font = `bold ${Math.round(hdr * 0.6)}px sans-serif`;
+  ctx.fillText('SATOSHI NOTE', Math.round(Wpx * 0.04), Math.round(hdr * 0.75));
+
+  const fundURL = `lightning:${v.fund_lnurl}`;
+  const fundQR = await qrToDataURL(fundURL, 200);
+  const qrSize = Math.round(Math.min(Wpx * 0.55, Hpx * 0.52));
+  const qrX = Math.round((Wpx - qrSize) / 2);
+  const qrY = hdr + Math.round((Hpx - hdr - Hpx * 0.18 - qrSize) / 2);
+  if (fundQR) {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(qrX - 3, qrY - 3, qrSize + 6, qrSize + 6);
+    await drawQROnCanvas(ctx, fundQR, qrX, qrY, qrSize);
   }
 
-  doc.save(`${batchName.replace(/\s+/g, '-')}-vouchers.pdf`);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#333';
+  ctx.font = `bold ${Math.round(Hpx * 0.07)}px sans-serif`;
+  ctx.fillText('Scan to add funds', Wpx / 2, Hpx - Math.round(Hpx * 0.09));
+  ctx.fillStyle = '#666';
+  ctx.font = `${Math.round(Hpx * 0.055)}px sans-serif`;
+  const name = batchName && !isAutoName(batchName) ? batchName : '';
+  if (name) ctx.fillText(name, Wpx / 2, Hpx - Math.round(Hpx * 0.02));
+  ctx.textAlign = 'left';
+  return canvas;
+}
+
+async function renderFoldInside(v, Wpx, Hpx, refundAfterSeconds) {
+  const canvas = document.createElement('canvas');
+  canvas.width = Wpx; canvas.height = Hpx;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, Wpx, Hpx);
+
+  const claimWebURL = `${window.location.origin}/redeem?lightning=${encodeURIComponent(v.claim_lnurl)}`;
+  const claimQR = await qrToDataURL(claimWebURL, 200);
+  const qrSize = Math.round(Math.min(Wpx * 0.55, Hpx * 0.52));
+  const qrX = Math.round((Wpx - qrSize) / 2);
+  const qrY = Math.round(Hpx * 0.1);
+  if (claimQR) {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(qrX - 3, qrY - 3, qrSize + 6, qrSize + 6);
+    await drawQROnCanvas(ctx, claimQR, qrX, qrY, qrSize);
+  }
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#F7931A';
+  ctx.font = `bold ${Math.round(Hpx * 0.09)}px sans-serif`;
+  ctx.fillText('SCAN TO CLAIM', Wpx / 2, Hpx - Math.round(Hpx * 0.12));
+  ctx.fillStyle = '#aaa';
+  ctx.font = `${Math.round(Hpx * 0.065)}px sans-serif`;
+  ctx.fillText(expiryAfterFundingLabel(refundAfterSeconds), Wpx / 2, Hpx - Math.round(Hpx * 0.04));
+  ctx.textAlign = 'left';
+  return canvas;
+}
+
+async function generatePDFFold(vouchers, batchName, refundAfterSeconds) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+  const W = 297, H = 210, stripH = 105, midX = W / 2;
+  const px = 3.78; // mm to px at ~96dpi
+  const halfWpx = Math.round(midX * px);
+  const stripHpx = Math.round(stripH * px);
+
+  for (let p = 0; p < Math.ceil(vouchers.length / 2); p++) {
+    if (p > 0) doc.addPage();
+    const v1 = vouchers[p * 2];
+    const v2 = vouchers[p * 2 + 1] || null;
+
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, W, H, 'F');
+
+    // Voucher 1 — top strip
+    const out1 = await renderFoldOutside(v1, halfWpx, stripHpx, batchName, refundAfterSeconds);
+    const in1  = await renderFoldInside(v1, halfWpx, stripHpx, refundAfterSeconds);
+    doc.addImage(out1.toDataURL('image/png'), 'PNG', 0,    0, midX,  stripH);
+    doc.addImage(in1.toDataURL('image/png'),  'PNG', midX, 0, midX,  stripH);
+
+    // Voucher 2 — bottom strip, rotated 180°
+    if (v2) {
+      const out2 = await renderFoldOutside(v2, halfWpx, stripHpx, batchName, refundAfterSeconds);
+      const in2  = await renderFoldInside(v2, halfWpx, stripHpx, refundAfterSeconds);
+      // Rotated: inside→left side, outside→right side
+      doc.addImage(rotateCanvas180(in2).toDataURL('image/png'),  'PNG', 0,    stripH, midX, stripH);
+      doc.addImage(rotateCanvas180(out2).toDataURL('image/png'), 'PNG', midX, stripH, midX, stripH);
+    }
+
+    // Dashed horizontal cut line at y=105
+    doc.setDrawColor(120, 120, 120);
+    doc.setLineDashPattern([3, 3], 0);
+    doc.setLineWidth(0.4);
+    doc.line(0, stripH, W, stripH);
+    doc.setLineDashPattern([], 0);
+    doc.setTextColor(100, 100, 100);
+    doc.setFontSize(6);
+    doc.setFont('helvetica', 'normal');
+    doc.text('\u2702 CUT HERE', W / 2 - 8, stripH - 0.5);
+
+    // Dashed vertical fold lines
+    doc.setLineDashPattern([3, 3], 0);
+    doc.line(midX, 0, midX, v2 ? H : stripH);
+    doc.setLineDashPattern([], 0);
+    doc.text('FOLD', midX + 1, stripH / 2, { angle: 270 });
+    if (v2) doc.text('FOLD', midX + 1, stripH + stripH / 2, { angle: 270 });
+  }
+  return doc;
+}
+
+async function renderBizCardOutside(v, Wpx, Hpx, batchName) {
+  const canvas = document.createElement('canvas');
+  canvas.width = Wpx; canvas.height = Hpx;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, Wpx, Hpx);
+  const hdr = Math.round(Hpx * 0.20);
+  ctx.fillStyle = '#F7931A';
+  ctx.fillRect(0, 0, Wpx, hdr);
+  ctx.fillStyle = '#000';
+  ctx.font = `bold ${Math.round(hdr * 0.55)}px sans-serif`;
+  ctx.fillText((window.SITE_NAME||'Satoshi Note'), Math.round(Wpx * 0.04), Math.round(hdr * 0.72));
+
+  const fundURL = `lightning:${v.fund_lnurl}`;
+  const fundQR = await qrToDataURL(fundURL, 140);
+  const qrSize = Math.round(Hpx * 0.62);
+  const qrX = Math.round(Wpx * 0.05);
+  const qrY = hdr + Math.round((Hpx - hdr - qrSize) / 2);
+  if (fundQR) {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(qrX - 2, qrY - 2, qrSize + 4, qrSize + 4);
+    await drawQROnCanvas(ctx, fundQR, qrX, qrY, qrSize);
+  }
+
+  ctx.fillStyle = '#333';
+  ctx.font = `${Math.round(Hpx * 0.11)}px sans-serif`;
+  ctx.fillText('Scan to add funds', qrX + qrSize + Math.round(Wpx * 0.05), qrY + Math.round(qrSize * 0.45));
+  ctx.fillStyle = '#888';
+  ctx.font = `${Math.round(Hpx * 0.09)}px sans-serif`;
+  ctx.fillText('Lightning voucher', qrX + qrSize + Math.round(Wpx * 0.05), qrY + Math.round(qrSize * 0.65));
+
+  return canvas;
+}
+
+async function renderBizCardInside(v, Wpx, Hpx) {
+  const canvas = document.createElement('canvas');
+  canvas.width = Wpx; canvas.height = Hpx;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, Wpx, Hpx);
+
+  const claimWebURL = `${window.location.origin}/redeem?lightning=${encodeURIComponent(v.claim_lnurl)}`;
+  const claimQR = await qrToDataURL(claimWebURL, 140);
+  const qrSize = Math.round(Hpx * 0.62);
+  const qrX = Math.round(Wpx * 0.05);
+  const qrY = Math.round((Hpx - qrSize) / 2);
+  if (claimQR) {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(qrX - 2, qrY - 2, qrSize + 4, qrSize + 4);
+    await drawQROnCanvas(ctx, claimQR, qrX, qrY, qrSize);
+  }
+
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#F7931A';
+  ctx.font = `bold ${Math.round(Hpx * 0.13)}px sans-serif`;
+  ctx.fillText('SCAN TO CLAIM', Wpx - Math.round(Wpx * 0.04), qrY + Math.round(qrSize * 0.40));
+  ctx.fillStyle = '#aaa';
+  ctx.font = `${Math.round(Hpx * 0.10)}px sans-serif`;
+  ctx.fillText('Open Lightning wallet', Wpx - Math.round(Wpx * 0.04), qrY + Math.round(qrSize * 0.62));
+  ctx.fillText('& scan to receive BTC', Wpx - Math.round(Wpx * 0.04), qrY + Math.round(qrSize * 0.80));
+  ctx.textAlign = 'left';
+  return canvas;
+}
+
+async function generatePDFBizCard(vouchers, batchName, refundAfterSeconds) {
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const W = 210, H = 297;
+  const cardW = 185, cardH = 55, halfW = 92.5;
+  const perPage = 5, gap = 4;
+  const topMargin = (H - perPage * cardH - (perPage - 1) * gap) / 2;
+  const leftMargin = (W - cardW) / 2;
+  const px = 3.78;
+  const halfWpx = Math.round(halfW * px);
+  const cardHpx = Math.round(cardH * px);
+
+  for (let p = 0; p < Math.ceil(vouchers.length / perPage); p++) {
+    if (p > 0) doc.addPage('a4', 'portrait');
+    doc.setFillColor(255, 255, 255);
+    doc.rect(0, 0, W, H, 'F');
+
+    for (let c = 0; c < perPage; c++) {
+      const vIdx = p * perPage + c;
+      if (vIdx >= vouchers.length) break;
+      const v = vouchers[vIdx];
+      const cardY = topMargin + c * (cardH + gap);
+
+      const outside = await renderBizCardOutside(v, halfWpx, cardHpx, batchName);
+      doc.addImage(outside.toDataURL('image/png'), 'PNG', leftMargin, cardY, halfW, cardH);
+
+      const inside = await renderBizCardInside(v, halfWpx, cardHpx);
+      doc.addImage(rotateCanvas180(inside).toDataURL('image/png'), 'PNG', leftMargin + halfW, cardY, halfW, cardH);
+
+      // Fold line
+      doc.setDrawColor(140, 140, 140);
+      doc.setLineDashPattern([2, 2], 0);
+      doc.setLineWidth(0.3);
+      doc.line(leftMargin + halfW, cardY, leftMargin + halfW, cardY + cardH);
+      doc.setLineDashPattern([], 0);
+
+      // Card border
+      doc.setDrawColor(210, 210, 210);
+      doc.setLineWidth(0.2);
+      doc.rect(leftMargin, cardY, cardW, cardH);
+    }
+  }
+  return doc;
+}
+
+async function appendBatchFundPage(doc, vouchers, batchName, refundAfterSeconds) {
+  doc.addPage([297, 210], 'l');
+  const W = 297, H = 210;
+
+  doc.setFillColor(255, 255, 255);
+  doc.rect(0, 0, W, H, 'F');
+
+  doc.setFillColor(247, 147, 26);
+  doc.rect(0, 0, W, 26, 'F');
+  doc.setTextColor(0, 0, 0);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(15);
+  doc.text('FUND ALL VOUCHERS', W / 2, 16, { align: 'center' });
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(`Funds all ${vouchers.length} vouchers equally`, W / 2, 23, { align: 'center' });
+
+  if (batchName && !isAutoName(batchName)) {
+    doc.setTextColor(20, 20, 20);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(18);
+    doc.text(batchName, W / 2, 42, { align: 'center' });
+  }
+
+  const batchFundLNURL = vouchers[0].batch_fund_lnurl;
+  const qrDataURL = await qrToDataURL(batchFundLNURL, 300);
+  if (qrDataURL) {
+    doc.setFillColor(255, 255, 255);
+    doc.rect(W / 2 - 52, 48, 104, 104, 'F');
+    doc.addImage(qrDataURL, 'PNG', W / 2 - 50, 50, 100, 100);
+  }
+
+  const textY = 160;
+  doc.setTextColor(50, 50, 50);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.text(`Created: ${new Date().toLocaleDateString()}`, W / 2, textY, { align: 'center' });
+  doc.text(expiryAfterFundingLabel(refundAfterSeconds), W / 2, textY + 8, { align: 'center' });
+  doc.text('Open your Lightning wallet and scan this code', W / 2, textY + 18, { align: 'center' });
+
+  doc.setFillColor(247, 147, 26);
+  doc.rect(0, H - 12, W, 12, 'F');
+  doc.setTextColor(0, 0, 0);
+  doc.setFontSize(7);
+  doc.text((window.SITE_NAME||'Satoshi Note') + ' · Bitcoin Lightning Vouchers', W / 2, H - 4, { align: 'center' });
+}
+
+// ── Template picker UI ────────────────────────────────────────────────────────
+
+async function renderTemplatePicker(vouchers) {
+  const grid = $('template-grid');
+  grid.innerHTML = '<p style="font-size:0.8rem;color:var(--text-muted);">Generating previews…</p>';
+
+  const v = vouchers[0];
+  const claimWebURL = `${window.location.origin}/redeem?lightning=${encodeURIComponent(v.claim_lnurl)}`;
+  const fundLightningURL = `lightning:${v.fund_lnurl}`;
+
+  const qrs = {
+    claim:    await qrToDataURL(claimWebURL, 200),
+    fund:     await qrToDataURL(fundLightningURL, 200),
+    batchFund: await qrToDataURL(v.batch_fund_lnurl, 200),
+    rawClaim: await qrToDataURL(v.claim_lnurl, 200),
+  };
+
+  grid.innerHTML = '';
+
+  for (const tpl of TEMPLATES) {
+    const tile = document.createElement('div');
+    tile.className = 'template-tile' + (tpl.id === _selectedTemplate ? ' selected' : '');
+    tile.dataset.id = tpl.id;
+
+    const isPortrait = tpl.id === 'bizcard';
+    const canvas = document.createElement('canvas');
+    canvas.width  = isPortrait ? 254 : 360;
+    canvas.height = isPortrait ? 360 : 254;
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'template-tile-name';
+    nameEl.textContent = tpl.name;
+
+    const descEl = document.createElement('div');
+    descEl.className = 'template-tile-desc';
+    descEl.textContent = tpl.desc;
+
+    tile.appendChild(canvas);
+    tile.appendChild(nameEl);
+    tile.appendChild(descEl);
+
+    tile.addEventListener('click', () => {
+      _selectedTemplate = tpl.id;
+      document.querySelectorAll('.template-tile').forEach(t => t.classList.remove('selected'));
+      tile.classList.add('selected');
+      openTemplatePreview(tpl.id, qrs, state.batchName, state.batchExpiry);
+    });
+
+    grid.appendChild(tile);
+
+    // Draw preview asynchronously per tile
+    drawTemplatePreview(canvas, tpl.id, qrs, state.batchName, state.batchExpiry);
+  }
+}
+
+async function drawTemplatePreview(canvas, templateId, qrs, batchName, refundAfterSeconds) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const fns = {
+    classic:  drawClassicPreview,
+    dual:     drawDualPreview,
+    giftcard: drawGiftCardPreview,
+    minimal:  drawMinimalPreview,
+    darkmode: drawDarkModePreview,
+    fold:     drawFoldPreview,
+    bizcard:  drawBizCardPreview,
+  };
+  if (fns[templateId]) await fns[templateId](ctx, w, h, qrs, batchName, refundAfterSeconds);
+}
+
+async function openTemplatePreview(templateId, qrs, batchName, refundAfterSeconds) {
+  const modal = $('template-preview-modal');
+  const tpl = TEMPLATES.find(t => t.id === templateId);
+  $('template-preview-title').textContent = tpl ? tpl.name : templateId;
+  const isPortrait = templateId === 'bizcard';
+  const canvas = $('template-preview-canvas');
+  canvas.width  = isPortrait ? 565 : 800;
+  canvas.height = isPortrait ? 800 : 565;
+  modal.classList.remove('hidden');
+  await drawTemplatePreview(canvas, templateId, qrs, batchName, refundAfterSeconds);
+}
+
+// ── Preview draw functions ────────────────────────────────────────────────────
+
+async function drawClassicPreview(ctx, w, h, qrs, batchName, refundAfterSeconds) {
+  const ORANGE = '#F7931A';
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, w, h);
+
+  const hdr = Math.round(h * 0.14);
+  ctx.fillStyle = ORANGE;
+  ctx.fillRect(0, 0, w, hdr);
+  ctx.fillStyle = '#000';
+  ctx.font = `bold ${Math.round(hdr * 0.58)}px sans-serif`;
+  ctx.fillText((window.SITE_NAME||'Satoshi Note'), Math.round(w * 0.02), Math.round(hdr * 0.72));
+  ctx.font = `${Math.round(hdr * 0.42)}px sans-serif`;
+  ctx.fillText('Lightning Voucher', Math.round(w * 0.02), Math.round(hdr * 0.95));
+
+  const qrSize = Math.round(h * 0.54);
+  const qrX = Math.round(w * 0.03);
+  const qrY = hdr + Math.round((h - hdr - h * 0.10 - qrSize) / 2);
+  if (qrs.rawClaim) await drawQROnCanvas(ctx, qrs.rawClaim, qrX, qrY, qrSize);
+
+  const rx = Math.round(w * 0.42);
+  ctx.fillStyle = '#111';
+  ctx.font = `bold ${Math.round(h * 0.06)}px sans-serif`;
+  const name = batchName && !isAutoName(batchName) ? batchName : 'Lightning Voucher';
+  ctx.fillText(name.slice(0, 20), rx, qrY + Math.round(h * 0.08));
+  ctx.fillStyle = '#555';
+  ctx.font = `${Math.round(h * 0.048)}px sans-serif`;
+  ctx.fillText(expiryAfterFundingLabel(refundAfterSeconds), rx, qrY + Math.round(h * 0.20));
+  ctx.fillText('How to redeem:', rx, qrY + Math.round(h * 0.34));
+  ctx.font = `${Math.round(h * 0.042)}px sans-serif`;
+  ctx.fillText('1. Install Lightning wallet', rx, qrY + Math.round(h * 0.44));
+  ctx.fillText('2. Tap Receive / Scan', rx, qrY + Math.round(h * 0.53));
+  ctx.fillText('3. Scan the QR code', rx, qrY + Math.round(h * 0.62));
+  ctx.fillText('4. Confirm to receive', rx, qrY + Math.round(h * 0.71));
+
+  ctx.fillStyle = ORANGE;
+  ctx.fillRect(0, h - Math.round(h * 0.10), w, Math.round(h * 0.10));
+  ctx.fillStyle = '#000';
+  ctx.font = `${Math.round(h * 0.042)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('Scan with a Lightning wallet', w / 2, h - Math.round(h * 0.03));
+  ctx.textAlign = 'left';
+}
+
+async function drawDualPreview(ctx, w, h, qrs, batchName, refundAfterSeconds) {
+  ctx.fillStyle = '#14141f';
+  ctx.fillRect(0, 0, w, h);
+  const hdr = Math.round(h * 0.15);
+  ctx.fillStyle = '#1e1e37';
+  ctx.fillRect(0, 0, w, hdr);
+  ctx.fillStyle = '#F7931A';
+  ctx.font = `bold ${Math.round(hdr * 0.52)}px sans-serif`;
+  ctx.fillText('Lightning Voucher', Math.round(w * 0.02), Math.round(hdr * 0.70));
+
+  const qrSize = Math.round(h * 0.52);
+  const qrY = hdr + Math.round(h * 0.06);
+  if (qrs.claim) await drawQROnCanvas(ctx, qrs.claim, Math.round(w * 0.03), qrY, qrSize);
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.round(h * 0.056)}px sans-serif`;
+  ctx.fillText('SCAN TO CLAIM', Math.round(w * 0.03), qrY + qrSize + Math.round(h * 0.08));
+
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(w / 2, hdr);
+  ctx.lineTo(w / 2, h - Math.round(h * 0.08));
+  ctx.stroke();
+
+  const rqrSize = Math.round(qrSize * 0.65);
+  if (qrs.fund) await drawQROnCanvas(ctx, qrs.fund, Math.round(w * 0.53), qrY + Math.round(h * 0.04), rqrSize);
+  ctx.fillStyle = '#F7931A';
+  ctx.font = `bold ${Math.round(h * 0.046)}px sans-serif`;
+  ctx.fillText('ADD FUNDS', Math.round(w * 0.53), qrY + rqrSize + Math.round(h * 0.12));
+  ctx.fillStyle = '#aaa';
+  ctx.font = `${Math.round(h * 0.038)}px sans-serif`;
+  ctx.fillText(expiryAfterFundingLabel(refundAfterSeconds).slice(0, 24), Math.round(w * 0.53), qrY + rqrSize + Math.round(h * 0.20));
+
+  ctx.fillStyle = '#F7931A';
+  ctx.fillRect(0, h - Math.round(h * 0.08), w, Math.round(h * 0.08));
+  ctx.fillStyle = '#000';
+  ctx.font = `${Math.round(h * 0.04)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText((window.SITE_NAME||'Satoshi Note'), w / 2, h - Math.round(h * 0.025));
+  ctx.textAlign = 'left';
+}
+
+async function drawGiftCardPreview(ctx, w, h, qrs, batchName, refundAfterSeconds) {
+  ctx.fillStyle = '#12080a';
+  ctx.fillRect(0, 0, w, h);
+  const stripe = Math.round(w * 0.07);
+  ctx.fillStyle = '#F7931A';
+  ctx.fillRect(0, 0, stripe, h);
+
+  ctx.fillStyle = 'rgba(247,147,26,0.06)';
+  ctx.font = `bold ${Math.round(h * 0.85)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('\u20BF', w * 0.62, h * 0.78);
+  ctx.textAlign = 'left';
+
+  const qrSize = Math.round(h * 0.55);
+  const qrX = Math.round((w - qrSize) / 2 + stripe * 0.3);
+  const qrY = Math.round(h * 0.10);
+  if (qrs.claim) {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(qrX - 3, qrY - 3, qrSize + 6, qrSize + 6);
+    await drawQROnCanvas(ctx, qrs.claim, qrX, qrY, qrSize);
+  }
+  ctx.fillStyle = '#F7931A';
+  ctx.font = `bold ${Math.round(h * 0.062)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('SCAN TO CLAIM', w * 0.58, qrY + qrSize + Math.round(h * 0.09));
+  ctx.fillStyle = '#c8b090';
+  ctx.font = `${Math.round(h * 0.046)}px sans-serif`;
+  ctx.fillText(expiryAfterFundingLabel(refundAfterSeconds), w * 0.58, qrY + qrSize + Math.round(h * 0.18));
+
+  const fqrSize = Math.round(h * 0.22);
+  if (qrs.fund) {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(w - fqrSize - Math.round(w * 0.04) - 2, h - fqrSize - Math.round(h * 0.06) - 2, fqrSize + 4, fqrSize + 4);
+    await drawQROnCanvas(ctx, qrs.fund, w - fqrSize - Math.round(w * 0.04), h - fqrSize - Math.round(h * 0.06), fqrSize);
+  }
+  ctx.textAlign = 'left';
+}
+
+async function drawMinimalPreview(ctx, w, h, qrs, batchName, refundAfterSeconds) {
+  ctx.fillStyle = '#fafafa';
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#F7931A';
+  ctx.fillRect(0, 0, w, Math.round(h * 0.018));
+  ctx.fillRect(0, h - Math.round(h * 0.018), w, Math.round(h * 0.018));
+
+  const name = batchName && !isAutoName(batchName) ? batchName : 'Lightning Voucher';
+  ctx.fillStyle = '#111';
+  ctx.font = `bold ${Math.round(h * 0.065)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText(name.slice(0, 22), w / 2, Math.round(h * 0.12));
+  ctx.textAlign = 'left';
+
+  const qrSize = Math.round(h * 0.52);
+  const leftX = Math.round(w / 2 - qrSize - w * 0.04);
+  const rightX = Math.round(w / 2 + w * 0.04);
+  const qrY = Math.round(h * 0.17);
+
+  if (qrs.claim) await drawQROnCanvas(ctx, qrs.claim, leftX, qrY, qrSize);
+  if (qrs.fund)  await drawQROnCanvas(ctx, qrs.fund,  rightX, qrY, qrSize);
+
+  ctx.fillStyle = '#222';
+  ctx.font = `bold ${Math.round(h * 0.050)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('CLAIM', leftX + qrSize / 2, qrY + qrSize + Math.round(h * 0.07));
+  ctx.fillText('TOP UP', rightX + qrSize / 2, qrY + qrSize + Math.round(h * 0.07));
+  ctx.fillStyle = '#777';
+  ctx.font = `${Math.round(h * 0.040)}px sans-serif`;
+  ctx.fillText(expiryAfterFundingLabel(refundAfterSeconds), w / 2, h - Math.round(h * 0.04));
+  ctx.textAlign = 'left';
+}
+
+async function drawDarkModePreview(ctx, w, h, qrs, batchName, refundAfterSeconds) {
+  ctx.fillStyle = '#0d0d0d';
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#F7931A';
+  ctx.fillRect(0, 0, w, Math.round(h * 0.015));
+  ctx.fillRect(0, h - Math.round(h * 0.015), w, Math.round(h * 0.015));
+
+  ctx.fillStyle = 'rgba(247,147,26,0.06)';
+  ctx.font = `bold ${Math.round(h * 0.75)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('\u20BF', w * 0.73, h * 0.72);
+  ctx.textAlign = 'left';
+
+  ctx.fillStyle = '#F7931A';
+  ctx.font = `bold ${Math.round(h * 0.072)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('Lightning Voucher', w / 2, Math.round(h * 0.12));
+  ctx.textAlign = 'left';
+
+  const qrSize = Math.round(h * 0.52);
+  const qrX = Math.round(w * 0.03);
+  const qrY = Math.round(h * 0.15);
+  if (qrs.claim) {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(qrX - 2, qrY - 2, qrSize + 4, qrSize + 4);
+    await drawQROnCanvas(ctx, qrs.claim, qrX, qrY, qrSize);
+  }
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.round(h * 0.046)}px sans-serif`;
+  ctx.fillText('SCAN TO CLAIM', qrX, qrY + qrSize + Math.round(h * 0.07));
+  ctx.fillStyle = '#888';
+  ctx.font = `${Math.round(h * 0.038)}px sans-serif`;
+  ctx.fillText(expiryAfterFundingLabel(refundAfterSeconds), qrX, qrY + qrSize + Math.round(h * 0.14));
+
+  const rqrSize = Math.round(qrSize * 0.55);
+  if (qrs.fund) {
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(Math.round(w * 0.44) - 2, qrY + Math.round(h * 0.04) - 2, rqrSize + 4, rqrSize + 4);
+    await drawQROnCanvas(ctx, qrs.fund, Math.round(w * 0.44), qrY + Math.round(h * 0.04), rqrSize);
+  }
+  ctx.fillStyle = '#F7931A';
+  ctx.font = `bold ${Math.round(h * 0.042)}px sans-serif`;
+  ctx.fillText('ADD FUNDS', Math.round(w * 0.44), qrY + rqrSize + Math.round(h * 0.14));
+}
+
+async function drawFoldPreview(ctx, w, h, qrs, batchName, refundAfterSeconds) {
+  // Two strips — top: voucher 1, bottom: voucher 2 (rotated)
+  const mid = Math.round(h / 2);
+  const foldX = Math.round(w / 2);
+  const qrSize = Math.round(Math.min(w * 0.22, mid * 0.55));
+
+  // Top strip — left: outside (fund), right: inside (claim)
+  ctx.fillStyle = '#fffaf5';
+  ctx.fillRect(0, 0, foldX, mid);
+  ctx.fillStyle = '#F7931A';
+  ctx.fillRect(0, 0, foldX, Math.round(mid * 0.14));
+  ctx.fillStyle = '#000';
+  ctx.font = `bold ${Math.round(mid * 0.09)}px sans-serif`;
+  ctx.fillText('SATOSHI NOTE', Math.round(w * 0.02), Math.round(mid * 0.11));
+  if (qrs.fund) await drawQROnCanvas(ctx, qrs.fund, Math.round(foldX / 2 - qrSize / 2), Math.round(mid * 0.20), qrSize);
+  ctx.fillStyle = '#444';
+  ctx.font = `${Math.round(mid * 0.075)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('Add funds', foldX / 2, Math.round(mid * 0.86));
+  ctx.textAlign = 'left';
+
+  ctx.fillStyle = '#111';
+  ctx.fillRect(foldX, 0, w - foldX, mid);
+  if (qrs.claim) await drawQROnCanvas(ctx, qrs.claim, Math.round(foldX + (w - foldX) / 2 - qrSize / 2), Math.round(mid * 0.20), qrSize);
+  ctx.fillStyle = '#F7931A';
+  ctx.font = `bold ${Math.round(mid * 0.075)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('CLAIM', foldX + (w - foldX) / 2, Math.round(mid * 0.88));
+  ctx.textAlign = 'left';
+
+  // Dashed cut line
+  ctx.strokeStyle = '#999';
+  ctx.setLineDash([4, 4]);
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, mid); ctx.lineTo(w, mid); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Dashed fold line
+  ctx.strokeStyle = '#aaa';
+  ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(foldX, 0); ctx.lineTo(foldX, h); ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Bottom strip — rotated representation (swap sides, darker)
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, mid, foldX, h - mid);
+  if (qrs.claim) await drawQROnCanvas(ctx, qrs.claim, Math.round(foldX / 2 - qrSize / 2), mid + Math.round((h - mid) * 0.20), qrSize);
+
+  ctx.fillStyle = '#fffaf5';
+  ctx.fillRect(foldX, mid, w - foldX, h - mid);
+  ctx.fillStyle = '#F7931A';
+  ctx.fillRect(foldX, mid, w - foldX, Math.round((h - mid) * 0.14));
+  ctx.fillStyle = '#000';
+  ctx.font = `${Math.round((h - mid) * 0.075)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.fillText('Add funds', foldX + (w - foldX) / 2, mid + Math.round((h - mid) * 0.86));
+  ctx.textAlign = 'left';
+}
+
+async function drawBizCardPreview(ctx, w, h, qrs, batchName, refundAfterSeconds) {
+  ctx.fillStyle = '#f5f5f5';
+  ctx.fillRect(0, 0, w, h);
+
+  const cards = 5, gap = Math.round(h * 0.015);
+  const totalGap = (cards - 1) * gap;
+  const cardH = Math.round((h - totalGap) / cards);
+  const foldX = Math.round(w / 2);
+  const qrSize = Math.round(cardH * 0.60);
+
+  for (let i = 0; i < cards; i++) {
+    const y = i * (cardH + gap);
+
+    // Outside (left)
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, y, foldX, cardH);
+    ctx.fillStyle = '#F7931A';
+    ctx.fillRect(0, y, foldX, Math.round(cardH * 0.20));
+    ctx.fillStyle = '#000';
+    ctx.font = `bold ${Math.round(cardH * 0.14)}px sans-serif`;
+    ctx.fillText('Satoshi', Math.round(w * 0.02), y + Math.round(cardH * 0.16));
+    if (qrs.fund) await drawQROnCanvas(ctx, qrs.fund, Math.round(w * 0.02), y + Math.round(cardH * 0.24), qrSize);
+
+    // Inside (right, dark)
+    ctx.fillStyle = '#111';
+    ctx.fillRect(foldX, y, w - foldX, cardH);
+    if (qrs.claim) await drawQROnCanvas(ctx, qrs.claim, Math.round(foldX + (w - foldX) / 2 - qrSize / 2), y + Math.round(cardH * 0.20), qrSize);
+    ctx.fillStyle = '#F7931A';
+    ctx.font = `bold ${Math.round(cardH * 0.13)}px sans-serif`;
+    ctx.textAlign = 'right';
+    ctx.fillText('CLAIM', w - Math.round(w * 0.03), y + Math.round(cardH * 0.88));
+    ctx.textAlign = 'left';
+
+    // Fold line
+    ctx.strokeStyle = '#aaa';
+    ctx.setLineDash([2, 2]);
+    ctx.lineWidth = 0.8;
+    ctx.beginPath(); ctx.moveTo(foldX, y); ctx.lineTo(foldX, y + cardH); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Card border
+    ctx.strokeStyle = '#ddd';
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(0, y, w, cardH);
+  }
 }
 
 // ── History screen ────────────────────────────────────────────────────────────
@@ -918,19 +1836,112 @@ function showTab(tab) {
 }
 
 // ── Onboarding ────────────────────────────────────────────────────────────────
-function validateRefundCode(val) {
-  return val.includes('@') || val.toLowerCase().startsWith('lnurl1');
+function decodeLNURL(str) {
+  const s = str.toLowerCase();
+  const sep = s.lastIndexOf('1');
+  if (sep < 1) throw new Error('invalid bech32');
+  const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+  const data5 = [];
+  for (let i = sep + 1; i < s.length - 6; i++) {
+    const idx = CHARSET.indexOf(s[i]);
+    if (idx < 0) throw new Error('invalid bech32 char');
+    data5.push(idx);
+  }
+  let acc = 0, bits = 0;
+  const bytes = [];
+  for (const v of data5) {
+    acc = (acc << 5) | v;
+    bits += 5;
+    if (bits >= 8) { bits -= 8; bytes.push((acc >> bits) & 0xff); }
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes));
 }
 
-function handleOnboardingSubmit() {
+async function verifyRefundCode(val) {
+  // Returns { ok: true } | { ok: false, error: string } | { ok: null, warn: string }
+  // ok=null means unverifiable (network/CORS) — caller shows a warning but may proceed
+
+  if (val.includes('@')) {
+    const [user, domain] = val.split('@');
+    try {
+      const resp = await fetch(`https://${domain}/.well-known/lnurlp/${encodeURIComponent(user)}`);
+      if (!resp.ok) return { ok: false, error: 'Lightning address not found (HTTP ' + resp.status + ')' };
+      const data = await resp.json();
+      if (data.tag !== 'payRequest') return { ok: false, error: 'Not a valid Lightning address endpoint' };
+      return { ok: true };
+    } catch (e) {
+      return { ok: null, warn: 'Could not reach this Lightning address to verify. Double-check it is correct.' };
+    }
+  }
+
+  // LNURL bech32
+  try {
+    const url = decodeLNURL(val);
+    try {
+      const resp = await fetch(url);
+      if (!resp.ok) return { ok: false, error: 'LNURL endpoint returned error (HTTP ' + resp.status + ')' };
+      const data = await resp.json();
+      if (data.tag !== 'payRequest') return { ok: false, error: 'LNURL is not a pay endpoint' };
+      return { ok: true };
+    } catch (e) {
+      return { ok: null, warn: 'Could not reach the LNURL endpoint to verify. Double-check it is correct.' };
+    }
+  } catch (e) {
+    return { ok: false, error: 'Could not decode LNURL: ' + e.message };
+  }
+}
+
+function validateRefundCode(val) {
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(val)) return true;
+  if (/^lnurl1[ac-hj-np-z02-9]{20,}$/i.test(val)) return true;
+  return false;
+}
+
+async function handleOnboardingSubmit() {
   const val = $('refund-code-input').value.trim();
   const errEl = $('onboarding-error');
+  const btn = $('btn-onboarding-submit');
+
+  // Second tap after unverifiable warning — proceed anyway
+  if (btn._warnDismissed === val) {
+    btn._warnDismissed = null;
+    errEl.classList.remove('visible');
+    localStorage.setItem(LS_REFUND, val);
+    startApp();
+    return;
+  }
+
   if (!validateRefundCode(val)) {
     errEl.textContent = 'Enter a Lightning address (user@wallet.com) or LNURL1… string.';
     errEl.classList.add('visible');
     return;
   }
   errEl.classList.remove('visible');
+
+  const origText = btn.textContent;
+  btn.textContent = 'Verifying…';
+  btn.disabled = true;
+
+  let result;
+  try {
+    result = await verifyRefundCode(val);
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
+
+  if (result.ok === false) {
+    errEl.textContent = result.error;
+    errEl.classList.add('visible');
+    return;
+  }
+  if (result.ok === null) {
+    errEl.textContent = result.warn + ' Tap "Get Started" again to proceed anyway.';
+    errEl.classList.add('visible');
+    btn._warnDismissed = val;
+    return;
+  }
+
   localStorage.setItem(LS_REFUND, val);
   startApp();
 }
@@ -1004,6 +2015,12 @@ async function init() {
   $('modal-close-btn').addEventListener('click', () => $('qr-modal').classList.add('hidden'));
   $('qr-modal').addEventListener('click', e => {
     if (e.target === $('qr-modal')) $('qr-modal').classList.add('hidden');
+  });
+
+  // Template preview modal close
+  $('template-preview-close').addEventListener('click', () => $('template-preview-modal').classList.add('hidden'));
+  $('template-preview-modal').addEventListener('click', e => {
+    if (e.target === $('template-preview-modal')) $('template-preview-modal').classList.add('hidden');
   });
 
   // Back buttons in single wizard

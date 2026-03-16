@@ -4,13 +4,18 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
-	siteName string
+	siteName          string
+	siteNameW1        string
+	siteNameW2        string
+	siteNameOrangeWord int
+	siteLogoInner     string
 	baseURL  string
 	mnemonic string
 	apiKey   string
@@ -52,6 +57,26 @@ func loadConfig() (*Server, error) {
 	cfg.siteName = os.Getenv("SITE_NAME")
 	if cfg.siteName == "" {
 		return nil, errMissingEnv("SITE_NAME")
+	}
+	words := strings.Fields(cfg.siteName)
+	if len(words) != 2 {
+		return nil, fmt.Errorf("SITE_NAME must be exactly two words, got %q", cfg.siteName)
+	}
+	cfg.siteNameW1 = words[0]
+	cfg.siteNameW2 = words[1]
+
+	orangeWordStr := os.Getenv("SITE_NAME_ORANGE_WORD")
+	if orangeWordStr == "" {
+		orangeWordStr = "1"
+	}
+	cfg.siteNameOrangeWord, err = strconv.Atoi(orangeWordStr)
+	if err != nil || (cfg.siteNameOrangeWord != 1 && cfg.siteNameOrangeWord != 2) {
+		return nil, fmt.Errorf("SITE_NAME_ORANGE_WORD must be 1 or 2")
+	}
+	if cfg.siteNameOrangeWord == 1 {
+		cfg.siteLogoInner = cfg.siteNameW1 + `<span>` + cfg.siteNameW2 + `</span>`
+	} else {
+		cfg.siteLogoInner = `<span>` + cfg.siteNameW1 + `</span>` + cfg.siteNameW2
 	}
 
 	cfg.baseURL = os.Getenv("BASE_URL")

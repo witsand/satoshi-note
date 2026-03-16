@@ -60,7 +60,10 @@ type AuditStats struct {
 	RedeemedMsat       int64 `json:"redeemed_msat"`
 	RefundedMsat       int64 `json:"refunded_msat"`
 	PendingRefundMsat  int64 `json:"pending_refund_msat"`
-	BreezBalanceMsat   int64 `json:"breez_balance_msat"` // -1 if unavailable
+	BreezBalanceMsat   int64 `json:"breez_balance_msat"`   // -1 if unavailable
+	TotalDepositedMsat  int64 `json:"total_deposited_msat"` // sum of confirmed fund_txs
+	ExpiredNoRefundMsat int64 `json:"expired_no_refund_msat"` // absorbed sats: expired vouchers with no refund address
+	SurplusMsat         int64 `json:"surplus_msat"`           // node balance minus all liabilities; -1 if Breez unavailable
 	TotalDonations     int64 `json:"total_donations"`
 	ConfirmedDonations int64 `json:"confirmed_donations"`
 	DonatedMsat        int64 `json:"donated_msat"`

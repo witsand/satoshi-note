@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Claim Your Bitcoin Voucher — Satoshi Note</title>
+  <title>Claim Your Bitcoin Voucher — {{SITE_NAME_FULL}}</title>
   <meta name="description" content="You've received a Bitcoin Lightning voucher. Claim it instantly with a Lightning wallet.">
   <meta property="og:type" content="website">
   <meta property="og:title" content="You've received Bitcoin! ⚡">
@@ -82,12 +82,24 @@
 </head>
 <body>
 
+<!-- ── Sats info modal ──────────────────────────────────────────────────────── -->
+<div id="sats-info-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <div class="modal-title">What are sats?</div>
+    <p style="font-size:0.875rem;color:var(--text-muted);line-height:1.6;">
+      Satoshis ("sats") are small units of Bitcoin.<br>
+      You can save them, spend them, or send them to anyone in the world.
+    </p>
+    <button class="modal-close" id="sats-info-close">Close</button>
+  </div>
+</div>
+
 <!-- ── About modal ──────────────────────────────────────────────────────────── -->
 <div id="about-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
   <div class="modal-box" style="text-align:left;">
-    <div class="modal-title" style="text-align:center;">About Satoshi Note</div>
+    <div class="modal-title" style="text-align:center;">About {{SITE_NAME_FULL}}</div>
     <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      Satoshi Note lets you create Bitcoin Lightning vouchers — pre-funded links you can share with anyone via WhatsApp, SMS, or printed QR. Recipients claim sats instantly with any Lightning wallet. No exchange account needed.
+      {{SITE_NAME_FULL}} lets you create Bitcoin Lightning vouchers — pre-funded links you can share with anyone via WhatsApp, SMS, or printed QR. Recipients claim sats instantly with any Lightning wallet. No exchange account needed.
     </p>
     <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
       Built on <strong style="color:var(--text);">Bitcoin Lightning</strong> + <strong style="color:var(--text);">Breez SDK</strong>.
@@ -114,7 +126,7 @@
 <div class="app-shell">
 
   <header class="app-header">
-    <a href="/" style="text-decoration:none;"><div class="app-logo">⚡ Satoshi<span>Note</span></div></a>
+    <a href="/" style="text-decoration:none;"><div class="app-logo">⚡ {{SITE_LOGO_INNER}}</div></a>
   </header>
 
   <main class="main-content" id="redeem-main">
@@ -135,7 +147,7 @@
   'use strict';
 
   const params = new URLSearchParams(location.search);
-  const lnurl = params.get('lnurl');
+  const lnurl = params.get('lightning');
   const main = document.getElementById('redeem-main');
 
   // ── "Where to spend" card HTML (reused across states) ────────────────────
@@ -431,12 +443,12 @@
       <div class="redeem-hero">
         <div style="font-size:2.8rem;margin-bottom:10px;">🎁</div>
         <h1>You've received Bitcoin!</h1>
-        <p>Someone sent you a Lightning voucher.<br>Claim it instantly with a Lightning wallet.</p>
+        <p>Someone sent you a Bitcoin voucher.<br>Open a wallet and tap the QR code to claim it.</p>
       </div>
 
       <!-- Amount -->
       <div class="redeem-amount">
-        <div class="redeem-sats">⚡ ${satsFormatted} sats</div>
+        <div class="redeem-sats">⚡ ${satsFormatted} sats <button id="btn-sats-info" style="background:none;border:1px solid var(--text-muted);border-radius:50%;width:18px;height:18px;font-size:0.7rem;color:var(--text-muted);cursor:pointer;line-height:1;padding:0;vertical-align:middle;margin-left:4px;" aria-label="What are sats?">?</button></div>
         <div class="redeem-fiat" id="redeem-fiat-value"></div>
       </div>
 
@@ -447,16 +459,12 @@
 
       <!-- Claim card -->
       <div class="card" style="text-align:center;">
-        <button id="btn-open-wallet-redeem" class="btn btn-primary" style="margin-bottom:0;">⚡ Open wallet and claim</button>
-
-        <div class="claim-divider">or scan with your wallet app</div>
+        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:16px;">Tap the QR code to open your Bitcoin wallet</p>
 
         <div class="qr-wrapper" style="padding:0 0 4px;">
           <div id="redeem-qr-container" class="qr-container"></div>
           <p id="redeem-lnurl-text" class="qr-lnurl" style="margin-top:8px;"></p>
         </div>
-
-        <button id="btn-copy-lnurl-redeem" class="btn btn-secondary" style="margin-top:12px;">Copy Code</button>
       </div>
 
       <!-- Learn More unified card -->
@@ -686,18 +694,14 @@
       }
     });
 
-    // Buttons
-    const openWallet = () => { window.location.href = 'lightning:' + lnurl; };
-    document.getElementById('btn-open-wallet-redeem').addEventListener('click', openWallet);
-
-    document.getElementById('btn-copy-lnurl-redeem').addEventListener('click', async function () {
-      try {
-        await navigator.clipboard.writeText(lnurl);
-        this.textContent = 'Copied!';
-        setTimeout(() => { this.textContent = 'Copy Code'; }, 1500);
-      } catch {
-        prompt('Copy this LNURL:', lnurl);
-      }
+    document.getElementById('btn-sats-info').addEventListener('click', function () {
+      document.getElementById('sats-info-modal').classList.remove('hidden');
+    });
+    document.getElementById('sats-info-close').addEventListener('click', function () {
+      document.getElementById('sats-info-modal').classList.add('hidden');
+    });
+    document.getElementById('sats-info-modal').addEventListener('click', function (e) {
+      if (e.target === this) this.classList.add('hidden');
     });
 
     // Expiry countdown
@@ -719,7 +723,7 @@
         parts.push(String(h).padStart(2, '0') + 'h');
         parts.push(String(m).padStart(2, '0') + 'm');
         parts.push(String(s).padStart(2, '0') + 's');
-        countdownEl.textContent = '⏳ Expires in ' + parts.join(' ');
+        countdownEl.textContent = '⏳ Expires in ' + parts.join(' ') + ' ⏳';
       }
       updateCountdown();
       setInterval(updateCountdown, 1000);

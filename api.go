@@ -26,6 +26,7 @@ func (srv *Server) ServeAPI() {
 	mux.HandleFunc("GET /{$}", srv.handleIndexPage)
 	mux.HandleFunc("GET /redeem", srv.handleRedeemPage)
 	mux.HandleFunc("GET /admin", srv.handleAdminPage)
+	mux.HandleFunc("GET /manifest.json", srv.handleManifest)
 
 	// App Api
 	mux.HandleFunc("POST /voucher/create", srv.handleCreateVouchers)
