@@ -61,6 +61,9 @@ echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
 source ~/.bashrc
 go version
 
+# Install C build tools (required for CGO — used by Breez SDK)
+sudo apt install -y build-essential
+
 # Clone and build
 cd ~
 git clone https://github.com/witsand/satoshi-note.git send-sats
