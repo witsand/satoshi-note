@@ -599,6 +599,7 @@ func (srv *Server) handleIndexPage(w http.ResponseWriter, r *http.Request) {
 	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)
 	html = strings.ReplaceAll(html, "{{SITE_NAME_FULL}}", srv.cfg.siteName)
 	html = strings.ReplaceAll(html, "{{SITE_LOGO_INNER}}", srv.cfg.siteLogoInner)
+	html = strings.ReplaceAll(html, "{{BATCH_ENABLED}}", strconv.FormatBool(srv.cfg.batchEnabled))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(html))
 }

@@ -35,6 +35,7 @@ type Config struct {
 	fundActive              bool
 	redeemActive            bool
 	refundActive            bool
+	batchEnabled            bool
 	invoiceExpirySeconds    int64
 
 	// Optional features — silently disabled if empty
@@ -196,6 +197,7 @@ func loadConfig() (*Server, error) {
 	cfg.fundActive, _ = strconv.ParseBool(os.Getenv("FUND_ACTIVE"))
 	cfg.redeemActive, _ = strconv.ParseBool(os.Getenv("REDEEM_ACTIVE"))
 	cfg.refundActive, _ = strconv.ParseBool(os.Getenv("REFUND_ACTIVE"))
+	cfg.batchEnabled, _ = strconv.ParseBool(os.Getenv("BATCH_ENABLED"))
 
 	if v := os.Getenv("INVOICE_EXPIRY_SECONDS"); v == "" {
 		return nil, errMissingEnv("INVOICE_EXPIRY_SECONDS")

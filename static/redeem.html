@@ -99,16 +99,56 @@
   <div class="modal-box" style="text-align:left;">
     <div class="modal-title" style="text-align:center;">About {{SITE_NAME_FULL}}</div>
     <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      {{SITE_NAME_FULL}} lets you create Bitcoin Lightning vouchers — pre-funded links you can share with anyone via WhatsApp, SMS, or printed QR. Recipients claim sats instantly with any Lightning wallet. No exchange account needed.
-    </p>
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      Built on <strong style="color:var(--text);">Bitcoin Lightning</strong> + <strong style="color:var(--text);">Breez SDK</strong>.
+      {{SITE_NAME_FULL}} lets you send Bitcoin to anyone, even if they don't have a wallet yet.<br><br>Create a voucher, share it, and they can claim the sats whenever they're ready. If they don't, the sats automatically return to you.
     </p>
     <p style="font-size:0.8rem;color:var(--text-muted);line-height:1.6;">
       Open source.
       <span id="about-github-link-redeem"></span>
     </p>
     <button class="modal-close" id="about-close-redeem">Close</button>
+  </div>
+</div>
+
+<!-- ── Terms modal ──────────────────────────────────────────────────────────── -->
+<div id="terms-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+  <div class="modal-box" style="text-align:left;">
+    <div class="modal-title" style="text-align:center;">Terms &amp; Conditions</div>
+
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
+      This service is provided <strong style="color:var(--text);">as-is</strong>, without warranties of any kind.
+      It is experimental software built on the Bitcoin Lightning Network. Use it at your own risk.
+    </p>
+
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
+      Send Sats is a free community tool intended for small, casual transfers. Do not use this service for
+      large amounts of Bitcoin.
+    </p>
+
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
+      While vouchers are designed to return unclaimed sats to the sender after the expiry period, this is
+      <strong style="color:var(--text);">not guaranteed</strong>. Transactions may fail, be delayed, or be lost due to technical issues.
+    </p>
+
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
+      The operator is <strong style="color:var(--text);">not liable</strong> for any loss of funds, failed
+      transactions, or damages arising from use of this service. You are solely responsible for safeguarding
+      voucher links and redemption codes.
+    </p>
+
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
+      This service may be modified, interrupted, or permanently shut down at any time, without notice.
+    </p>
+
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
+      All fees are determined by the Lightning Network and are capped. Fees will never exceed 0.5% or 10 sats.
+      If a payment would exceed this limit, it will not be processed.
+    </p>
+
+    <p style="font-size:0.8rem;color:var(--text-muted);line-height:1.6;">
+      By using this service you agree to these terms.
+    </p>
+
+    <button class="modal-close" id="terms-close">Close</button>
   </div>
 </div>
 
@@ -135,6 +175,7 @@
 
   <footer class="app-footer">
     <button class="footer-btn" id="btn-about-redeem">About</button>
+    <button class="footer-btn" id="btn-terms-redeem">Terms</button>
     <a class="footer-btn" id="footer-github-redeem" href="#" target="_blank" rel="noopener" style="display:none;">GitHub</a>
     <button class="footer-btn footer-btn-donate" id="btn-donate-redeem">⚡ Donate</button>
   </footer>
@@ -150,330 +191,17 @@
   const lnurl = params.get('lightning');
   const main = document.getElementById('redeem-main');
 
-  // ── "Where to spend" card HTML (reused across states) ────────────────────
-  const spendCardHTML = `
-    <div class="card" style="text-align:left;">
-      <p class="card-title">Where to spend Bitcoin</p>
-
-      <div class="spend-item">
-        <span class="spend-icon">🌀</span>
-        <div>
-          <div class="spend-title">Bitcoin circular economies in SA</div>
-          <div class="spend-desc">
-            Entire communities where you can live on Bitcoin:
-            <strong>Witsand</strong>,
-            <strong>Mossel Bay</strong> (<a href="https://bitcoinekasi.com" target="_blank" rel="noopener">bitcoinekasi.com</a>),
-            <strong>Plettenberg Bay</strong> (<a href="https://bitcoinplett.cx" target="_blank" rel="noopener">bitcoinplett.cx</a>),
-            and <strong>Sedgefield</strong> — especially the Saturday Market.
-            All have regular local meetups.
-          </div>
-        </div>
-      </div>
-
-      <div class="spend-item">
-        <span class="spend-icon">🗺️</span>
-        <div>
-          <div class="spend-title">Find nearby merchants</div>
-          <div class="spend-desc">
-            <a href="https://btcmap.org" target="_blank" rel="noopener">BTCMap.org</a> and the
-            <a href="https://goo.gl/maps/tKHJVbVzEuBQd7F8A" target="_blank" rel="noopener">Money Badger map</a>
-            show thousands of Bitcoin-accepting businesses across South Africa.
-          </div>
-        </div>
-      </div>
-
-      <div class="spend-item">
-        <span class="spend-icon">🏪</span>
-        <div>
-          <div class="spend-title">Zapper &amp; Scan to Pay merchants</div>
-          <div class="spend-desc">
-            Pay at any store that accepts Zapper or Scan to Pay — including
-            Pick &amp; Pay, Dischem, Clicks, Engen, Shell, Total, Wimpy and many more.
-          </div>
-        </div>
-      </div>
-
-      <div class="spend-item">
-        <span class="spend-icon">🎁</span>
-        <div>
-          <div class="spend-title">Gift cards &amp; top-ups</div>
-          <div class="spend-desc">
-            Buy gift cards for hundreds of global brands at
-            <a href="https://bitrefill.com" target="_blank" rel="noopener">Bitrefill.com</a> —
-            Netflix, Amazon, Uber, Airtime top-ups and more.
-          </div>
-        </div>
-      </div>
-
-      <div class="spend-item">
-        <span class="spend-icon">🤝</span>
-        <div>
-          <div class="spend-title">Bitcoin meetups</div>
-          <div class="spend-desc">
-            Active communities in Cape Town, Stellenbosch, Pretoria, and Johannesburg.
-            Find events and dates on Twitter/X — search for local Bitcoin groups in your city.
-          </div>
-        </div>
-      </div>
-
-      <div class="spend-item">
-        <span class="spend-icon">💸</span>
-        <div>
-          <div class="spend-title">Send to anyone, instantly</div>
-          <div class="spend-desc">Lightning payments settle in under a second, worldwide, for near-zero fees.</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="card" style="text-align:left;">
-      <p class="card-title">Get more Bitcoin</p>
-      <div class="spend-item">
-        <span class="spend-icon">💰</span>
-        <div>
-          <div class="spend-title"><a href="https://54052.co.za" target="_blank" rel="noopener"><strong>54052.co.za</strong></a></div>
-          <div class="spend-desc">
-            This is our recommended South African exchange — it supports Lightning, so buying and withdrawing Bitcoin is fast and cheap with low fees.<br><br>Using services that focus on Bitcoin only is very important. They understand that our communities don't need more speculation and gambling, and that keeping scammers and their crypto products as far away as possible from everyday people is a good thing.<br><br>
-            LUNO and VALR have been around for longer and as a result are stuck using outdated technology — they don't support Lightning, which makes it slower and more expensive to move your Bitcoin out. They work, but they're not the preferred choice. As mentioned before, their preference to advertise Cryto along side Bitcoin is also a reason to use their services as little as possible.<br><br>
-            ⚠️ <strong>KYC exchanges (where they ask for your ID) are fine for buying Bitcoin — but never use them to store or spend it.</strong>
-            When you leave your Bitcoin on an exchange or in a wallet tied to your identity, you give up your privacy and your control.
-            Bitcoin is your property. Treat it like cash — you wouldn't leave your cash at the shop.
-            Always move large amounts of bitcoin to a self-custodial wallet after buying, and move spending bitcoin to a wallet that respects your privacy.<br><br>
-            <strong>Privacy-first wallets to consider:</strong>
-            <a href="https://aqua.net" target="_blank" rel="noopener">Aqua Wallet</a> (uses the Liquid Federation)
-            and <a href="https://conduit.cash" target="_blank" rel="noopener">Conduit Wallet</a> (uses Fedimint — a community-custody model).
-            Both are great tools for people who take their right to privacy seriously.
-          </div>
-        </div>
-      </div>
-    </div>
-  `;
-
-  // ── State: invalid link ─────────────────────────────────────────────────
-  function showInvalid() {
-    main.innerHTML = `
-      <div class="state-card">
-        <div class="state-icon">🔗</div>
-        <div class="state-title">This link isn't valid</div>
-        <div class="state-desc">Check the link or contact the sender.</div>
-      </div>
-      ${spendCardHTML}`;
-  }
-
-  if (!lnurl || !lnurl.toUpperCase().startsWith('LNURL1')) {
-    showInvalid();
-    return;
-  }
-
-  // ── Minimal bech32 LNURL decoder ─────────────────────────────────────────
-  function decodeLNURL(lnurl) {
-    const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
-    const str = lnurl.toLowerCase();
-    const sep = str.lastIndexOf('1');
-    const data5 = str.slice(sep + 1, -6).split('').map(c => CHARSET.indexOf(c));
-    let acc = 0, bits = 0;
-    const bytes = [];
-    for (const v of data5) {
-      acc = (acc << 5) | v;
-      bits += 5;
-      while (bits >= 8) { bits -= 8; bytes.push((acc >> bits) & 0xff); }
-    }
-    return new TextDecoder().decode(new Uint8Array(bytes));
-  }
-
-  // ── Fetch status then branch ──────────────────────────────────────────────
-  async function init() {
-    let secret;
-    try {
-      const decoded = decodeLNURL(lnurl);
-      secret = new URL(decoded).pathname.split('/').pop();
-    } catch {
-      showInvalid();
-      return;
-    }
-
-    let status;
-    try {
-      const resp = await fetch('/voucher/status/' + secret);
-      if (!resp.ok) { showInvalid(); return; }
-      status = await resp.json();
-    } catch {
-      showInvalid();
-      return;
-    }
-
-    const { active, refunded, balance_msat, expires_at } = status;
-
-    // ── State: inactive + refunded (expired) ────────────────────────────
-    if (!active && refunded) {
-      main.innerHTML = `
-        <div class="state-card">
-          <div class="state-icon">⏰</div>
-          <div class="state-title">Voucher expired</div>
-          <div class="state-desc">This voucher expired before it was redeemed.<br>Ask the sender for a new one.</div>
-        </div>
-        ${spendCardHTML}`;
-      return;
-    }
-
-    // ── State: inactive + not refunded (already redeemed) ───────────────
-    if (!active && !refunded) {
-      main.innerHTML = `
-        <div class="state-card">
-          <div class="state-icon">✅</div>
-          <div class="state-title">Already claimed</div>
-          <div class="state-desc">This voucher has already been redeemed.</div>
-        </div>
-        ${spendCardHTML}`;
-      return;
-    }
-
-    // ── State: active + unfunded ─────────────────────────────────────────
-    if (active && balance_msat === 0) {
-      main.innerHTML = `
-        <div class="state-card">
-          <div class="state-icon">⏳</div>
-          <div class="state-title">Not funded yet</div>
-          <div class="state-desc">This voucher hasn't been loaded with Bitcoin yet.<br>Come back once the sender has loaded it.</div>
-          <button class="btn btn-secondary btn-sm" style="width:auto;margin:0 auto;" onclick="location.reload()">Check again</button>
-        </div>
-        <div class="card" style="text-align:left;">
-          <p class="card-title">Where to spend Bitcoin</p>
-          <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">Your voucher hasn't been loaded yet — but here's where you'll be able to spend it once it is:</p>
-
-          <div class="spend-item">
-            <span class="spend-icon">🏪</span>
-            <div>
-              <div class="spend-title">Zapper &amp; Scan to Pay merchants</div>
-              <div class="spend-desc">
-                Pay at any store that accepts Zapper or Scan to Pay — including
-                Pick &amp; Pay, Dischem, Clicks, Engen, Shell, Total, Wimpy and many more.
-              </div>
-            </div>
-          </div>
-
-          <div class="spend-item">
-            <span class="spend-icon">🗺️</span>
-            <div>
-              <div class="spend-title">Find nearby merchants</div>
-              <div class="spend-desc">
-                <a href="https://btcmap.org" target="_blank" rel="noopener">BTCMap.org</a> and the
-                <a href="https://goo.gl/maps/tKHJVbVzEuBQd7F8A" target="_blank" rel="noopener">Money Badger map</a>
-                show thousands of Bitcoin-accepting businesses across South Africa.
-              </div>
-            </div>
-          </div>
-
-          <div class="spend-item">
-            <span class="spend-icon">🎁</span>
-            <div>
-              <div class="spend-title">Gift cards &amp; top-ups</div>
-              <div class="spend-desc">
-                Buy gift cards for hundreds of global brands at
-                <a href="https://bitrefill.com" target="_blank" rel="noopener">Bitrefill.com</a> —
-                Netflix, Amazon, Uber, Airtime top-ups and more.
-              </div>
-            </div>
-          </div>
-
-          <div class="spend-item">
-            <span class="spend-icon">🌀</span>
-            <div>
-              <div class="spend-title">Bitcoin circular economies in SA</div>
-              <div class="spend-desc">
-                Entire communities where you can live on Bitcoin:
-                <strong>Witsand</strong>,
-                <strong>Mossel Bay</strong> (<a href="https://bitcoinekasi.com" target="_blank" rel="noopener">bitcoinekasi.com</a>),
-                <strong>Plettenberg Bay</strong> (<a href="https://bitcoinplett.cx" target="_blank" rel="noopener">bitcoinplett.cx</a>),
-                and <strong>Sedgefield</strong> — especially the Saturday Market.
-                All have regular local meetups.
-              </div>
-            </div>
-          </div>
-
-          <div class="spend-item">
-            <span class="spend-icon">🤝</span>
-            <div>
-              <div class="spend-title">Bitcoin meetups</div>
-              <div class="spend-desc">
-                Active communities in Cape Town, Stellenbosch, Pretoria, and Johannesburg.
-                Find events and dates on Twitter/X — search for local Bitcoin groups in your city.
-              </div>
-            </div>
-          </div>
-
-          <div class="spend-item">
-            <span class="spend-icon">💸</span>
-            <div>
-              <div class="spend-title">Send to anyone, instantly</div>
-              <div class="spend-desc">Lightning payments settle in under a second, worldwide, for near-zero fees.</div>
-            </div>
-          </div>
-
-          <div class="spend-item">
-            <span class="spend-icon">💰</span>
-            <div>
-              <div class="spend-title">Get more Bitcoin</div>
-              <div class="spend-desc">
-                <a href="https://54052.co.za" target="_blank" rel="noopener"><strong>54052.co.za</strong></a>
-                is our recommended South African exchange — it supports Lightning, so buying and withdrawing Bitcoin is fast and cheap with low fees.<br><br>
-                <strong>LUNO</strong> and <strong>VALR</strong> are more established but use outdated technology — they don't support Lightning, which makes it slower and more expensive to move your Bitcoin out. They work, but they're not the preferred choice.<br><br>
-                ⚠️ <strong>KYC exchanges (where they ask for your ID) are fine for buying Bitcoin — but never use them to store or spend it.</strong>
-                When you leave your Bitcoin on an exchange or in a wallet tied to your identity, you give up your privacy and your control.
-                Bitcoin is your property. Treat it like cash — you wouldn't leave your cash at the shop.
-                Always move Bitcoin to a self-custodial wallet after buying.<br><br>
-                <strong>Privacy-first wallets to consider:</strong>
-                <a href="https://aquawallet.io" target="_blank" rel="noopener">Aqua Wallet</a> (uses the Liquid Network for extra privacy)
-                and <strong>Conduit Wallet</strong> (uses Fedimint — a community-custody model that hides your balance even from the server).
-                Both are great tools for people who take their financial privacy seriously.
-              </div>
-            </div>
-          </div>
-        </div>`;
-      return;
-    }
-
-    // ── State: active + funded (happy path) ──────────────────────────────
-    const sats = Math.floor(balance_msat / 1000);
-    const satsFormatted = sats.toLocaleString();
-
-    const hasExpiry = expires_at && expires_at > 0;
-
-    main.innerHTML = `
-      <!-- Hero -->
-      <div class="redeem-hero">
-        <div style="font-size:2.8rem;margin-bottom:10px;">🎁</div>
-        <h1>You've received Bitcoin!</h1>
-        <p>Someone sent you a Bitcoin voucher.<br>Open a wallet and tap the QR code to claim it.</p>
-      </div>
-
-      <!-- Amount -->
-      <div class="redeem-amount">
-        <div class="redeem-sats">⚡ ${satsFormatted} sats <button id="btn-sats-info" style="background:none;border:1px solid var(--text-muted);border-radius:50%;width:18px;height:18px;font-size:0.7rem;color:var(--text-muted);cursor:pointer;line-height:1;padding:0;vertical-align:middle;margin-left:4px;" aria-label="What are sats?">?</button></div>
-        <div class="redeem-fiat" id="redeem-fiat-value"></div>
-      </div>
-
-      <!-- Expiry bar -->
-      <div class="voucher-info-bar" ${hasExpiry ? '' : 'style="display:none;"'}>
-        <span class="expiry" id="expiry-countdown"></span>
-      </div>
-
-      <!-- Claim card -->
-      <div class="card" style="text-align:center;">
-        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:16px;">Tap the QR code to open your Bitcoin wallet</p>
-
-        <div class="qr-wrapper" style="padding:0 0 4px;">
-          <div id="redeem-qr-container" class="qr-container"></div>
-          <p id="redeem-lnurl-text" class="qr-lnurl" style="margin-top:8px;"></p>
-        </div>
-      </div>
-
-      <!-- Learn More unified card -->
+  // ── Unified "Learn More" info card (accordion) ───────────────────────────
+  function buildInfoCard(openDefault) {
+    const walletOpen = openDefault === 'wallet' ? ' open' : '';
+    const spendOpen  = openDefault === 'spend'  ? ' open' : '';
+    return `
       <div class="card" style="margin-bottom:20px;text-align:left;">
         <p class="card-title">Learn More</p>
 
         <p class="faq-section-label">🟠 Getting Started</p>
 
-        <details class="faq-item">
+        <details class="faq-item"${walletOpen}>
           <summary class="faq-question">Don't have a wallet yet?<span style="color:var(--text-muted);">＋</span></summary>
           <div class="faq-answer">
             <div class="tabs" id="wallet-tabs" style="margin-bottom:12px;">
@@ -547,15 +275,75 @@
 
         <p class="faq-section-label">🟠 Spending Bitcoin</p>
 
-        <details class="faq-item">
+        <details class="faq-item"${spendOpen}>
           <summary class="faq-question">Where can I spend Bitcoin in South Africa?<span style="color:var(--text-muted);">＋</span></summary>
           <div class="faq-answer">
-            <strong>Zapper &amp; Scan to Pay merchants</strong> — Pay at Pick &amp; Pay, Dischem, Clicks, Engen, Shell, Total, Wimpy and many more.<br><br>
-            <strong>Find nearby merchants</strong> — <a href="https://btcmap.org" target="_blank" rel="noopener">BTCMap.org</a> and the <a href="https://goo.gl/maps/tKHJVbVzEuBQd7F8A" target="_blank" rel="noopener">Money Badger map</a> show thousands of Bitcoin-accepting businesses across South Africa.<br><br>
-            <strong>Gift cards &amp; top-ups</strong> — Buy gift cards at <a href="https://bitrefill.com" target="_blank" rel="noopener">Bitrefill.com</a> — Netflix, Amazon, Uber, Airtime and more.<br><br>
-            <strong>Bitcoin circular economies in SA</strong> — Entire communities where you can live on Bitcoin: <strong>Witsand</strong>, <strong>Mossel Bay</strong> (<a href="https://bitcoinekasi.com" target="_blank" rel="noopener">bitcoinekasi.com</a>), <strong>Plettenberg Bay</strong> (<a href="https://bitcoinplett.cx" target="_blank" rel="noopener">bitcoinplett.cx</a>), and <strong>Sedgefield</strong> — especially the Saturday Market. All have regular meetups.<br><br>
-            <strong>Bitcoin meetups</strong> — Active communities in Cape Town, Stellenbosch, Pretoria, and Johannesburg. Search for local Bitcoin groups on Twitter/X.<br><br>
-            <strong>Lightning P2P</strong> — Send to anyone with a Lightning wallet, anywhere in the world, in under a second for near-zero fees.
+            <div class="spend-item">
+              <span class="spend-icon">🌀</span>
+              <div>
+                <div class="spend-title">Bitcoin circular economies in SA</div>
+                <div class="spend-desc">
+                  Entire communities where you can live on Bitcoin:
+                  <strong>Witsand</strong>,
+                  <strong>Mossel Bay</strong> (<a href="https://bitcoinekasi.com" target="_blank" rel="noopener">bitcoinekasi.com</a>),
+                  <strong>Plettenberg Bay</strong> (<a href="https://bitcoinplett.cx" target="_blank" rel="noopener">bitcoinplett.cx</a>),
+                  <strong>De Rust</strong>,
+                  <strong>Sedgefield</strong> — especially the Saturday Market,
+                  <strong>Stellenbosch</strong>,
+                  and <strong>Knysna</strong>.
+                  <br>All have regular local meetups.
+                </div>
+              </div>
+            </div>
+            <div class="spend-item">
+              <span class="spend-icon">🗺️</span>
+              <div>
+                <div class="spend-title">Find nearby merchants</div>
+                <div class="spend-desc">
+                  <a href="https://btcmap.org" target="_blank" rel="noopener">BTCMap.org</a> and the
+                  <a href="https://goo.gl/maps/tKHJVbVzEuBQd7F8A" target="_blank" rel="noopener">Money Badger map</a>
+                  show thousands of Bitcoin-accepting businesses across South Africa.
+                </div>
+              </div>
+            </div>
+            <div class="spend-item">
+              <span class="spend-icon">🏪</span>
+              <div>
+                <div class="spend-title">Zapper &amp; Scan to Pay merchants</div>
+                <div class="spend-desc">
+                  Pay at any store that accepts Zapper or Scan to Pay — including
+                  Pick &amp; Pay, Dischem, Clicks, Engen, Shell, Total, Wimpy and many more.
+                </div>
+              </div>
+            </div>
+            <div class="spend-item">
+              <span class="spend-icon">🎁</span>
+              <div>
+                <div class="spend-title">Gift cards &amp; top-ups</div>
+                <div class="spend-desc">
+                  Buy gift cards for hundreds of global brands at
+                  <a href="https://bitrefill.com" target="_blank" rel="noopener">Bitrefill.com</a> —
+                  Netflix, Amazon, Uber, Airtime top-ups and more.
+                </div>
+              </div>
+            </div>
+            <div class="spend-item">
+              <span class="spend-icon">🤝</span>
+              <div>
+                <div class="spend-title">Bitcoin meetups</div>
+                <div class="spend-desc">
+                  Active communities in Cape Town, Pretoria, and Johannesburg.
+                  Find events and dates on Twitter/X — search for local Bitcoin groups in your city.
+                </div>
+              </div>
+            </div>
+            <div class="spend-item">
+              <span class="spend-icon">💸</span>
+              <div>
+                <div class="spend-title">Send to anyone, instantly</div>
+                <div class="spend-desc">Lightning payments settle in under a second, worldwide, for near-zero fees.</div>
+              </div>
+            </div>
           </div>
         </details>
 
@@ -577,8 +365,24 @@
         <details class="faq-item">
           <summary class="faq-question">Where do I buy Bitcoin in South Africa?<span style="color:var(--text-muted);">＋</span></summary>
           <div class="faq-answer">
-            <strong><a href="https://54052.co.za" target="_blank" rel="noopener">54052.co.za</a></strong> — Recommended. Supports Lightning, low fees, Bitcoin-only ethos. Fast deposits and withdrawals.<br><br>
-            <strong>LUNO / VALR</strong> — Established but use outdated technology (no Lightning support), making it slower and more expensive to move Bitcoin out. They also push crypto alongside Bitcoin. Use as a last resort.
+            <div class="spend-item">
+              <span class="spend-icon">💰</span>
+              <div>
+                <div class="spend-title"><a href="https://54052.co.za" target="_blank" rel="noopener"><strong>54052.co.za</strong></a></div>
+                <div class="spend-desc">
+                  This is our recommended South African exchange — it supports Lightning, so buying and withdrawing Bitcoin is fast and cheap with low fees.<br><br>Using services that focus on Bitcoin only is very important. They understand that our communities don't need more speculation and gambling, and that keeping scammers and their crypto products as far away as possible from everyday people is a good thing.<br><br>
+                  LUNO and VALR have been around for longer and as a result are stuck using outdated technology — they don't support Lightning, which makes it slower and more expensive to move your Bitcoin out. They work, but they're not the preferred choice. As mentioned before, their preference to advertise Cryto along side Bitcoin is also a reason to use their services as little as possible.<br><br>
+                  ⚠️ <strong>KYC exchanges (where they ask for your ID) are fine for buying Bitcoin — but never use them to store or spend it.</strong>
+                  When you leave your Bitcoin on an exchange or in a wallet tied to your identity, you give up your privacy and your control.
+                  Bitcoin is your property. Treat it like cash — you wouldn't leave your cash at the shop.
+                  Always move large amounts of bitcoin to a self-custodial wallet after buying, and move spending bitcoin to a wallet that respects your privacy.<br><br>
+                  <strong>Privacy-first wallets to consider:</strong>
+                  <a href="https://aqua.net" target="_blank" rel="noopener">Aqua Wallet</a> (uses the Liquid Federation)
+                  and <a href="https://conduit.cash" target="_blank" rel="noopener">Conduit Wallet</a> (uses Fedimint — a community-custody model).
+                  Both are great tools for people who take their right to privacy seriously.
+                </div>
+              </div>
+            </div>
           </div>
         </details>
 
@@ -670,6 +474,137 @@
         </details>
       </div>
     `;
+  }
+
+  // ── State: invalid link ─────────────────────────────────────────────────
+  function showInvalid() {
+    main.innerHTML = `
+      <div class="state-card">
+        <div class="state-icon">🔗</div>
+        <div class="state-title">This link isn't valid</div>
+        <div class="state-desc">Check the link or contact the sender.</div>
+      </div>
+      ${buildInfoCard(null)}`;
+  }
+
+  if (!lnurl || !lnurl.toUpperCase().startsWith('LNURL1')) {
+    showInvalid();
+    return;
+  }
+
+  // ── Minimal bech32 LNURL decoder ─────────────────────────────────────────
+  function decodeLNURL(lnurl) {
+    const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+    const str = lnurl.toLowerCase();
+    const sep = str.lastIndexOf('1');
+    const data5 = str.slice(sep + 1, -6).split('').map(c => CHARSET.indexOf(c));
+    let acc = 0, bits = 0;
+    const bytes = [];
+    for (const v of data5) {
+      acc = (acc << 5) | v;
+      bits += 5;
+      while (bits >= 8) { bits -= 8; bytes.push((acc >> bits) & 0xff); }
+    }
+    return new TextDecoder().decode(new Uint8Array(bytes));
+  }
+
+  // ── Fetch status then branch ──────────────────────────────────────────────
+  async function init() {
+    let secret;
+    try {
+      const decoded = decodeLNURL(lnurl);
+      secret = new URL(decoded).pathname.split('/').pop();
+    } catch {
+      showInvalid();
+      return;
+    }
+
+    let status;
+    try {
+      const resp = await fetch('/voucher/status/' + secret);
+      if (!resp.ok) { showInvalid(); return; }
+      status = await resp.json();
+    } catch {
+      showInvalid();
+      return;
+    }
+
+    const { active, refunded, balance_msat, expires_at } = status;
+
+    // ── State: inactive + refunded (expired) ────────────────────────────
+    if (!active && refunded) {
+      main.innerHTML = `
+        <div class="state-card">
+          <div class="state-icon">⏰</div>
+          <div class="state-title">Voucher expired</div>
+          <div class="state-desc">This voucher expired before it was redeemed.<br>Ask the sender for a new one.</div>
+        </div>
+        ${buildInfoCard(null)}`;
+      return;
+    }
+
+    // ── State: inactive + not refunded (already redeemed) ───────────────
+    if (!active && !refunded) {
+      main.innerHTML = `
+        <div class="state-card">
+          <div class="state-icon">✅</div>
+          <div class="state-title">Already claimed</div>
+          <div class="state-desc">This voucher has already been redeemed.</div>
+        </div>
+        ${buildInfoCard('spend')}`;
+      return;
+    }
+
+    // ── State: active + unfunded ─────────────────────────────────────────
+    if (active && balance_msat === 0) {
+      main.innerHTML = `
+        <div class="state-card">
+          <div class="state-icon">⏳</div>
+          <div class="state-title">Not funded yet</div>
+          <div class="state-desc">This voucher hasn't been loaded with Bitcoin yet.<br>Come back once the sender has loaded it.</div>
+          <button class="btn btn-secondary btn-sm" style="width:auto;margin:0 auto;" onclick="location.reload()">Check again</button>
+        </div>
+        ${buildInfoCard(null)}`;
+      return;
+    }
+
+    // ── State: active + funded (happy path) ──────────────────────────────
+    const sats = Math.floor(balance_msat / 1000);
+    const satsFormatted = sats.toLocaleString();
+
+    const hasExpiry = expires_at && expires_at > 0;
+
+    main.innerHTML = `
+      <!-- Hero -->
+      <div class="redeem-hero">
+        <div style="font-size:2.8rem;margin-bottom:10px;">🎁</div>
+        <h1>You've received Bitcoin!</h1>
+        <p>Someone sent you a Bitcoin voucher.<br>Open a wallet and tap the QR code to claim it.</p>
+      </div>
+
+      <!-- Amount -->
+      <div class="redeem-amount">
+        <div class="redeem-sats">⚡ ${satsFormatted} sats <button id="btn-sats-info" style="background:none;border:1px solid var(--text-muted);border-radius:50%;width:18px;height:18px;font-size:0.7rem;color:var(--text-muted);cursor:pointer;line-height:1;padding:0;vertical-align:middle;margin-left:4px;" aria-label="What are sats?">?</button></div>
+        <div class="redeem-fiat" id="redeem-fiat-value"></div>
+      </div>
+
+      <!-- Expiry bar -->
+      <div class="voucher-info-bar" ${hasExpiry ? '' : 'style="display:none;"'}>
+        <span class="expiry" id="expiry-countdown"></span>
+      </div>
+
+      <!-- Claim card -->
+      <div class="card" style="text-align:center;">
+        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:16px;">Tap the QR code to open your Bitcoin wallet</p>
+
+        <div class="qr-wrapper" style="padding:0 0 4px;">
+          <div id="redeem-qr-container" class="qr-container"></div>
+          <p id="redeem-lnurl-text" class="qr-lnurl" style="margin-top:8px;"></p>
+        </div>
+      </div>
+
+      ${buildInfoCard('wallet')}
+    `;
 
     // Render QR
     const container = document.getElementById('redeem-qr-container');
@@ -748,6 +683,34 @@
         });
       } catch (e) { /* silently ignore */ }
     })();
+
+    // ── Background polling — auto-transition when voucher is redeemed ──────
+    const pollInterval = setInterval(async function () {
+      try {
+        const r = await fetch('/voucher/status/' + secret);
+        if (!r.ok) return;
+        const s = await r.json();
+        if (s.active) return;
+        clearInterval(pollInterval);
+        if (s.refunded) {
+          main.innerHTML = `
+            <div class="state-card">
+              <div class="state-icon">⏰</div>
+              <div class="state-title">Voucher expired</div>
+              <div class="state-desc">This voucher expired before it was redeemed.<br>Ask the sender for a new one.</div>
+            </div>
+            ${buildInfoCard(null)}`;
+        } else {
+          main.innerHTML = `
+            <div class="state-card">
+              <div class="state-icon">✅</div>
+              <div class="state-title">Already claimed</div>
+              <div class="state-desc">This voucher has already been redeemed.</div>
+            </div>
+            ${buildInfoCard('spend')}`;
+        }
+      } catch { /* silently ignore network errors */ }
+    }, 12000);
   }
 
   init();
@@ -784,6 +747,16 @@
       document.getElementById('about-modal').classList.add('hidden');
     });
     document.getElementById('about-modal').addEventListener('click', function (e) {
+      if (e.target === this) this.classList.add('hidden');
+    });
+
+    document.getElementById('btn-terms-redeem').addEventListener('click', function () {
+      document.getElementById('terms-modal').classList.remove('hidden');
+    });
+    document.getElementById('terms-close').addEventListener('click', function () {
+      document.getElementById('terms-modal').classList.add('hidden');
+    });
+    document.getElementById('terms-modal').addEventListener('click', function (e) {
       if (e.target === this) this.classList.add('hidden');
     });
 
