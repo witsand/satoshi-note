@@ -2002,7 +2002,13 @@ async function init() {
     showScreen('screen-history');
   });
 
-  $('nav-back-from-history').addEventListener('click', () => showScreen('screen-app'));
+  $('nav-back-from-history').addEventListener('click', () => {
+    if (localStorage.getItem(LS_REFUND)) {
+      showScreen('screen-app');
+    } else {
+      showScreen('screen-onboarding');
+    }
+  });
 
   // Change refund code
   $('btn-change-refund').addEventListener('click', () => {
