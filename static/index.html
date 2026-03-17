@@ -121,6 +121,15 @@
         <div id="single-step-1">
           <div class="card">
             <p class="card-title">Create a Voucher</p>
+            <div class="form-group">
+            <label>Voucher Expiry</label>
+              <div class="pill-group" id="single-expiry-pills">
+                <button type="button" class="pill-btn" data-secs="86400">1 day</button>
+                <button type="button" class="pill-btn active" data-secs="259200">3 days</button>
+                <button type="button" class="pill-btn" data-secs="1209600">2 weeks</button>
+                <button type="button" class="pill-btn" data-secs="2592000">1 month</button>
+              </div>
+            </div>
             <label style="display:flex;align-items:center;gap:6px;">Recipient's Phone Number <button type="button" id="btn-phone-info" style="background:none;border:1px solid var(--text-muted);border-radius:50%;width:18px;height:18px;font-size:0.7rem;color:var(--text-muted);cursor:pointer;line-height:1;padding:0;flex-shrink:0;" aria-label="About phone number">?</button></label>
             <div class="input-row">
               <div id="dial-code-wrapper" class="dial-dropdown">
@@ -135,15 +144,6 @@
                 placeholder="82 123 4567" autocomplete="off">
             </div>
             <div id="single-step1-error" class="error-msg"></div>
-            <div class="form-group">
-            <label>Voucher Expiry</label>
-              <div class="pill-group" id="single-expiry-pills">
-                <button type="button" class="pill-btn active" data-secs="259200">3 days</button>
-                <button type="button" class="pill-btn" data-secs="1209600">2 weeks</button>
-                <button type="button" class="pill-btn" data-secs="2592000">1 month</button>
-                <button type="button" class="pill-btn" data-secs="7776000">3 months</button>
-              </div>
-            </div>
           </div>
           <div class="notice">Unclaimed sats will automatically return to your Lightning Address. Next you’ll fund the voucher with your Bitcoin wallet.</div>
           <button id="btn-create-single" class="btn btn-primary">Create Voucher</button>
@@ -153,11 +153,12 @@
         <div id="single-step-2" class="hidden">
           <div class="card">
             <p class="card-title">Fund your voucher</p>
-            <label>Scan the QR code or tap it to open your Bitcoin wallet. Send any amount of sats to fund the voucher.</label>
+            <label>⚠️ After paying, come back here to send the voucher.</label>
+            <label>👍 Scan the QR code or tap it to open your Bitcoin wallet. Send any amount of sats to fund the voucher.</label>
             <label id="step2-phone-row">
             </label>
             <div class="qr-wrapper">
-              <p class="qr-lnurl"><strong>Voucher for: </strong><span id="step2-phone-display"></span></p>
+              <p id="step2-voucher-for" class="qr-lnurl"><strong>Voucher for: </strong><span id="step2-phone-display"></span></p>
               <div id="single-qr-container" class="qr-container"></div>
               <p id="single-lnurl-text" class="qr-lnurl"></p>
             </div>

@@ -87,6 +87,7 @@
 
   // ── Unified "Learn More" info card (accordion) ───────────────────────────
   function buildInfoCard(openDefault) {
+    const blinkOpen  = openDefault === 'wallet' ? ' open' : '';
     const spendOpen  = openDefault === 'spend'  ? ' open' : '';
     return `
       <div class="card" style="margin-bottom:20px;text-align:left;">
@@ -94,81 +95,75 @@
 
         <p class="faq-section-label">🟠 Getting Started</p>
 
-        <!-- Blink: always visible -->
-        <div style="padding: 10px 0 14px; border-bottom: 1px solid var(--surface-2);">
-          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-            <span style="font-weight:600;font-size:0.9rem;">Download Blink</span>
+        <details class="faq-item"${blinkOpen}>
+          <summary class="faq-question">Download Blink
             <span style="background:var(--orange);color:#000;font-size:0.68rem;font-weight:700;padding:2px 8px;border-radius:10px;letter-spacing:0.3px;">Recommended</span>
+            <span style="color:var(--text-muted);">＋</span>
+          </summary>
+          <div class="faq-answer" style="padding-top:8px;">
+            <div class="wallet-card-links" style="margin-bottom:10px;">
+              <a class="wallet-link" href="https://blink.sv" target="_blank" rel="noopener">blink.sv</a>
+              <a class="wallet-link" href="https://play.google.com/store/apps/details?id=com.galoyapp" target="_blank" rel="noopener">Play Store</a>
+              <a class="wallet-link" href="https://github.com/blinkbitcoin/blink-mobile/releases/latest" target="_blank" rel="noopener">APK</a>
+              <a class="wallet-link" href="https://apps.apple.com/us/app/blink-bitcoin-wallet/id1531383905" target="_blank" rel="noopener">App Store</a>
+            </div>
+            <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;">✅ Great for beginners. Low setup, fast to start. Your phone number is your backup.</p>
+            <p class="section-label">Steps to get started</p>
+            <ol class="steps-list">
+              <li><strong>Download Blink</strong>From the App Store, Play Store, or GitHub.</li>
+              <li><strong>Open the app</strong>Tap "Create new account" -> "Accept" -> "Whatsapp" -> "Use WhatsApp"</li>
+              <li><strong>Enter your phone number</strong>Tap "Send via WhatsApp". This is your backup. Confirm the 6 digit code.</li>
+              <li><strong>Come back here</strong>Tap the QR code above. This will open Blink and allow you to redeem the bitcoin ⚡</li>
+            </ol>
           </div>
-          <div class="wallet-card-links" style="margin-bottom:10px;">
-            <a class="wallet-link" href="https://blink.sv" target="_blank" rel="noopener">blink.sv</a>
-            <a class="wallet-link" href="https://apps.apple.com/us/app/blink-bitcoin-wallet/id1531383905" target="_blank" rel="noopener">App Store</a>
-            <a class="wallet-link" href="https://play.google.com/store/apps/details?id=com.galoyapp" target="_blank" rel="noopener">Play Store</a>
-            <a class="wallet-link" href="https://github.com/blinkbitcoin/blink-mobile/releases/latest" target="_blank" rel="noopener">GitHub (APK)</a>
-          </div>
-          <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;">✅ Great for beginners. Low setup, fast to start. Your phone number is your backup.</p>
-          <p class="section-label">Steps to get started</p>
-          <ol class="steps-list">
-            <li><strong>Download Blink</strong>From the App Store, Play Store, or GitHub.</li>
-            <li><strong>Open the app</strong>Tap "Create new account" -> "Accept" -> "Whatsapp" -> "Use WhatsApp"</li>
-            <li><strong>Enter your phone number</strong>Tap "Send via WhatsApp". This is your backup. Confirm the 6 digit code.</li>
-            <li><strong>Come back here</strong>Tap the QR code above. This will open Blink and allow you to redeem the bitcoin ⚡</li>
-          </ol>
-        </div>
+        </details>
 
         <!-- Other wallets: collapsed by default -->
         <details class="faq-item">
-          <summary class="faq-question">Other Wallets (advanced)<span style="color:var(--text-muted);">＋</span></summary>
+          <summary class="faq-question">Advanced Users<span style="color:var(--text-muted);">＋</span></summary>
           <div class="faq-answer">
-            <div class="tabs" id="wallet-tabs" style="margin-bottom:12px;">
-              <button class="tab-btn active" data-tab="wos">Wallet of Satoshi</button>
-              <button class="tab-btn" data-tab="phoenix">Phoenix</button>
-              <button class="tab-btn" data-tab="zeus">Zeus</button>
-            </div>
-            <div class="tab-pane active" id="tab-wos">
-              <div class="wallet-card-links" style="margin-bottom:10px;">
-                <a class="wallet-link" href="https://walletofsatoshi.com" target="_blank" rel="noopener">walletofsatoshi.com</a>
-                <a class="wallet-link" href="https://apps.apple.com/app/wallet-of-satoshi/id1438599608" target="_blank" rel="noopener">App Store</a>
-                <a class="wallet-link" href="https://play.google.com/store/apps/details?id=com.livingroomofsatoshi.wallet" target="_blank" rel="noopener">Play Store</a>
-              </div>
-              <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;">✅ <strong>Great for beginners.</strong> No sign-up needed to receive. Add your email in Settings for backup.</p>
-              <p class="section-label">Steps to get started</p>
-              <ol class="steps-list">
-                <li><strong>Download Wallet of Satoshi</strong> from the App Store or Play Store.</li>
-                <li><strong>Open the app</strong> — no sign-up needed. Add your email in Settings first (this is your backup).</li>
-                <li><strong>Tap the camera/scan icon</strong> and point it at the QR code above. Done! ⚡</li>
-              </ol>
-            </div>
-            <div class="tab-pane" id="tab-phoenix">
-              <div class="wallet-card-links" style="margin-bottom:10px;">
-                <a class="wallet-link" href="https://phoenix.acinq.co" target="_blank" rel="noopener">phoenix.acinq.co</a>
-                <a class="wallet-link" href="https://apps.apple.com/app/phoenix-bitcoin-wallet/id1544097028" target="_blank" rel="noopener">App Store</a>
-                <a class="wallet-link" href="https://play.google.com/store/apps/details?id=fr.acinq.phoenix.mainnet" target="_blank" rel="noopener">Play Store</a>
-              </div>
-              <p style="font-size:0.8rem;color:var(--orange);margin-bottom:10px;">🔧 <strong>Advanced users only.</strong> Self-custodial — you control your own funds directly. You are responsible for your backup.</p>
-              <p class="section-label">Steps to get started</p>
-              <ol class="steps-list">
-                <li><strong>Download Phoenix</strong> and tap "Create new wallet".</li>
-                <li><strong>Write down the 12 seed words</strong> on paper — exact order, paper only. These words ARE your wallet.</li>
-                <li><strong>Store the paper somewhere safe</strong> and tap through to confirm.</li>
-                <li><strong>Tap the scan icon</strong> and point it at the QR above. The first receive has a one-time channel-open fee. ⚡</li>
-              </ol>
-            </div>
-            <div class="tab-pane" id="tab-zeus">
-              <div class="wallet-card-links" style="margin-bottom:10px;">
-                <a class="wallet-link" href="https://zeusln.com" target="_blank" rel="noopener">zeusln.com</a>
-                <a class="wallet-link" href="https://apps.apple.com/app/zeus-ln/id1456038895" target="_blank" rel="noopener">App Store</a>
-                <a class="wallet-link" href="https://play.google.com/store/apps/details?id=app.zeusln.zeus" target="_blank" rel="noopener">Play Store</a>
-              </div>
-              <p style="font-size:0.8rem;color:var(--orange);margin-bottom:10px;">🔧 <strong>Advanced users only.</strong> Runs a full Lightning node on your phone — maximum control, steeper setup.</p>
-              <p class="section-label">Steps to get started</p>
-              <ol class="steps-list">
-                <li><strong>Download Zeus</strong> and tap "Create a new wallet".</li>
-                <li><strong>Select "Embedded LND"</strong> and write down your 24 seed words on paper — never on your phone.</li>
-                <li><strong>Allow the node to sync</strong>, then open a channel via Channels → Open Channel.</li>
-                <li><strong>Once the channel is confirmed</strong>, scan the QR above to claim your Bitcoin! ⚡</li>
-              </ol>
-            </div>
+            <ul class="dots-list">
+
+              <li>
+                <strong>Misty Breez</strong>
+                <div class="wallet-card-links" style="margin-bottom:8px;">
+                  <a class="wallet-link" href="https://breez.technology/misty/" target="_blank" rel="noopener">breez.technology/misty</a><br>
+                  <a class="wallet-link" href="https://play.google.com/store/apps/details?id=com.breez.misty" target="_blank" rel="noopener">Play Store</a>
+                  <a class="wallet-link" href="https://github.com/breez/misty-breez/releases" target="_blank" rel="noopener">APK</a>
+                  <a class="wallet-link" href="https://testflight.apple.com/join/nEegHvBX" target="_blank" rel="noopener">App Store</a>
+                </div>
+              </li>
+
+              <li>
+                <strong>Phoenix</strong>
+                <div class="wallet-card-links" style="margin-bottom:8px;">
+                  <a class="wallet-link" href="https://phoenix.acinq.co/" target="_blank" rel="noopener">phoenix.acinq.co</a>
+                  <a class="wallet-link" href="https://play.google.com/store/apps/details?id=fr.acinq.phoenix.mainnet" target="_blank" rel="noopener">Play Store</a>
+                  <a class="wallet-link" href="https://github.com/ACINQ/phoenix/releases/latest" target="_blank" rel="noopener">APK</a>
+                  <a class="wallet-link" href="https://apps.apple.com/us/app/phoenix-wallet/id1544097028" target="_blank" rel="noopener">App Store</a>
+                </div>
+              </li>
+
+              <li>
+                <strong>Zeus</strong>
+                <div class="wallet-card-links" style="margin-bottom:8px;">
+                  <a class="wallet-link" href="https://zeusln.com/" target="_blank" rel="noopener">zeusln.com</a>
+                  <a class="wallet-link" href="https://play.google.com/store/apps/details?id=app.zeusln.zeus" target="_blank" rel="noopener">Play Store</a>
+                  <a class="wallet-link" href="https://github.com/ZeusLN/zeus/releases/latest" target="_blank" rel="noopener">APK</a>
+                  <a class="wallet-link" href="https://apps.apple.com/us/app/zeus-ln/id1456038895" target="_blank" rel="noopener">App Store</a>
+                </div>
+              </li>
+
+              <li>
+                <strong>Blitz Wallet</strong>
+                <div class="wallet-card-links" style="margin-bottom:8px;">
+                  <a class="wallet-link" href="https://blitz-wallet.com/" target="_blank" rel="noopener">blitz-wallet.com</a>
+                  <a class="wallet-link" href="https://play.google.com/store/apps/details?id=com.blitzwallet" target="_blank" rel="noopener">Play Store</a>
+                  <a class="wallet-link" href="https://apps.apple.com/us/app/blitz-wallet/id6476810582" target="_blank" rel="noopener">App Store</a>
+                </div>
+              </li>
+
+            </ul>
           </div>
         </details>
 
@@ -177,6 +172,9 @@
         <details class="faq-item"${spendOpen}>
           <summary class="faq-question">Where can I spend Bitcoin in South Africa?<span style="color:var(--text-muted);">＋</span></summary>
           <div class="faq-answer">
+            <div class="spend-item">
+              <div class="spend-title">Use Bitcoin everywhere — local markets, big stores, gift cards, and instant global payments.</div>
+            </div>
             <div class="spend-item">
               <span class="spend-icon">🌀</span>
               <div>
@@ -187,7 +185,7 @@
                   <strong>Mossel Bay</strong> (<a href="https://bitcoinekasi.com" target="_blank" rel="noopener">bitcoinekasi.com</a>),
                   <strong>Plettenberg Bay</strong> (<a href="https://bitcoinplett.cx" target="_blank" rel="noopener">bitcoinplett.cx</a>),
                   <strong>De Rust</strong>,
-                  <strong>Sedgefield</strong> — especially the Saturday Market,
+                  <strong>Sedgefield</strong>,
                   <strong>Stellenbosch</strong>,
                   and <strong>Knysna</strong>.
                   <br>All have regular local meetups.
@@ -245,76 +243,35 @@
             </div>
           </div>
         </details>
+        
+        <p class="faq-section-label">🟠 Buying and Selling Rands for Bitcoin</p>
+
+        <details class="faq-item">
+          <summary class="faq-question">Where can I buy Bitcoin in South Africa?<span style="color:var(--text-muted);">＋</span></summary>
+          <div class="faq-answer">
+            You can buy Bitcoin using services like <strong>54052.co.za</strong>, which allow you to pay via EFT and receive Bitcoin directly to your wallet. 
+            Choose a service that is simple, reliable, and lets you withdraw to your own wallet.
+          </div>
+        </details>
 
         <details class="faq-item">
           <summary class="faq-question">How do I send Bitcoin to a South African bank account?<span style="color:var(--text-muted);">＋</span></summary>
           <div class="faq-answer">
-            <ol class="steps-list" style="margin-top:0;">
-              <li>Claim your voucher into a Lightning wallet.</li>
-              <li>Go to <a href="https://54052.co.za" target="_blank" rel="noopener"><strong>54052.co.za</strong></a> and create an account (KYC required for cash-outs).</li>
-              <li>Deposit Bitcoin via Lightning — fast and cheap.</li>
-              <li>Sell BTC for ZAR and withdraw to your bank via EFT.</li>
-            </ol>
-            <br>54052 charges low fees compared to LUNO or VALR, and it's Bitcoin-only — no crypto distractions.
+            You can use <strong>54052.co.za</strong> to convert Bitcoin to rands and send it directly to a South African bank account. 
+            It’s simple to use, Bitcoin-focused, and designed for fast, low-fee payouts.
           </div>
         </details>
 
-        <p class="faq-section-label">🟠 Buying More Bitcoin</p>
+        <p class="faq-section-label">🟠 Self-custody and Privacy</p>
 
-        <details class="faq-item">
-          <summary class="faq-question">Where do I buy Bitcoin in South Africa?<span style="color:var(--text-muted);">＋</span></summary>
+       <details class="faq-item">
+          <summary class="faq-question">Why should I use my own wallet and care about privacy?<span style="color:var(--text-muted);">＋</span></summary>
           <div class="faq-answer">
-            <div class="spend-item">
-              <span class="spend-icon">💰</span>
-              <div>
-                <div class="spend-title"><a href="https://54052.co.za" target="_blank" rel="noopener"><strong>54052.co.za</strong></a></div>
-                <div class="spend-desc">
-                  This is our recommended South African exchange — it supports Lightning, so buying and withdrawing Bitcoin is fast and cheap with low fees.<br><br>Using services that focus on Bitcoin only is very important. They understand that our communities don't need more speculation and gambling, and that keeping scammers and their crypto products as far away as possible from everyday people is a good thing.<br><br>
-                  LUNO and VALR have been around for longer and as a result are stuck using outdated technology — they don't support Lightning, which makes it slower and more expensive to move your Bitcoin out. They work, but they're not the preferred choice. As mentioned before, their preference to advertise Cryto along side Bitcoin is also a reason to use their services as little as possible.<br><br>
-                  ⚠️ <strong>KYC exchanges (where they ask for your ID) are fine for buying Bitcoin — but never use them to store or spend it.</strong>
-                  When you leave your Bitcoin on an exchange or in a wallet tied to your identity, you give up your privacy and your control.
-                  Bitcoin is your property. Treat it like cash — you wouldn't leave your cash at the shop.
-                  Always move large amounts of bitcoin to a self-custodial wallet after buying, and move spending bitcoin to a wallet that respects your privacy.<br><br>
-                  <strong>Privacy-first wallets to consider:</strong>
-                  <a href="https://aqua.net" target="_blank" rel="noopener">Aqua Wallet</a> (uses the Liquid Federation)
-                  and <a href="https://conduit.cash" target="_blank" rel="noopener">Conduit Wallet</a> (uses Fedimint — a community-custody model).
-                  Both are great tools for people who take their right to privacy seriously.
-                </div>
-              </div>
-            </div>
-          </div>
-        </details>
+            When your Bitcoin is on an exchange, you don’t control it — the exchange does. Accounts can be frozen, restricted, or lost due to hacks or other issues.<br><br>
 
-        <details class="faq-item">
-          <summary class="faq-question">Why should I avoid leaving Bitcoin on an exchange?<span style="color:var(--text-muted);">＋</span></summary>
-          <div class="faq-answer">
-            Exchanges can be hacked, subpoenaed, or freeze your funds without warning. When your Bitcoin is on an exchange, the exchange owns it — not you. Your identity becomes tied to every transaction.<br><br>
-            <strong>"Not your keys, not your coins."</strong> Always move Bitcoin to a self-custodial wallet after buying. Treat it like cash — you wouldn't leave your cash at the shop.
-          </div>
-        </details>
+            Most exchanges also require KYC (identity verification), which links your real identity to your Bitcoin activity. This creates a permanent record of your transactions and reduces your financial privacy.<br><br>
 
-        <p class="faq-section-label">🟠 KYC &amp; Privacy</p>
-
-        <details class="faq-item">
-          <summary class="faq-question">What is KYC and why does it matter?<span style="color:var(--text-muted);">＋</span></summary>
-          <div class="faq-answer">
-            KYC (Know Your Customer) is identity verification — your ID, selfie, address. It's fine for buying Bitcoin, but dangerous for storing or spending it. Exchanges that have your identity can be hacked, subpoenaed, or freeze your account. Your Bitcoin spending history becomes tied to your real identity.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary class="faq-question">Why is financial privacy important?<span style="color:var(--text-muted);">＋</span></summary>
-          <div class="faq-answer">
-            Surveillance enables control. Throughout history, the ability to monitor and freeze financial accounts has been used to silence dissent and punish non-conformity. Bitcoin was designed as peer-to-peer, censorship-resistant money. Privacy isn't about hiding — it's a basic human right that protects your freedom to participate in the economy without permission from anyone.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary class="faq-question">What are privacy-best-practice wallets?<span style="color:var(--text-muted);">＋</span></summary>
-          <div class="faq-answer">
-            <strong><a href="https://aquawallet.io" target="_blank" rel="noopener">Aqua Wallet</a></strong> — Uses the Liquid Network, a Bitcoin sidechain with enhanced privacy and fast settlement. Great for regular spending.<br><br>
-            <strong><a href="https://conduit.cash" target="_blank" rel="noopener">Conduit Wallet</a></strong> — Uses Fedimint, a community-custody model where even the server can't see your balance. Excellent for communities that trust each other but not corporations.<br><br>
-            Both are self-custodial and privacy-first — always better than leaving funds on an exchange.
+            <strong>"Not your keys, not your coins."</strong> Using your own wallet gives you full control over your money and helps protect your privacy. Treat it like cash — once you own it, keep it with you.
           </div>
         </details>
 
@@ -323,52 +280,26 @@
         <details class="faq-item">
           <summary class="faq-question">What is the difference between Bitcoin and crypto?<span style="color:var(--text-muted);">＋</span></summary>
           <div class="faq-answer">
-            <strong>Bitcoin</strong> has a fixed supply of 21 million coins, is fully decentralised, and has 15+ years of security and track record. It was designed as sound money.<br><br>
-            <strong>"Crypto"</strong> is thousands of Bitcoin copies and competitors. Most are investment vehicles or outright scams — created to enrich insiders, not to serve as money. This platform is Bitcoin-only because Bitcoin is the only one with real monetary properties.
+            <strong>Bitcoin</strong> is decentralized money — no founders, no company, no central control. The rules are fixed and enforced by a global network. It was designed to remove trust and give individuals full control over their money.<br><br>
+
+            <strong>"Crypto"</strong> is everything else — projects with founders, teams, and insiders who can change the rules, influence supply, and benefit early. This makes them easy to manipulate and unsuitable as money.<br><br>
+
+            Most crypto projects don’t solve the core problem of fiat — <strong>control</strong>. They simply move that control from governments to companies or small groups.<br><br>
+
+            The technologies may be interesting, but they are open source and can be built on Bitcoin without needing separate tokens. The tokens themselves are usually unnecessary and exist to enrich insiders.<br><br>
+
+            Money is driven by network effects — people converge on one standard. Our view is simple: <strong>Bitcoin is money. Crypto is not.</strong> To keep our community safe, we focus on Bitcoin only and avoid crypto entirely.
           </div>
         </details>
 
         <details class="faq-item">
           <summary class="faq-question">Why does this platform only support Lightning?<span style="color:var(--text-muted);">＋</span></summary>
           <div class="faq-answer">
-            Lightning settles in under a second for fractions of a cent. On-chain Bitcoin takes ~10 minutes and costs more in fees — not practical for everyday payments. Lightning is Bitcoin, just faster. It's the layer that makes Bitcoin usable for small, instant transactions.
-          </div>
-        </details>
+            Lightning is Bitcoin’s payment layer. It allows instant transactions, near-zero fees, and works globally in seconds.<br><br>
 
-        <p class="faq-section-label">🟠 FAQ (technical)</p>
+            On-chain Bitcoin is slower and more expensive — better suited for saving. Lightning makes Bitcoin practical for everyday payments like sending small amounts or paying in shops.<br><br>
 
-        <details class="faq-item">
-          <summary class="faq-question">What is Bitcoin Lightning?<span style="color:var(--text-muted);">＋</span></summary>
-          <div class="faq-answer">
-            Bitcoin Lightning is a fast, cheap payment network built on top of Bitcoin. Payments settle instantly with near-zero fees, making it great for small amounts. Your voucher uses Lightning so you can receive Bitcoin in seconds.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary class="faq-question">Is this safe?<span style="color:var(--text-muted);">＋</span></summary>
-          <div class="faq-answer">
-            The voucher is a real Bitcoin Lightning payment. Beginner wallets like Blink and Wallet of Satoshi are custodial — meaning the company holds the funds on your behalf, similar to a bank. Advanced wallets like Aqua and Phoenix are self-custodial, meaning you control your own funds directly.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary class="faq-question">What if I can't claim it?<span style="color:var(--text-muted);">＋</span></summary>
-          <div class="faq-answer">
-            If you don't claim the voucher before it expires, the funds are automatically returned to the sender. Contact the person who sent you the voucher and ask them to resend if you need more time.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary class="faq-question">Can I scan the QR from a screenshot?<span style="color:var(--text-muted);">＋</span></summary>
-          <div class="faq-answer">
-            Yes — most Lightning wallets allow you to pick an image from your camera roll instead of scanning live. Look for a gallery or photo icon near the QR scanner in your wallet app.
-          </div>
-        </details>
-
-        <details class="faq-item">
-          <summary class="faq-question">Can I convert this to Rands?<span style="color:var(--text-muted);">＋</span></summary>
-          <div class="faq-answer">
-            Yes. The easiest route is via <a href="https://54052.co.za" target="_blank" rel="noopener"><strong>54052.co.za</strong></a> — claim your voucher, deposit via Lightning, sell BTC for ZAR, and EFT to your bank. Low fees compared to LUNO or VALR. Note that KYC (ID verification) is required for cash-outs.
+            This platform uses Lightning to make sending Bitcoin simple, fast, and accessible to anyone.
           </div>
         </details>
       </div>

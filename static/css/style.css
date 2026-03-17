@@ -764,6 +764,44 @@ select {
   margin-bottom: 2px;
 }
 
+/* ── Wallet dot list (same layout as steps-list but with filled dot marker) ── */
+.dots-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 10px;
+  padding-left: 0;
+}
+.dots-list > li {
+  position: relative;
+  padding-left: 32px;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+.dots-list > li::before {
+  content: '●';
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 22px;
+  height: 22px;
+  background: var(--orange);
+  color: #000;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+  font-weight: 700;
+}
+.dots-list > li strong {
+  display: block;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
 /* ── FAQ section labels ── */
 .faq-section-label {
   font-size: 0.72rem;

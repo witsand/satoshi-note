@@ -454,6 +454,24 @@ async function handleCreateSingle() {
   const dialCode = _dialCode;
   const rawNumber = $('phone-number').value.trim();
 
+  if (rawNumber.length > 0) {
+    // Strip the acceptable "good mistakes": spaces and a leading +
+    const stripped = rawNumber.replace(/[\s+]/g, '');
+    // After removing spaces/+, anything non-digit is invalid
+    if (/\D/.test(stripped)) {
+      errEl.textContent = 'Please enter a valid phone number — digits and spaces only.';
+      errEl.classList.add('visible');
+      return;
+    }
+    // Remove leading zeros (common local format), then check minimum length
+    const digits = stripped.replace(/^0+/, '');
+    if (digits.length < 6) {
+      errEl.textContent = 'That phone number looks too short. Please double-check it.';
+      errEl.classList.add('visible');
+      return;
+    }
+  }
+
   const refundCode = localStorage.getItem(LS_REFUND) || '';
   const ts = Date.now();
 
@@ -496,6 +514,8 @@ function renderFundStep(voucher) {
   if (phoneLine) phoneLine.textContent = '+' + state.e164;
   const phoneRow = $('step2-phone-row');
   if (phoneRow) phoneRow.style.display = state.hasPhone ? '' : 'none';
+  const voucherForRow = $('step2-voucher-for');
+  if (voucherForRow) voucherForRow.style.display = state.hasPhone ? '' : 'none';
   $('btn-back-step2').textContent = state.hasPhone ? '← Change phone number' : '← Add phone number';
 
   $('btn-next-step2').onclick = () => {
