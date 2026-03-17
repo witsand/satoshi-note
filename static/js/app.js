@@ -412,8 +412,7 @@ function expiryAfterFundingLabel(refundAfterSeconds) {
 function buildWAMessage(claimLnurl, refundAfterSeconds) {
   const link = `${window.location.origin}/redeem?lightning=${encodeURIComponent(claimLnurl)}`;
   const dur = daysFromSeconds(refundAfterSeconds);
-  return `⚡ You’ve been sent a *Bitcoin voucher.*\n\nSomeone sent you a small amount of Bitcoin to try for yourself.\n\nClaim it here: ${link}\n\nThe page will show you *how to get a wallet and redeem it step-by-step*. It only takes a few minutes.\n\nTip: If you don't have a wallet yet, *Blink* is a great place to start.\n\nThis voucher expires in ${dur}, so make sure to claim it before then.`;
-  // return `You've received a Bitcoin voucher! ⚡\n\nTap this link to claim it:\n${link}\n\nYou'll need a Lightning wallet — try Blink (blink.sv) for beginners.\n\nThis voucher expires in ${dur}.`;
+  return `I sent you a small amount of Bitcoin to try.\n\nYou can claim it here: ${link}\n\nThe page explains how to get a wallet and redeem it step by step.\n\nIt expires soon, so try claim it when you get a chance.`
 }
 
 // ── Single voucher wizard ─────────────────────────────────────────────────────
