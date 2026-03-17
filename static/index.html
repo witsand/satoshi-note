@@ -9,86 +9,21 @@
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <meta name="theme-color" content="#F7931A">
   <link rel="stylesheet" href="/css/style.css">
-  <script>window.SITE_NAME = '{{SITE_NAME_FULL}}'; window.BATCH_ENABLED = {{BATCH_ENABLED}};</script>
+  <script>window.SITE_NAME = '{{SITE_NAME_FULL}}'; window.BATCH_ENABLED = {{BATCH_ENABLED}}; window.DEFAULT_DIAL_CODE = '{{DEFAULT_DIAL_CODE}}';</script>
 </head>
 <body>
 
-<!-- ── About modal ──────────────────────────────────────────────────────────── -->
-<div id="about-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+<!-- ── Phone info modal ───────────────────────────────────────────────────── -->
+<div id="phone-info-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
   <div class="modal-box" style="text-align:left;">
-    <div class="modal-title" style="text-align:center;">About {{SITE_NAME_FULL}}</div>
+    <div class="modal-title" style="text-align:center;">About the Phone Number</div>
     <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      {{SITE_NAME_FULL}} lets you send Bitcoin to anyone, even if they don’t have a wallet yet.<br><br>Create a voucher, share it, and they can claim the sats whenever they’re ready. If they don’t, the sats automatically return to you.
+      The phone number is used <strong style="color:var(--text);">only on your device</strong> to pre-fill the WhatsApp message when you share the voucher link. It is never sent to the server.
     </p>
-    <p style="font-size:0.8rem;color:var(--text-muted);line-height:1.6;">
-      Open source.
-      <span id="about-github-link-index"></span>
-    </p>
-    <button class="modal-close" id="about-close-index">Close</button>
-  </div>
-</div>
-
-<!-- ── Terms modal ──────────────────────────────────────────────────────────── -->
-<div id="terms-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
-  <div class="modal-box" style="text-align:left;">
-    <div class="modal-title" style="text-align:center;">Terms &amp; Conditions</div>
-
     <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      This service is provided <strong style="color:var(--text);">as-is</strong>, without warranties of any kind.
-      It is experimental software built on the Bitcoin Lightning Network. Use it at your own risk.
+      If you'd rather not enter a number, just leave it blank and tap <strong style="color:var(--text);">Create Voucher</strong>. You can share the link any other way you like.
     </p>
-
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      Send Sats is a free community tool intended for small, casual transfers. Do not use this service for
-      large amounts of Bitcoin.
-    </p>
-
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      While vouchers are designed to return unclaimed sats to the sender after the expiry period, this is
-      <strong style="color:var(--text);">not guaranteed</strong>. Transactions may fail, be delayed, or be lost due to technical issues.
-    </p>
-
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      The operator is <strong style="color:var(--text);">not liable</strong> for any loss of funds, failed
-      transactions, or damages arising from use of this service. You are solely responsible for safeguarding
-      voucher links and redemption codes.
-    </p>
-
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      This service may be modified, interrupted, or permanently shut down at any time, without notice.
-    </p>
-
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      Voucher redemption includes a fee of <strong style="color:var(--text);">0.5% or 10 sats (whichever is greater)</strong>.
-      This fee is used to cover Lightning Network transaction costs.
-    </p>
-
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      Lightning routing fees are variable but are <strong style="color:var(--text);">capped within this amount</strong>.
-      If the full fee is required to complete the payment, no surplus is retained.
-    </p>
-
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      In most cases, actual network fees are lower. Any remaining sats are retained by the service and may be used
-      at the operator’s discretion.
-    </p>
-
-    <p style="font-size:0.8rem;color:var(--text-muted);line-height:1.6;">
-      By using this service you agree to these terms.
-    </p>
-
-    <button class="modal-close" id="terms-close">Close</button>
-  </div>
-</div>
-
-<!-- ── Donate modal ──────────────────────────────────────────────────────────── -->
-<div id="donate-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
-  <div class="modal-box">
-    <div class="modal-title">⚡ Donate</div>
-    <div id="donate-modal-body">
-      <p style="font-size:0.875rem;color:var(--text-muted);">Loading...</p>
-    </div>
-    <button class="modal-close" id="donate-close">Close</button>
+    <button class="modal-close" id="phone-info-close">Close</button>
   </div>
 </div>
 
@@ -108,10 +43,7 @@
 <div class="app-shell">
 
   <!-- Header -->
-  <header class="app-header">
-    <a href="/" style="text-decoration:none;"><div class="app-logo">⚡ {{SITE_LOGO_INNER}}</div></a>
-    <button id="nav-history" class="nav-btn" title="History" aria-label="View history">🗒️</button>
-  </header>
+  {{HEADER}}
 
   <!-- Main content -->
   <main class="main-content">
@@ -145,19 +77,19 @@
         <p class="card-title">How it works</p>
         <ol class="steps-list" style="margin-top:0;">
           <li>
-            <strong>1. Enter a phone number</strong>
+            <strong>Enter a phone number</strong>
             Create a voucher for the person you want to send sats to.
           </li>
           <li>
-            <strong>2. Fund the voucher</strong>
+            <strong>Fund the voucher</strong>
             Pay the Lightning invoice with any Bitcoin wallet.
           </li>
           <li>
-            <strong>3. Send the link</strong>
+            <strong>Send the link</strong>
             Share the claim link via WhatsApp so they can redeem the sats.
           </li>
           <li>
-            <strong>4. They claim the sats</strong>
+            <strong>They claim the sats</strong>
             If they don’t claim in time, the sats return to your Lightning Address.
           </li>
         </ol>
@@ -189,7 +121,7 @@
         <div id="single-step-1">
           <div class="card">
             <p class="card-title">Create a Voucher</p>
-            <label>Recipient's Phone Number</label>
+            <label style="display:flex;align-items:center;gap:6px;">Recipient's Phone Number <button type="button" id="btn-phone-info" style="background:none;border:1px solid var(--text-muted);border-radius:50%;width:18px;height:18px;font-size:0.7rem;color:var(--text-muted);cursor:pointer;line-height:1;padding:0;flex-shrink:0;" aria-label="About phone number">?</button></label>
             <div class="input-row">
               <div id="dial-code-wrapper" class="dial-dropdown">
                 <button type="button" id="dial-code-btn" class="dial-code-trigger">+1</button>
@@ -380,12 +312,7 @@
 
   </main>
 
-  <footer class="app-footer">
-    <button class="footer-btn" id="btn-about-index">About</button>
-    <button class="footer-btn" id="btn-terms">Terms</button>
-    <a class="footer-btn" id="footer-github-index" href="#" target="_blank" rel="noopener" style="display:none;">GitHub</a>
-    <button class="footer-btn footer-btn-donate" id="btn-donate-index">⚡ Donate</button>
-  </footer>
+  {{FOOTER}}
 
 </div>
 
@@ -406,57 +333,14 @@
 <script>
 (function () {
   'use strict';
-  const githubURL = '{{GITHUB_URL}}';
-  const ghLinkEl = document.getElementById('footer-github-index');
-  const ghAboutEl = document.getElementById('about-github-link-index');
-  if (githubURL) {
-    ghLinkEl.href = githubURL;
-    ghLinkEl.style.display = '';
-    if (ghAboutEl) ghAboutEl.innerHTML = 'View the source on <a href="' + githubURL + '" target="_blank" rel="noopener">GitHub</a>.';
-  }
-
-  document.getElementById('btn-about-index').addEventListener('click', function () {
-    document.getElementById('about-modal').classList.remove('hidden');
+  document.getElementById('btn-phone-info').addEventListener('click', function () {
+    document.getElementById('phone-info-modal').classList.remove('hidden');
   });
-  document.getElementById('about-close-index').addEventListener('click', function () {
-    document.getElementById('about-modal').classList.add('hidden');
+  document.getElementById('phone-info-close').addEventListener('click', function () {
+    document.getElementById('phone-info-modal').classList.add('hidden');
   });
-  document.getElementById('about-modal').addEventListener('click', function (e) {
+  document.getElementById('phone-info-modal').addEventListener('click', function (e) {
     if (e.target === this) this.classList.add('hidden');
-  });
-
-  document.getElementById('btn-terms').addEventListener('click', function () {
-    document.getElementById('terms-modal').classList.remove('hidden');
-  });
-  document.getElementById('terms-close').addEventListener('click', function () {
-    document.getElementById('terms-modal').classList.add('hidden');
-  });
-  document.getElementById('terms-modal').addEventListener('click', function (e) {
-    if (e.target === this) this.classList.add('hidden');
-  });
-
-  document.getElementById('btn-donate-index').addEventListener('click', function () {
-    const modal = document.getElementById('donate-modal');
-    const body = document.getElementById('donate-modal-body');
-    const fundLNURL = '{{DONATE_LNURL}}';
-    const truncated = fundLNURL.slice(0, 20) + '…' + fundLNURL.slice(-6);
-    body.innerHTML = '<p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:12px;">Scan to donate — funds server costs.</p>' +
-      '<div style="display:flex;justify-content:center;margin-bottom:12px;"><div id="donate-qr-box" style="background:#fff;padding:10px;border-radius:8px;display:inline-block;cursor:pointer;" title="Tap to open in wallet"></div></div>' +
-      '<p id="donate-lnurl-text" style="font-size:0.72rem;color:var(--text-muted);text-align:center;margin-bottom:12px;cursor:pointer;" title="Tap to copy">' + truncated + '</p>' +
-      '<p style="font-size:0.8rem;color:var(--text-muted);text-align:center;margin-top:4px;">Every sat helps keep the lights on. Thank you! ⚡</p>';
-    modal.classList.remove('hidden');
-    new QRCode(document.getElementById('donate-qr-box'), { text: fundLNURL, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
-    document.getElementById('donate-qr-box').addEventListener('click', function () { window.location.href = 'lightning:' + fundLNURL; });
-    document.getElementById('donate-lnurl-text').addEventListener('click', async function () {
-      try {
-        await navigator.clipboard.writeText(fundLNURL);
-        this.textContent = 'Copied!';
-        setTimeout(() => { this.textContent = truncated; }, 1500);
-      } catch { prompt('Copy LNURL:', fundLNURL); }
-    });
-  });
-  document.getElementById('donate-close').addEventListener('click', function () {
-    document.getElementById('donate-modal').classList.add('hidden');
   });
   if (window.BATCH_ENABLED) {
     var batchTabBtn = document.querySelector('.tab-btn[data-tab="batch"]');
@@ -465,9 +349,6 @@
       batchTabBtn.textContent = 'Batch';
     }
   }
-  document.getElementById('donate-modal').addEventListener('click', function (e) {
-    if (e.target === this) this.classList.add('hidden');
-  });
 })();
 </script>
 </body>

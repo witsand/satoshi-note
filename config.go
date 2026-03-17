@@ -39,8 +39,9 @@ type Config struct {
 	invoiceExpirySeconds    int64
 
 	// Optional features — silently disabled if empty
-	adminToken string // Bearer token for /admin/stats
-	githubURL  string // Shown in About modal and footer
+	adminToken     string // Bearer token for /admin/stats
+	githubURL      string // Shown in About modal and footer
+	defaultDialCode string // Default dial code for phone number field, e.g. +27
 }
 
 func errMissingEnv(name string) error {
@@ -210,6 +211,10 @@ func loadConfig() (*Server, error) {
 
 	cfg.adminToken = os.Getenv("ADMIN_TOKEN")
 	cfg.githubURL = os.Getenv("GITHUB_URL")
+	cfg.defaultDialCode = os.Getenv("DEFAULT_DIAL_CODE")
+	if cfg.defaultDialCode == "" {
+		cfg.defaultDialCode = "+27"
+	}
 
 	return &Server{cfg: cfg}, nil
 }

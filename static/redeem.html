@@ -14,36 +14,6 @@
   <meta name="twitter:card" content="summary">
   <link rel="stylesheet" href="/css/style.css">
   <style>
-    .steps-list {
-      list-style: none;
-      counter-reset: steps;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      margin-top: 10px;
-    }
-    .steps-list li {
-      counter-increment: steps;
-      display: flex;
-      gap: 10px;
-      align-items: flex-start;
-      font-size: 0.875rem;
-      color: var(--text-muted);
-    }
-    .steps-list li::before {
-      content: counter(steps);
-      min-width: 22px;
-      height: 22px;
-      background: var(--orange);
-      color: #000;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.72rem;
-      font-weight: 700;
-      flex-shrink: 0;
-    }
     .section-label {
       font-size: 0.7rem;
       font-weight: 700;
@@ -94,91 +64,15 @@
   </div>
 </div>
 
-<!-- ── About modal ──────────────────────────────────────────────────────────── -->
-<div id="about-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
-  <div class="modal-box" style="text-align:left;">
-    <div class="modal-title" style="text-align:center;">About {{SITE_NAME_FULL}}</div>
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      {{SITE_NAME_FULL}} lets you send Bitcoin to anyone, even if they don't have a wallet yet.<br><br>Create a voucher, share it, and they can claim the sats whenever they're ready. If they don't, the sats automatically return to you.
-    </p>
-    <p style="font-size:0.8rem;color:var(--text-muted);line-height:1.6;">
-      Open source.
-      <span id="about-github-link-redeem"></span>
-    </p>
-    <button class="modal-close" id="about-close-redeem">Close</button>
-  </div>
-</div>
-
-<!-- ── Terms modal ──────────────────────────────────────────────────────────── -->
-<div id="terms-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
-  <div class="modal-box" style="text-align:left;">
-    <div class="modal-title" style="text-align:center;">Terms &amp; Conditions</div>
-
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      This service is provided <strong style="color:var(--text);">as-is</strong>, without warranties of any kind.
-      It is experimental software built on the Bitcoin Lightning Network. Use it at your own risk.
-    </p>
-
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      Send Sats is a free community tool intended for small, casual transfers. Do not use this service for
-      large amounts of Bitcoin.
-    </p>
-
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      While vouchers are designed to return unclaimed sats to the sender after the expiry period, this is
-      <strong style="color:var(--text);">not guaranteed</strong>. Transactions may fail, be delayed, or be lost due to technical issues.
-    </p>
-
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      The operator is <strong style="color:var(--text);">not liable</strong> for any loss of funds, failed
-      transactions, or damages arising from use of this service. You are solely responsible for safeguarding
-      voucher links and redemption codes.
-    </p>
-
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      This service may be modified, interrupted, or permanently shut down at any time, without notice.
-    </p>
-
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      All fees are determined by the Lightning Network and are capped. Fees will never exceed 0.5% or 10 sats.
-      If a payment would exceed this limit, it will not be processed.
-    </p>
-
-    <p style="font-size:0.8rem;color:var(--text-muted);line-height:1.6;">
-      By using this service you agree to these terms.
-    </p>
-
-    <button class="modal-close" id="terms-close">Close</button>
-  </div>
-</div>
-
-<!-- ── Donate modal ──────────────────────────────────────────────────────────── -->
-<div id="donate-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
-  <div class="modal-box">
-    <div class="modal-title" id="donate-modal-title">⚡ Donate</div>
-    <div id="donate-modal-body">
-      <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:16px;">Loading...</p>
-    </div>
-    <button class="modal-close" id="donate-close">Close</button>
-  </div>
-</div>
-
 <div class="app-shell">
 
-  <header class="app-header">
-    <a href="/" style="text-decoration:none;"><div class="app-logo">⚡ {{SITE_LOGO_INNER}}</div></a>
-  </header>
+  {{HEADER}}
 
   <main class="main-content" id="redeem-main">
     <!-- Filled by JS -->
   </main>
 
-  <footer class="app-footer">
-    <button class="footer-btn" id="btn-about-redeem">About</button>
-    <button class="footer-btn" id="btn-terms-redeem">Terms</button>
-    <a class="footer-btn" id="footer-github-redeem" href="#" target="_blank" rel="noopener" style="display:none;">GitHub</a>
-    <button class="footer-btn footer-btn-donate" id="btn-donate-redeem">⚡ Donate</button>
-  </footer>
+  {{FOOTER}}
 
 </div>
 
@@ -193,7 +87,6 @@
 
   // ── Unified "Learn More" info card (accordion) ───────────────────────────
   function buildInfoCard(openDefault) {
-    const walletOpen = openDefault === 'wallet' ? ' open' : '';
     const spendOpen  = openDefault === 'spend'  ? ' open' : '';
     return `
       <div class="card" style="margin-bottom:20px;text-align:left;">
@@ -201,32 +94,38 @@
 
         <p class="faq-section-label">🟠 Getting Started</p>
 
-        <details class="faq-item"${walletOpen}>
-          <summary class="faq-question">Don't have a wallet yet?<span style="color:var(--text-muted);">＋</span></summary>
+        <!-- Blink: always visible -->
+        <div style="padding: 10px 0 14px; border-bottom: 1px solid var(--surface-2);">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+            <span style="font-weight:600;font-size:0.9rem;">Download Blink</span>
+            <span style="background:var(--orange);color:#000;font-size:0.68rem;font-weight:700;padding:2px 8px;border-radius:10px;letter-spacing:0.3px;">Recommended</span>
+          </div>
+          <div class="wallet-card-links" style="margin-bottom:10px;">
+            <a class="wallet-link" href="https://blink.sv" target="_blank" rel="noopener">blink.sv</a>
+            <a class="wallet-link" href="https://apps.apple.com/us/app/blink-bitcoin-wallet/id1531383905" target="_blank" rel="noopener">App Store</a>
+            <a class="wallet-link" href="https://play.google.com/store/apps/details?id=com.galoyapp" target="_blank" rel="noopener">Play Store</a>
+            <a class="wallet-link" href="https://github.com/blinkbitcoin/blink-mobile/releases/latest" target="_blank" rel="noopener">GitHub (APK)</a>
+          </div>
+          <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;">✅ Great for beginners. Low setup, fast to start. Your phone number is your backup.</p>
+          <p class="section-label">Steps to get started</p>
+          <ol class="steps-list">
+            <li><strong>Download Blink</strong>From the App Store, Play Store, or GitHub.</li>
+            <li><strong>Open the app</strong>Tap "Create new account" -> "Accept" -> "Whatsapp" -> "Use WhatsApp"</li>
+            <li><strong>Enter your phone number</strong>Tap "Send via WhatsApp". This is your backup. Confirm the 6 digit code.</li>
+            <li><strong>Come back here</strong>Tap the QR code above. This will open Blink and allow you to redeem the bitcoin ⚡</li>
+          </ol>
+        </div>
+
+        <!-- Other wallets: collapsed by default -->
+        <details class="faq-item">
+          <summary class="faq-question">Other Wallets (advanced)<span style="color:var(--text-muted);">＋</span></summary>
           <div class="faq-answer">
             <div class="tabs" id="wallet-tabs" style="margin-bottom:12px;">
-              <button class="tab-btn active" data-tab="blink">Blink</button>
-              <button class="tab-btn" data-tab="wos">Wallet of Satoshi</button>
+              <button class="tab-btn active" data-tab="wos">Wallet of Satoshi</button>
               <button class="tab-btn" data-tab="phoenix">Phoenix</button>
               <button class="tab-btn" data-tab="zeus">Zeus</button>
             </div>
-            <div class="tab-pane active" id="tab-blink">
-              <div class="wallet-card-links" style="margin-bottom:10px;">
-                <a class="wallet-link" href="https://blink.sv" target="_blank" rel="noopener">blink.sv</a>
-                <a class="wallet-link" href="https://apps.apple.com/app/blink-bitcoin-wallet/id1641516587" target="_blank" rel="noopener">App Store</a>
-                <a class="wallet-link" href="https://play.google.com/store/apps/details?id=io.galoy.blink" target="_blank" rel="noopener">Play Store</a>
-              </div>
-              <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;">✅ <strong>Great for beginners.</strong> Low setup fees, fast to start. Backup is your phone number.</p>
-              <p class="section-label">Steps to get started</p>
-              <ol class="steps-list">
-                <li>Download <strong>Blink</strong> from the App Store or Play Store.</li>
-                <li>Open the app and tap <strong>"Get Started"</strong>.</li>
-                <li>Enter your <strong>phone number</strong> — this is your backup. Tap "Continue".</li>
-                <li>Enter the 6-digit SMS code to confirm your number.</li>
-                <li>Tap the <strong>QR scanner icon</strong> and point it at the QR code above. Your Bitcoin arrives in seconds! ⚡</li>
-              </ol>
-            </div>
-            <div class="tab-pane" id="tab-wos">
+            <div class="tab-pane active" id="tab-wos">
               <div class="wallet-card-links" style="margin-bottom:10px;">
                 <a class="wallet-link" href="https://walletofsatoshi.com" target="_blank" rel="noopener">walletofsatoshi.com</a>
                 <a class="wallet-link" href="https://apps.apple.com/app/wallet-of-satoshi/id1438599608" target="_blank" rel="noopener">App Store</a>
@@ -235,9 +134,9 @@
               <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:10px;">✅ <strong>Great for beginners.</strong> No sign-up needed to receive. Add your email in Settings for backup.</p>
               <p class="section-label">Steps to get started</p>
               <ol class="steps-list">
-                <li>Download <strong>Wallet of Satoshi</strong> from the App Store or Play Store.</li>
-                <li>Open the app — no sign-up needed. Add your email in Settings first (this is your backup).</li>
-                <li>Tap the <strong>camera/scan icon</strong> and point it at the QR code above. Done! ⚡</li>
+                <li><strong>Download Wallet of Satoshi</strong> from the App Store or Play Store.</li>
+                <li><strong>Open the app</strong> — no sign-up needed. Add your email in Settings first (this is your backup).</li>
+                <li><strong>Tap the camera/scan icon</strong> and point it at the QR code above. Done! ⚡</li>
               </ol>
             </div>
             <div class="tab-pane" id="tab-phoenix">
@@ -249,10 +148,10 @@
               <p style="font-size:0.8rem;color:var(--orange);margin-bottom:10px;">🔧 <strong>Advanced users only.</strong> Self-custodial — you control your own funds directly. You are responsible for your backup.</p>
               <p class="section-label">Steps to get started</p>
               <ol class="steps-list">
-                <li>Download <strong>Phoenix</strong> and tap <strong>"Create new wallet"</strong>.</li>
-                <li>Write down the <strong>12 seed words</strong> on paper — exact order, paper only. These words ARE your wallet.</li>
-                <li>Store the paper somewhere safe and private. Tap through to confirm.</li>
-                <li>Tap the scan icon and point it at the QR above. The first receive has a one-time channel-open fee. ⚡</li>
+                <li><strong>Download Phoenix</strong> and tap "Create new wallet".</li>
+                <li><strong>Write down the 12 seed words</strong> on paper — exact order, paper only. These words ARE your wallet.</li>
+                <li><strong>Store the paper somewhere safe</strong> and tap through to confirm.</li>
+                <li><strong>Tap the scan icon</strong> and point it at the QR above. The first receive has a one-time channel-open fee. ⚡</li>
               </ol>
             </div>
             <div class="tab-pane" id="tab-zeus">
@@ -264,10 +163,10 @@
               <p style="font-size:0.8rem;color:var(--orange);margin-bottom:10px;">🔧 <strong>Advanced users only.</strong> Runs a full Lightning node on your phone — maximum control, steeper setup.</p>
               <p class="section-label">Steps to get started</p>
               <ol class="steps-list">
-                <li>Download <strong>Zeus</strong> and tap <strong>"Create a new wallet"</strong>.</li>
-                <li>Select <strong>"Embedded LND"</strong>. Write down your <strong>24 seed words</strong> on paper — never on your phone.</li>
-                <li>Allow the node a few minutes to sync, then open a Lightning channel via <strong>Channels → Open Channel</strong>.</li>
-                <li>Once the channel is confirmed, scan the QR above to claim your Bitcoin! ⚡</li>
+                <li><strong>Download Zeus</strong> and tap "Create a new wallet".</li>
+                <li><strong>Select "Embedded LND"</strong> and write down your 24 seed words on paper — never on your phone.</li>
+                <li><strong>Allow the node to sync</strong>, then open a channel via Channels → Open Channel.</li>
+                <li><strong>Once the channel is confirmed</strong>, scan the QR above to claim your Bitcoin! ⚡</li>
               </ol>
             </div>
           </div>
@@ -728,65 +627,6 @@
     const pane = card.querySelector('#tab-' + btn.dataset.tab);
     if (pane) pane.classList.add('active');
   });
-
-  // ── Footer: About / GitHub / Donate ──────────────────────────────────────
-  (function () {
-    const githubURL = '{{GITHUB_URL}}';
-    const ghLinkEl = document.getElementById('footer-github-redeem');
-    const ghAboutEl = document.getElementById('about-github-link-redeem');
-    if (githubURL) {
-      ghLinkEl.href = githubURL;
-      ghLinkEl.style.display = '';
-      if (ghAboutEl) ghAboutEl.innerHTML = 'View the source on <a href="' + githubURL + '" target="_blank" rel="noopener">GitHub</a>.';
-    }
-
-    document.getElementById('btn-about-redeem').addEventListener('click', function () {
-      document.getElementById('about-modal').classList.remove('hidden');
-    });
-    document.getElementById('about-close-redeem').addEventListener('click', function () {
-      document.getElementById('about-modal').classList.add('hidden');
-    });
-    document.getElementById('about-modal').addEventListener('click', function (e) {
-      if (e.target === this) this.classList.add('hidden');
-    });
-
-    document.getElementById('btn-terms-redeem').addEventListener('click', function () {
-      document.getElementById('terms-modal').classList.remove('hidden');
-    });
-    document.getElementById('terms-close').addEventListener('click', function () {
-      document.getElementById('terms-modal').classList.add('hidden');
-    });
-    document.getElementById('terms-modal').addEventListener('click', function (e) {
-      if (e.target === this) this.classList.add('hidden');
-    });
-
-    document.getElementById('btn-donate-redeem').addEventListener('click', function () {
-      const modal = document.getElementById('donate-modal');
-      const body = document.getElementById('donate-modal-body');
-      const fundLNURL = '{{DONATE_LNURL}}';
-      const truncated = fundLNURL.slice(0, 20) + '…' + fundLNURL.slice(-6);
-      body.innerHTML = '<p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:12px;">Scan to donate — funds server costs.</p>' +
-        '<div style="display:flex;justify-content:center;margin-bottom:12px;"><div id="donate-qr-box" style="background:#fff;padding:10px;border-radius:8px;display:inline-block;cursor:pointer;" title="Tap to open in wallet"></div></div>' +
-        '<p id="donate-lnurl-text" style="font-size:0.72rem;color:var(--text-muted);text-align:center;margin-bottom:12px;cursor:pointer;" title="Tap to copy">' + truncated + '</p>' +
-        '<p style="font-size:0.8rem;color:var(--text-muted);text-align:center;margin-top:4px;">Every sat helps keep the lights on. Thank you! ⚡</p>';
-      modal.classList.remove('hidden');
-      new QRCode(document.getElementById('donate-qr-box'), { text: fundLNURL, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
-      document.getElementById('donate-qr-box').addEventListener('click', function () { window.location.href = 'lightning:' + fundLNURL; });
-      document.getElementById('donate-lnurl-text').addEventListener('click', async function () {
-        try {
-          await navigator.clipboard.writeText(fundLNURL);
-          this.textContent = 'Copied!';
-          setTimeout(() => { this.textContent = truncated; }, 1500);
-        } catch { prompt('Copy LNURL:', fundLNURL); }
-      });
-    });
-    document.getElementById('donate-close').addEventListener('click', function () {
-      document.getElementById('donate-modal').classList.add('hidden');
-    });
-    document.getElementById('donate-modal').addEventListener('click', function (e) {
-      if (e.target === this) this.classList.add('hidden');
-    });
-  })();
 
 })();
 </script>

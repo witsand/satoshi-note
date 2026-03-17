@@ -4,7 +4,6 @@
 // ── Constants ────────────────────────────────────────────────────────────────
 const LS_REFUND = 'sn_refund_code';
 const LS_HISTORY = 'sn_history';
-const LS_COUNTRY = 'sn_country_prefix';
 
 const DIAL_CODES = [
   ['+93',  'Afghanistan (+93)'],
@@ -382,18 +381,8 @@ async function createVouchers(payload) {
 }
 
 // ── Dial code detect ──────────────────────────────────────────────────────────
-async function detectDialCode() {
-  const cached = localStorage.getItem(LS_COUNTRY);
-  if (cached) return cached;
-  try {
-    const r = await fetch('https://ipapi.co/json/');
-    const d = await r.json();
-    const code = d.country_calling_code || '+1';
-    localStorage.setItem(LS_COUNTRY, code);
-    return code;
-  } catch {
-    return '+1';
-  }
+function defaultDialCode() {
+  return (window.DEFAULT_DIAL_CODE && window.DEFAULT_DIAL_CODE.trim()) || '+27';
 }
 
 // ── Expiry text ───────────────────────────────────────────────────────────────
@@ -444,9 +433,8 @@ function showStep(n) {
   if (lbl) lbl.textContent = `Step ${n} of 3`;
 }
 
-async function initSingleStep1() {
-  const preferred = await detectDialCode();
-  buildDialDropdown(preferred);
+function initSingleStep1() {
+  buildDialDropdown(defaultDialCode());
 
   document.querySelectorAll('#single-expiry-pills .pill-btn').forEach(btn => {
     btn.addEventListener('click', () => {

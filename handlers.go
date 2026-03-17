@@ -18,6 +18,14 @@ import (
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
 )
 
+func readPartial(name string) string {
+	data, err := os.ReadFile("./static/" + name)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 func lnurlError(w http.ResponseWriter, reason string) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"status": "ERROR",
@@ -578,7 +586,10 @@ func (srv *Server) handleRedeemPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/donate")
-	html := strings.ReplaceAll(string(b), "{{BASE_URL}}", srv.cfg.baseURL)
+	html := strings.ReplaceAll(string(b), "{{HEADER}}", readPartial("header.html"))
+	html = strings.ReplaceAll(html, "{{FOOTER}}", readPartial("footer.html"))
+	html = strings.ReplaceAll(html, "{{HEADER_EXTRA}}", "")
+	html = strings.ReplaceAll(html, "{{BASE_URL}}", srv.cfg.baseURL)
 	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
 	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)
 	html = strings.ReplaceAll(html, "{{SITE_NAME_FULL}}", srv.cfg.siteName)
@@ -594,12 +605,16 @@ func (srv *Server) handleIndexPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/donate")
-	html := strings.ReplaceAll(string(b), "{{BASE_URL}}", srv.cfg.baseURL)
+	html := strings.ReplaceAll(string(b), "{{HEADER}}", readPartial("header.html"))
+	html = strings.ReplaceAll(html, "{{FOOTER}}", readPartial("footer.html"))
+	html = strings.ReplaceAll(html, "{{HEADER_EXTRA}}", `<button id="nav-history" class="nav-btn" title="History" aria-label="View history">🗒️</button>`)
+	html = strings.ReplaceAll(html, "{{BASE_URL}}", srv.cfg.baseURL)
 	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
 	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)
 	html = strings.ReplaceAll(html, "{{SITE_NAME_FULL}}", srv.cfg.siteName)
 	html = strings.ReplaceAll(html, "{{SITE_LOGO_INNER}}", srv.cfg.siteLogoInner)
 	html = strings.ReplaceAll(html, "{{BATCH_ENABLED}}", strconv.FormatBool(srv.cfg.batchEnabled))
+	html = strings.ReplaceAll(html, "{{DEFAULT_DIAL_CODE}}", srv.cfg.defaultDialCode)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(html))
 }
@@ -722,7 +737,13 @@ func (srv *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	html := strings.ReplaceAll(string(b), "{{SITE_NAME_FULL}}", srv.cfg.siteName)
+	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/donate")
+	html := strings.ReplaceAll(string(b), "{{HEADER}}", readPartial("header.html"))
+	html = strings.ReplaceAll(html, "{{FOOTER}}", readPartial("footer.html"))
+	html = strings.ReplaceAll(html, "{{HEADER_EXTRA}}", `<div class="refresh-row"><span id="last-refresh-label"></span><button class="btn-refresh" id="btn-refresh">Refresh</button><button class="btn-refresh" id="btn-logout" style="color:var(--text-muted);">Logout</button></div>`)
+	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
+	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)
+	html = strings.ReplaceAll(html, "{{SITE_NAME_FULL}}", srv.cfg.siteName)
 	html = strings.ReplaceAll(html, "{{SITE_LOGO_INNER}}", srv.cfg.siteLogoInner)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write([]byte(html))

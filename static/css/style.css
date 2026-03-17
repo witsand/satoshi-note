@@ -457,6 +457,8 @@ select {
   padding: 24px;
   width: 100%;
   max-width: 340px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
   text-align: center;
 }
 
@@ -468,13 +470,14 @@ select {
 
 .modal-close {
   margin-top: 16px;
-  font-size: 0.85rem;
-  color: var(--text-muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
   background: none;
   border: none;
   cursor: pointer;
 }
-.modal-close:hover { color: var(--text); }
+.modal-close:hover { color: var(--orange); }
 
 /* ── Empty state ── */
 .empty-state {
@@ -528,12 +531,17 @@ select {
   margin-bottom: 10px;
 }
 
-.wallet-card-links { display: flex; flex-direction: column; gap: 4px; }
+.wallet-card-links {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
 
 .wallet-link {
   font-size: 0.75rem;
   color: var(--orange);
-  display: block;
 }
 
 /* ── FAQ accordion ── */
@@ -719,15 +727,35 @@ select {
 /* ── Steps list (onboarding / wallet guides) ── */
 .steps-list {
   list-style: none;
+  counter-reset: steps;
   display: flex;
   flex-direction: column;
   gap: 12px;
   margin-top: 10px;
+  padding-left: 0;
 }
 .steps-list li {
-  display: block;
+  counter-increment: steps;
+  position: relative;
+  padding-left: 32px;
   font-size: 0.875rem;
   color: var(--text-muted);
+}
+.steps-list li::before {
+  content: counter(steps);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 22px;
+  height: 22px;
+  background: var(--orange);
+  color: #000;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 .steps-list li strong {
   display: block;

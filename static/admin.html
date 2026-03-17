@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin — {{SITE_NAME_FULL}}</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <script src="/js/qrcode.min.js"></script>
   <style>
     :root {
       --orange: #F7931A;
@@ -26,20 +28,6 @@
       padding: 20px;
     }
     .page { max-width: 640px; margin: 0 auto; }
-    .page-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 24px;
-      padding-bottom: 16px;
-      border-bottom: 1px solid var(--surface-2);
-    }
-    .page-title {
-      font-size: 1.1rem;
-      font-weight: 700;
-      color: var(--orange);
-    }
-    .page-title span { color: var(--text); font-weight: 400; }
     .refresh-row {
       display: flex;
       align-items: center;
@@ -184,14 +172,7 @@
 
 <!-- Dashboard -->
 <div class="page" id="dashboard" style="display:none;">
-  <div class="page-header">
-    <div class="page-title">⚡ {{SITE_LOGO_INNER}} Admin</div>
-    <div class="refresh-row">
-      <span id="last-refresh-label"></span>
-      <button class="btn-refresh" id="btn-refresh">Refresh</button>
-      <button class="btn-refresh" id="btn-logout" style="color:var(--text-muted);">Logout</button>
-    </div>
-  </div>
+  {{HEADER}}
 
   <p class="section-label">Voucher counts</p>
   <div class="stat-grid">
@@ -232,6 +213,8 @@
 
   <div class="last-updated" id="last-updated-ts"></div>
 </div>
+
+{{FOOTER}}
 
 <script>
 (function () {
