@@ -287,11 +287,11 @@ function buildDialDropdown(preferred) {
   });
 }
 
-function startFundingPoll(secret) {
+function startFundingPoll(pubkey) {
   stopFundingPoll();
   _fundPoller = setInterval(async () => {
     try {
-      const r = await fetch('/voucher/status/' + secret);
+      const r = await fetch('/voucher/status/' + pubkey);
       if (!r.ok) return;
       const s = await r.json();
       if (s.balance_msat > 0) {
@@ -412,7 +412,7 @@ function expiryAfterFundingLabel(refundAfterSeconds) {
 function buildWAMessage(claimLnurl, refundAfterSeconds) {
   const link = `${window.location.origin}/redeem?lightning=${encodeURIComponent(claimLnurl)}`;
   const dur = daysFromSeconds(refundAfterSeconds);
-  return `I sent you a small amount of Bitcoin to try.\n\nYou can claim it here: ${link}\n\nThe page explains how to get a wallet and redeem it step by step.\n\nIt expires soon, so try claim it when you get a chance.`
+  return `I sent you a small amount of Bitcoin to try.\n\nYou can claim it here: ${link}\n\nThis page explains how to get a wallet and redeem it step by step.\n\nThe voucher expires soon, so try claim it when you get a chance.`
 }
 
 // ── Single voucher wizard ─────────────────────────────────────────────────────
@@ -552,7 +552,7 @@ function renderFundStep(voucher) {
   });
 
   // Start auto-detection
-  startFundingPoll(voucher.secret);
+  startFundingPoll(voucher.pubkey);
 }
 
 function renderShareStep(voucher) {
@@ -611,7 +611,7 @@ function renderShareStep(voucher) {
       lnEl.style.cursor = 'pointer';
       lnEl.onclick = () => copyToClipboard(voucher.fund_lnurl, lnEl);
       // Restart polling so auto-advance still works from step 3
-      startFundingPoll(voucher.secret);
+      startFundingPoll(voucher.pubkey);
     } else {
       stopFundingPoll();
     }
@@ -1737,24 +1737,24 @@ async function renderHistory() {
 
   // Fetch active status for all vouchers in parallel
   const statusCache = new Map();
-  const allSecrets = history.flatMap(e => e.vouchers.map(v => v.secret));
-  await Promise.all(allSecrets.map(async secret => {
+  const allPubkeys = history.flatMap(e => e.vouchers.map(v => v.pubkey));
+  await Promise.all(allPubkeys.map(async pubkey => {
     try {
-      const res = await fetch(`/voucher/status/${secret}`);
+      const res = await fetch(`/voucher/status/${pubkey}`);
       if (res.ok) {
         const data = await res.json();
-        statusCache.set(secret, data.active === true);
+        statusCache.set(pubkey, data.active === true);
       } else {
-        statusCache.set(secret, false);
+        statusCache.set(pubkey, false);
       }
     } catch {
-      statusCache.set(secret, false);
+      statusCache.set(pubkey, false);
     }
   }));
 
   // Filter entries where at least one voucher is still active
   const activeEntries = history.filter(entry =>
-    entry.vouchers.some(v => statusCache.get(v.secret))
+    entry.vouchers.some(v => statusCache.get(v.pubkey))
   );
 
   if (!activeEntries.length) {
@@ -1772,7 +1772,7 @@ async function renderHistory() {
     card.className = 'history-card';
 
     const date = new Date(entry.createdAt * 1000).toLocaleString();
-    const activeCount = entry.vouchers.filter(v => statusCache.get(v.secret)).length;
+    const activeCount = entry.vouchers.filter(v => statusCache.get(v.pubkey)).length;
     const typeLabel = entry.type === 'single' ? 'Single' : `Batch (${activeCount})`;
     const badge = entry.type === 'single' ? 'badge-single' : 'badge-batch';
 

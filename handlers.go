@@ -101,9 +101,9 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 		}
 
 		if _, err := dbTx.Exec(
-			`INSERT INTO vouchers (secret, pub_key, batch_name, batch_id, refund_code, refund_after_seconds, single_use, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			voucher.Secret, voucher.PubKey, voucher.BatchName, voucher.BatchID,
+			`INSERT INTO vouchers (pub_key, batch_name, batch_id, refund_code, refund_after_seconds, single_use, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			voucher.PubKey, voucher.BatchName, voucher.BatchID,
 			voucher.RefundCode, voucher.RefundAfterSeconds, boolToInt(voucher.SingleUse),
 			time.Now().Unix(),
 		); err != nil {
@@ -312,7 +312,13 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 
 	secret := r.PathValue("secret")
 
-	v, err := srv.getVoucherBySecret(srv.db, secret)
+	pubKey, err := secretToPubKey(secret)
+	if err != nil {
+		lnurlError(w, "invalid secret")
+		return
+	}
+
+	v, err := srv.getVoucherByPubKey(srv.db, pubKey)
 	if err != nil {
 		lnurlError(w, "voucher not found")
 		return
@@ -330,7 +336,7 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 	}
 	k1 := hex.EncodeToString(k1Bytes)
 
-	err = srv.insertRedeemSession(k1, secret)
+	err = srv.insertRedeemSession(k1, pubKey)
 	if err != nil {
 		slog.Error("insert redeem session", "err", err)
 		lnurlError(w, "internal error")
@@ -372,6 +378,12 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 
 	secret := r.PathValue("secret")
 
+	pubKey, err := secretToPubKey(secret)
+	if err != nil {
+		lnurlError(w, "invalid secret")
+		return
+	}
+
 	k1 := r.URL.Query().Get("k1")
 	if k1 == "" {
 		lnurlError(w, "missing k1")
@@ -384,7 +396,7 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	err := srv.markRedeemSessionUsed(k1, secret)
+	err = srv.markRedeemSessionUsed(k1, pubKey)
 	if err != nil {
 		lnurlError(w, "invalid or expired k1")
 		return
@@ -415,7 +427,7 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	v, err := srv.getVoucherBySecret(srv.db, secret)
+	v, err := srv.getVoucherByPubKey(srv.db, pubKey)
 	if err != nil {
 		lnurlError(w, "voucher not found")
 		return
@@ -436,7 +448,7 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	redeemID, err := srv.insertRedeemAndBalance(v, pr, amountMsat, dbTxFee)
+	redeemID, err := srv.insertRedeemAndBalance(v, secret, pr, amountMsat, dbTxFee)
 	if err != nil {
 		slog.Error("insert redeem and balance", "err", err)
 		lnurlError(w, "internal db error")
@@ -471,7 +483,7 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
 }
 
-func (srv *Server) insertRedeemAndBalance(v *Voucher, pr string, msat, fee int64) (int64, error) {
+func (srv *Server) insertRedeemAndBalance(v *Voucher, secret, pr string, msat, fee int64) (int64, error) {
 	dbTx, err := srv.db.Begin()
 	if err != nil {
 		return 0, err
@@ -482,7 +494,7 @@ func (srv *Server) insertRedeemAndBalance(v *Voucher, pr string, msat, fee int64
 		return 0, err
 	}
 
-	redeemID, err := srv.insertRedeemTx(dbTx, v.ID, pr, msat, fee)
+	redeemID, err := srv.insertRedeemTx(dbTx, v.ID, secret, pr, msat, fee)
 	if err != nil {
 		return 0, err
 	}
@@ -538,8 +550,8 @@ func (srv *Server) updateFundBalance(dbTx *sql.Tx, tx *FundTx) error {
 }
 
 func (srv *Server) handleVoucherStatus(w http.ResponseWriter, r *http.Request) {
-	secret := r.PathValue("secret")
-	s, err := srv.getVoucherStatusBySecret(secret)
+	pubKey := r.PathValue("pubKey")
+	s, err := srv.getVoucherStatusByPubKey(pubKey)
 	if err != nil {
 		http.Error(w, "not found", http.StatusNotFound)
 		return

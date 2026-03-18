@@ -10,7 +10,7 @@ import (
 
 func (srv *Server) runRefundWorker() {
 	srv.processRefunds() // run once on startup to catch missed refunds
-	ticker := time.NewTicker(24 * time.Hour)
+	ticker := time.NewTicker(time.Duration(srv.cfg.refundWorkerIntervalSeconds) * time.Second)
 	defer ticker.Stop()
 	for range ticker.C {
 		srv.processRefunds()

@@ -30,7 +30,7 @@ func (srv *Server) ServeAPI() {
 
 	// App Api
 	mux.HandleFunc("POST /voucher/create", srv.handleCreateVouchers)
-	mux.HandleFunc("GET /voucher/status/{secret}", srv.handleVoucherStatus)
+	mux.HandleFunc("GET /voucher/status/{pubKey}", srv.handleVoucherStatus)
 	mux.HandleFunc("GET /admin/stats", srv.handleAdminStats)
 
 	// LNURL Step 1

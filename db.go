@@ -35,13 +35,88 @@ func openDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	if err := migrateDB(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate db: %w", err)
+	}
 	return db, nil
+}
+
+// migrateDB applies schema migrations for existing deployments.
+func migrateDB(db *sql.DB) error {
+	// Helper: check if a column exists in a table.
+	hasColumn := func(table, column string) (bool, error) {
+		rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+		if err != nil {
+			return false, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var cid int
+			var name, colType string
+			var notNull, pk int
+			var dfltValue any
+			if err := rows.Scan(&cid, &name, &colType, &notNull, &dfltValue, &pk); err != nil {
+				return false, err
+			}
+			if name == column {
+				return true, nil
+			}
+		}
+		return false, rows.Err()
+	}
+
+	// vouchers: drop secret column if present (SQLite 3.35+).
+	// Must drop the dependent index first or SQLite will error.
+	if ok, err := hasColumn("vouchers", "secret"); err != nil {
+		return err
+	} else if ok {
+		if _, err := db.Exec(`DROP INDEX IF EXISTS idx_vouchers_secret`); err != nil {
+			return err
+		}
+		if _, err := db.Exec(`ALTER TABLE vouchers DROP COLUMN secret`); err != nil {
+			return err
+		}
+	}
+
+	// redeem_sessions: add pub_key column if missing, then drop secret column.
+	if ok, err := hasColumn("redeem_sessions", "pub_key"); err != nil {
+		return err
+	} else if !ok {
+		if _, err := db.Exec(`ALTER TABLE redeem_sessions ADD COLUMN pub_key TEXT NOT NULL DEFAULT ""`); err != nil {
+			return err
+		}
+	}
+	if ok, err := hasColumn("redeem_sessions", "secret"); err != nil {
+		return err
+	} else if ok {
+		if _, err := db.Exec(`DROP INDEX IF EXISTS idx_redeem_sessions_k1`); err != nil {
+			return err
+		}
+		if _, err := db.Exec(`ALTER TABLE redeem_sessions DROP COLUMN secret`); err != nil {
+			return err
+		}
+		// Recreate the index on the new column.
+		if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_redeem_sessions_k1 ON redeem_sessions(k1, pub_key)`); err != nil {
+			return err
+		}
+	}
+
+	// redeem_txs: add secret column if missing.
+	if ok, err := hasColumn("redeem_txs", "secret"); err != nil {
+		return err
+	} else if !ok {
+		if _, err := db.Exec(`ALTER TABLE redeem_txs ADD COLUMN secret TEXT NOT NULL DEFAULT ""`); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func initSchema(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS vouchers (
 		id                    INTEGER PRIMARY KEY,
-		secret                TEXT NOT NULL,
 		pub_key               TEXT NOT NULL,
 		batch_name            TEXT NOT NULL,
 		batch_id              TEXT NOT NULL,
@@ -92,7 +167,7 @@ func initSchema(db *sql.DB) error {
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS redeem_sessions (
 		k1         TEXT PRIMARY KEY,
-		secret     TEXT NOT NULL,
+		pub_key    TEXT NOT NULL,
 		used       INTEGER NOT NULL DEFAULT 0,
 		created_at INTEGER NOT NULL,
 		updated_at INTEGER NOT NULL DEFAULT 0
@@ -104,6 +179,7 @@ func initSchema(db *sql.DB) error {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS redeem_txs (
 		id            INTEGER PRIMARY KEY,
 		voucher_id    INTEGER NOT NULL,
+		secret        TEXT    NOT NULL DEFAULT "",
 		pr            TEXT NOT NULL,
 		msat          INTEGER NOT NULL,
 		ln_fee        INTEGER NOT NULL,
@@ -136,11 +212,10 @@ func initSchema(db *sql.DB) error {
 
 	// Indexes for frequently queried columns.
 	indexes := []string{
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_secret  ON vouchers(secret)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_pub_key ON vouchers(pub_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_vouchers_batch_id       ON vouchers(batch_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_fund_txs_status         ON fund_txs(status)`,
-		`CREATE INDEX IF NOT EXISTS idx_redeem_sessions_k1      ON redeem_sessions(k1, secret)`,
+		`CREATE INDEX IF NOT EXISTS idx_redeem_sessions_k1      ON redeem_sessions(k1, pub_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_redeem_txs_voucher_id   ON redeem_txs(voucher_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_refund_txs_refunded     ON refund_txs(refunded)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_donations_pr     ON donations(pr)`,
@@ -156,25 +231,25 @@ func initSchema(db *sql.DB) error {
 
 func (srv *Server) insertVoucher(v *Voucher) error {
 	_, err := srv.db.Exec(
-		`INSERT INTO vouchers (secret, pub_key, batch_name, batch_id, refund_code, refund_after_seconds, single_use, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		v.Secret, v.PubKey, v.BatchName, v.BatchID, v.RefundCode, v.RefundAfterSeconds, boolToInt(v.SingleUse), time.Now().Unix(),
+		`INSERT INTO vouchers (pub_key, batch_name, batch_id, refund_code, refund_after_seconds, single_use, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		v.PubKey, v.BatchName, v.BatchID, v.RefundCode, v.RefundAfterSeconds, boolToInt(v.SingleUse), time.Now().Unix(),
 	)
 	return err
 }
 
-func (srv *Server) insertRedeemSession(k1, secret string) error {
+func (srv *Server) insertRedeemSession(k1, pubKey string) error {
 	_, err := srv.db.Exec(
-		`INSERT INTO redeem_sessions (k1, secret, created_at) VALUES (?, ?, ?)`,
-		k1, secret, time.Now().Unix(),
+		`INSERT INTO redeem_sessions (k1, pub_key, created_at) VALUES (?, ?, ?)`,
+		k1, pubKey, time.Now().Unix(),
 	)
 	return err
 }
 
-func (srv *Server) insertRedeemTx(dbTx *sql.Tx, voucherID int64, pr string, msat, fee int64) (int64, error) {
+func (srv *Server) insertRedeemTx(dbTx *sql.Tx, voucherID int64, secret, pr string, msat, fee int64) (int64, error) {
 	res, err := dbTx.Exec(
-		`INSERT INTO redeem_txs (voucher_id, pr, msat, ln_fee, status, created_at) VALUES(?, ?, ?, ?, ?, ?)`,
-		voucherID, pr, msat, fee, TxPending, time.Now().Unix(),
+		`INSERT INTO redeem_txs (voucher_id, secret, pr, msat, ln_fee, status, created_at) VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		voucherID, secret, pr, msat, fee, TxPending, time.Now().Unix(),
 	)
 	if err != nil {
 		return 0, err
@@ -191,10 +266,10 @@ func (srv *Server) updateRedeemTx(redeemID int64, status TxStatus, dbTxFee, actu
 	return err
 }
 
-func (srv *Server) markRedeemSessionUsed(k1, secret string) error {
+func (srv *Server) markRedeemSessionUsed(k1, pubKey string) error {
 	res, err := srv.db.Exec(
-		`UPDATE redeem_sessions SET used = 1, updated_at = ? WHERE k1 = ? AND secret = ? AND used = 0 AND created_at >= ?`,
-		time.Now().Unix(), k1, secret, time.Now().Unix()-1800) // 30 minute window
+		`UPDATE redeem_sessions SET used = 1, updated_at = ? WHERE k1 = ? AND pub_key = ? AND used = 0 AND created_at >= ?`,
+		time.Now().Unix(), k1, pubKey, time.Now().Unix()-1800) // 30 minute window
 	if err != nil {
 		return err
 	}
@@ -271,28 +346,10 @@ func updateFundTXStatus(dbTx *sql.Tx, key string, status TxStatus, paymentHash, 
 }
 
 func (srv *Server) getVoucherByPubKey(db dbQuerier, pubkey string) (*Voucher, error) {
-	row := db.QueryRow(`SELECT id, refund_after_seconds, balance_msat, updated_at
+	row := db.QueryRow(`SELECT id, refund_after_seconds, balance_msat, single_use, updated_at
 		FROM vouchers WHERE pub_key = ? AND active = 1`, pubkey)
 
 	v := &Voucher{PubKey: pubkey}
-	var updatedAt int64
-	if err := row.Scan(&v.ID, &v.RefundAfterSeconds, &v.BalanceMsat, &updatedAt); err != nil {
-		return nil, err
-	}
-
-	if time.Unix(updatedAt, 0).Add(time.Duration(v.RefundAfterSeconds)*time.Second).Before(time.Now()) && updatedAt != 0 {
-		srv.deactivateVoucher(v.ID)
-		return nil, fmt.Errorf("voucher expired")
-	}
-
-	return v, nil
-}
-
-func (srv *Server) getVoucherBySecret(db dbQuerier, secret string) (*Voucher, error) {
-	row := db.QueryRow(`SELECT id, refund_after_seconds, balance_msat, single_use, updated_at
-		FROM vouchers WHERE secret = ? AND active = 1`, secret)
-
-	v := &Voucher{Secret: secret}
 	var updatedAt int64
 	if err := row.Scan(&v.ID, &v.RefundAfterSeconds, &v.BalanceMsat, &v.SingleUse, &updatedAt); err != nil {
 		return nil, err
@@ -313,10 +370,10 @@ type voucherStatus struct {
 	Refunded    bool
 }
 
-func (srv *Server) getVoucherStatusBySecret(secret string) (*voucherStatus, error) {
+func (srv *Server) getVoucherStatusByPubKey(pubKey string) (*voucherStatus, error) {
 	row := srv.db.QueryRow(
 		`SELECT balance_msat, updated_at, refund_after_seconds, active, refunded
-		 FROM vouchers WHERE secret = ?`, secret)
+		 FROM vouchers WHERE pub_key = ?`, pubKey)
 	var s voucherStatus
 	var updatedAt, refundAfterSeconds int64
 	var activeInt, refundedInt int

@@ -34,8 +34,9 @@ type Config struct {
 	createActive            bool
 	fundActive              bool
 	redeemActive            bool
-	refundActive            bool
-	batchEnabled            bool
+	refundActive                bool
+	refundWorkerIntervalSeconds int64
+	batchEnabled                bool
 	invoiceExpirySeconds    int64
 
 	// Optional features — silently disabled if empty
@@ -199,6 +200,15 @@ func loadConfig() (*Server, error) {
 	cfg.redeemActive, _ = strconv.ParseBool(os.Getenv("REDEEM_ACTIVE"))
 	cfg.refundActive, _ = strconv.ParseBool(os.Getenv("REFUND_ACTIVE"))
 	cfg.batchEnabled, _ = strconv.ParseBool(os.Getenv("BATCH_ENABLED"))
+
+	cfg.refundWorkerIntervalSeconds = int64(86400)
+	if v := os.Getenv("REFUND_WORKER_INTERVAL_SECONDS"); v != "" {
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || parsed <= 0 {
+			return nil, fmt.Errorf("REFUND_WORKER_INTERVAL_SECONDS must be a positive integer")
+		}
+		cfg.refundWorkerIntervalSeconds = parsed
+	}
 
 	if v := os.Getenv("INVOICE_EXPIRY_SECONDS"); v == "" {
 		return nil, errMissingEnv("INVOICE_EXPIRY_SECONDS")

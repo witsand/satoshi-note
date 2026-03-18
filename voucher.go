@@ -7,6 +7,17 @@ import (
 	"fmt"
 )
 
+// secretToPubKey re-derives the pubKey from a hex-encoded secret.
+// secret is hex(randomBytes); pubKey is hex(sha256(randomBytes)[:len(randomBytes)]).
+func secretToPubKey(secret string) (string, error) {
+	b, err := hex.DecodeString(secret)
+	if err != nil {
+		return "", err
+	}
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:len(b)]), nil
+}
+
 func (srv *Server) createVoucher(refundCode, batchName, batchID string, expiresAfterSeconds int64, singleUse bool) (*Voucher, error) {
 	v, err := srv.newVoucher(refundCode, batchName, batchID, expiresAfterSeconds, singleUse)
 	if err != nil {

@@ -338,6 +338,14 @@
     return new TextDecoder().decode(new Uint8Array(bytes));
   }
 
+  // ── secretToPubKey — mirrors server-side derivation ──────────────────────
+  async function secretToPubKey(secret) {
+    const bytes = Uint8Array.from(secret.match(/../g).map(h => parseInt(h, 16)));
+    const hash = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(hash).slice(0, bytes.length))
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
   // ── Fetch status then branch ──────────────────────────────────────────────
   async function init() {
     let secret;
@@ -351,7 +359,8 @@
 
     let status;
     try {
-      const resp = await fetch('/voucher/status/' + secret);
+      const pk = await secretToPubKey(secret);
+      const resp = await fetch('/voucher/status/' + pk);
       if (!resp.ok) { showInvalid(); return; }
       status = await resp.json();
     } catch {
@@ -517,7 +526,8 @@
     // ── Background polling — auto-transition when voucher is redeemed ──────
     const pollInterval = setInterval(async function () {
       try {
-        const r = await fetch('/voucher/status/' + secret);
+        const pk = await secretToPubKey(secret);
+        const r = await fetch('/voucher/status/' + pk);
         if (!r.ok) return;
         const s = await r.json();
         if (s.active) return;
