@@ -280,7 +280,6 @@ func (srv *Server) getVoucherByPubKey(db dbQuerier, pubkey string) (*Voucher, er
 	}
 
 	if time.Unix(updatedAt, 0).Add(time.Duration(v.RefundAfterSeconds)*time.Second).Before(time.Now()) && updatedAt != 0 {
-		srv.deactivateVoucher(v.ID)
 		return nil, fmt.Errorf("voucher expired")
 	}
 
@@ -341,7 +340,6 @@ func (srv *Server) getVouchersByBatchID(db dbQuerier, batchID string) ([]Voucher
 	var vs []Voucher
 	for _, item := range items {
 		if time.Unix(item.updatedAt, 0).Add(time.Duration(item.v.RefundAfterSeconds)*time.Second).Before(time.Now()) && item.updatedAt != 0 {
-			srv.deactivateVoucher(item.v.ID)
 			continue
 		}
 		vs = append(vs, item.v)
@@ -395,16 +393,12 @@ func (srv *Server) getFundTxByPR(pr string) (*FundTx, error) {
 	return tx, nil
 }
 
-func (srv *Server) deactivateVoucher(id int64) error {
-	_, err := srv.db.Exec(`UPDATE vouchers SET active = 0, updated_at = ? WHERE id = ?`, time.Now().Unix(), id)
-	return err
-}
-
 func (srv *Server) getExpiredVouchersWithBalance() ([]Voucher, error) {
 	rows, err := srv.db.Query(`
 		SELECT id, refund_code, balance_msat
 		FROM vouchers
-		WHERE balance_msat > 0
+		WHERE active = 1,
+		  AND balance_msat > 0
 		  AND refunded = 0
 		  AND updated_at > 0
 		  AND (updated_at + refund_after_seconds) <= ?`,
