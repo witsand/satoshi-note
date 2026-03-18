@@ -32,6 +32,7 @@ func (srv *Server) ServeAPI() {
 	mux.HandleFunc("POST /voucher/create", srv.handleCreateVouchers)
 	mux.HandleFunc("GET /voucher/status/{pubKey}", srv.handleVoucherStatus)
 	mux.HandleFunc("GET /admin/stats", srv.handleAdminStats)
+	mux.HandleFunc("GET /config", srv.handleConfig)
 
 	// LNURL Step 1
 	mux.HandleFunc("GET /donate", srv.handleDonate)

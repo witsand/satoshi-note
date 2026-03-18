@@ -46,11 +46,11 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req struct {
-		BatchName          string `json:"batch_name"`
-		Amount             int64  `json:"amount"`
-		RefundCode         string `json:"refund_code"`
-		RefundAfterSeconds int64  `json:"refund_after_seconds"`
-		SingleUse          bool   `json:"single_use"`
+		BatchName          string   `json:"batch_name"`
+		PubKeys            []string `json:"pub_keys"`
+		RefundCode         string   `json:"refund_code"`
+		RefundAfterSeconds int64    `json:"refund_after_seconds"`
+		SingleUse          bool     `json:"single_use"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		slog.Error("decode request body", "err", err)
@@ -67,12 +67,20 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 		req.RefundAfterSeconds = srv.cfg.maxVoucherExpireSeconds
 	}
 
-	if req.Amount > srv.cfg.maxVouchersPerBatch {
-		http.Error(w, "too many vouchers requested", http.StatusBadRequest)
+	if len(req.PubKeys) == 0 {
+		http.Error(w, "pub_keys must not be empty", http.StatusBadRequest)
 		return
 	}
-	if req.Amount == 0 {
-		req.Amount = 1
+	if int64(len(req.PubKeys)) > srv.cfg.maxVouchersPerBatch {
+		http.Error(w, "too many vouchers", http.StatusBadRequest)
+		return
+	}
+	for _, pk := range req.PubKeys {
+		b, err := hex.DecodeString(pk)
+		if err != nil || len(b) < 16 || len(b) > 32 {
+			http.Error(w, "invalid pub_key: must be hex, 16–32 bytes", http.StatusBadRequest)
+			return
+		}
 	}
 
 	batchIDBytes := make([]byte, srv.cfg.randomBytesLength)
@@ -93,13 +101,8 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	defer dbTx.Rollback()
 
 	var vs []Voucher
-	for i := int64(0); i < req.Amount; i++ {
-		voucher, err := srv.newVoucher(req.RefundCode, req.BatchName, batchID, req.RefundAfterSeconds, req.SingleUse)
-		if err != nil {
-			slog.Error("create voucher", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
-			return
-		}
+	for _, pubKey := range req.PubKeys {
+		voucher := srv.newVoucher(pubKey, req.RefundCode, req.BatchName, batchID, req.RefundAfterSeconds, req.SingleUse)
 
 		if _, err := dbTx.Exec(
 			`INSERT INTO vouchers (pub_key, batch_name, batch_id, refund_code, refund_after_seconds, single_use, created_at)
@@ -727,6 +730,12 @@ func (srv *Server) handleDonateVerify(w http.ResponseWriter, r *http.Request) {
 		"settled":  don.Status == TxConfirmed,
 		"preimage": don.PaymentPreimage,
 		"pr":       don.PR,
+	})
+}
+
+func (srv *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"random_bytes_length": srv.cfg.randomBytesLength,
 	})
 }
 

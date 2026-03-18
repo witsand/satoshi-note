@@ -217,6 +217,66 @@ const state = {
   activeTab: 'single',
 };
 
+// ── Config + crypto helpers ───────────────────────────────────────────────────
+let _randomBytesLength = 16; // safe fallback within server's accepted 16–32 range
+const _configReady = (async () => {
+  try {
+    const res = await fetch('/config');
+    if (res.ok) {
+      const d = await res.json();
+      if (typeof d.random_bytes_length === 'number') _randomBytesLength = d.random_bytes_length;
+    }
+  } catch (_) {}
+})();
+
+function generateSecretHex(length) {
+  const bytes = new Uint8Array(length);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function secretToPubKey(secretHex) {
+  const n = secretHex.length / 2;
+  const bytes = new Uint8Array(n);
+  for (let i = 0; i < n; i++) bytes[i] = parseInt(secretHex.slice(i * 2, i * 2 + 2), 16);
+  const hashBuf = await crypto.subtle.digest('SHA-256', bytes);
+  // Take first n bytes of 32-byte hash (matches Go's h[:len(b)])
+  const hashBytes = new Uint8Array(hashBuf, 0, n);
+  return Array.from(hashBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ── Bech32 LNURL encoder (port of lnurl.go) ───────────────────────────────────
+const _BECH32 = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+function _b32poly(pre) {
+  const b = (pre >>> 25) & 0x1f, c = ((pre & 0x1FFFFFF) * 32) >>> 0;
+  return [0x3b6a57b2,0x26508e6d,0x1ea119fa,0x3d4233dd,0x2a1462b3]
+    .reduce((acc, g, i) => (b >> i) & 1 ? (acc ^ g) >>> 0 : acc, c);
+}
+function _b32expand(hrp) {
+  const r = [...hrp].map(c => c.charCodeAt(0) >> 5);
+  r.push(0);
+  return r.concat([...hrp].map(c => c.charCodeAt(0) & 31));
+}
+function _b32checksum(hrp, data) {
+  let p = 1;
+  for (const v of [..._b32expand(hrp), ...data, 0,0,0,0,0,0]) p = (_b32poly(p) ^ v) >>> 0;
+  p = (p ^ 1) >>> 0;
+  return [5,4,3,2,1,0].map(i => (p >>> (5*i)) & 31);
+}
+function _to5bit(data) {
+  let acc = 0, bits = 0; const out = [];
+  for (const v of data) {
+    acc = ((acc << 8) | v) >>> 0; bits += 8;
+    while (bits >= 5) { bits -= 5; out.push((acc >>> bits) & 31); }
+  }
+  if (bits > 0) out.push((acc << (5 - bits)) & 31);
+  return out;
+}
+function lnurlEncode(url) {
+  const data = _to5bit(new TextEncoder().encode(url));
+  return ('lnurl1' + [...data, ..._b32checksum('lnurl', data)].map(b => _BECH32[b]).join('')).toUpperCase();
+}
+
 let _fundPoller = null;
 let _dialCode = '+1';
 let _singleExpiry = 259200;
@@ -474,6 +534,10 @@ async function handleCreateSingle() {
   const refundCode = localStorage.getItem(LS_REFUND) || '';
   const ts = Date.now();
 
+  await _configReady;
+  const secret = generateSecretHex(_randomBytesLength);
+  const pubKey = await secretToPubKey(secret);
+
   btn.disabled = true;
   const origHTML = btn.innerHTML;
   btn.innerHTML = '<span class="spinner"></span> Creating…';
@@ -481,11 +545,15 @@ async function handleCreateSingle() {
   try {
     const vouchers = await createVouchers({
       batch_name: `single-${ts}`,
-      amount: 1,
+      pub_keys: [pubKey],
       refund_code: refundCode,
       refund_after_seconds: _singleExpiry,
       single_use: true,
     });
+
+    vouchers[0].secret = secret;
+    vouchers[0].claim_lnurl = lnurlEncode(vouchers[0].withdraw_url_prefix + secret);
+    vouchers[0].fund_lnurl = lnurlEncode(vouchers[0].fund_url_prefix + vouchers[0].pubkey);
 
     state.vouchers = vouchers;
 
@@ -644,6 +712,11 @@ async function handleCreateBatch() {
   const singleUse = $('batch-single-use').checked;
   const refundCode = localStorage.getItem(LS_REFUND) || '';
 
+  await _configReady;
+  const secrets = Array.from({ length: _batchCount }, () => generateSecretHex(_randomBytesLength));
+  const pubKeys = await Promise.all(secrets.map(s => secretToPubKey(s)));
+  const secretByPubKey = Object.fromEntries(pubKeys.map((pk, i) => [pk, secrets[i]]));
+
   btn.disabled = true;
   const origHTML = btn.innerHTML;
   btn.innerHTML = '<span class="spinner"></span> Creating…';
@@ -651,11 +724,19 @@ async function handleCreateBatch() {
   try {
     const vouchers = await createVouchers({
       batch_name: name,
-      amount: _batchCount,
+      pub_keys: pubKeys,
       refund_code: refundCode,
       refund_after_seconds: _batchExpiry,
       single_use: singleUse,
     });
+
+    for (const v of vouchers) {
+      const s = secretByPubKey[v.pubkey];
+      v.secret = s;
+      v.claim_lnurl = lnurlEncode(v.withdraw_url_prefix + s);
+      v.fund_lnurl = lnurlEncode(v.fund_url_prefix + v.pubkey);
+      v.batch_fund_lnurl = lnurlEncode(v.batch_fund_url_prefix + v.batch_id);
+    }
 
     state.vouchers = vouchers;
     state.batchExpiry = _batchExpiry;

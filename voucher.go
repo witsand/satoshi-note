@@ -1,10 +1,8 @@
 package main
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 )
 
 // secretToPubKey re-derives the pubKey from a hex-encoded secret.
@@ -19,10 +17,7 @@ func secretToPubKey(secret string) (string, error) {
 }
 
 func (srv *Server) createVoucher(refundCode, batchName, batchID string, expiresAfterSeconds int64, singleUse bool) (*Voucher, error) {
-	v, err := srv.newVoucher(refundCode, batchName, batchID, expiresAfterSeconds, singleUse)
-	if err != nil {
-		return nil, err
-	}
+	v := srv.newVoucher("", refundCode, batchName, batchID, expiresAfterSeconds, singleUse)
 
 	if err := srv.insertVoucher(v); err != nil {
 		return nil, err
@@ -31,43 +26,17 @@ func (srv *Server) createVoucher(refundCode, batchName, batchID string, expiresA
 	return v, nil
 }
 
-func (srv *Server) newVoucher(refundCode, batchName, batchID string, refundAfterSeconds int64, singleUse bool) (*Voucher, error) {
-	secretBytes := make([]byte, srv.cfg.randomBytesLength)
-	if _, err := rand.Read(secretBytes); err != nil {
-		return nil, fmt.Errorf("generate secret: %w", err)
-	}
-
-	secretHash := sha256.Sum256(secretBytes)
-	secret := hex.EncodeToString(secretBytes[:srv.cfg.randomBytesLength])
-	// Use the full 32-byte SHA256 hash as the public key to avoid truncation issues.
-	pubKey := hex.EncodeToString(secretHash[:srv.cfg.randomBytesLength])
-
-	claimLNURL, err := lnurlEncode(srv.cfg.baseURL + "/w/" + secret)
-	if err != nil {
-		return nil, fmt.Errorf("encode claim LNURL: %w", err)
-	}
-
-	fundLNURL, err := lnurlEncode(srv.cfg.baseURL + "/f/" + pubKey)
-	if err != nil {
-		return nil, fmt.Errorf("encode fund LNURL: %w", err)
-	}
-
-	batchFundLNURL, err := lnurlEncode(srv.cfg.baseURL + "/fb/" + batchID)
-	if err != nil {
-		return nil, fmt.Errorf("encode batch fund LNURL: %w", err)
-	}
-
+func (srv *Server) newVoucher(pubKey, refundCode, batchName, batchID string, refundAfterSeconds int64, singleUse bool) *Voucher {
 	return &Voucher{
-		Secret:             secret,
-		ClaimLNURL:         claimLNURL,
-		PubKey:             pubKey,
-		FundLNURL:          fundLNURL,
-		BatchName:          batchName,
-		BatchID:            batchID,
-		BatchFundLNURL:     batchFundLNURL,
-		RefundCode:         refundCode,
-		RefundAfterSeconds: refundAfterSeconds,
-		SingleUse:          singleUse,
-		Active:             true,
-	}, nil
+		PubKey:               pubKey,
+		FundURLPrefix:        srv.cfg.baseURL + "/f/",
+		BatchName:            batchName,
+		BatchID:              batchID,
+		BatchFundURLPrefix:   srv.cfg.baseURL + "/fb/",
+		WithdrawURLPrefix:    srv.cfg.baseURL + "/w/",
+		RefundCode:           refundCode,
+		RefundAfterSeconds:   refundAfterSeconds,
+		SingleUse:            singleUse,
+		Active:               true,
+	}
 }
