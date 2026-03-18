@@ -57,6 +57,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
+	req.RefundCode = strings.ToLower(req.RefundCode)
 
 	if req.RefundAfterSeconds == 0 {
 		http.Error(w, "refund_after_seconds must be greater than 0", http.StatusBadRequest)
