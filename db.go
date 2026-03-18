@@ -397,7 +397,7 @@ func (srv *Server) getExpiredVouchersWithBalance() ([]Voucher, error) {
 	rows, err := srv.db.Query(`
 		SELECT id, refund_code, balance_msat
 		FROM vouchers
-		WHERE active = 1,
+		WHERE active = 1
 		  AND balance_msat > 0
 		  AND refunded = 0
 		  AND updated_at > 0
