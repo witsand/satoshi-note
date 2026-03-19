@@ -32,8 +32,12 @@ func (l *SparkListener) OnEvent(e spark.SdkEvent) {
 
 	tx, err := l.srv.getFundTxByPR(details.Invoice)
 	if err == nil {
-		tx.Msat = ev.Payment.Amount.Int64() * 1000
-		tx.FeeMsat = ev.Payment.Fees.Int64() * 1000
+		if ev.Payment.Amount != nil {
+			tx.Msat = ev.Payment.Amount.Int64() * 1000
+		}
+		if ev.Payment.Fees != nil {
+			tx.FeeMsat = ev.Payment.Fees.Int64() * 1000
+		}
 		tx.PaymentHash = details.HtlcDetails.PaymentHash
 		if details.HtlcDetails.Preimage != nil {
 			tx.PaymentPreimage = *details.HtlcDetails.Preimage
@@ -50,8 +54,14 @@ func (l *SparkListener) OnEvent(e spark.SdkEvent) {
 		return // not a payment we know about
 	}
 
-	amountMsat := ev.Payment.Amount.Int64() * 1000
-	feeMsat := ev.Payment.Fees.Int64() * 1000
+	var amountMsat int64
+	if ev.Payment.Amount != nil {
+		amountMsat = ev.Payment.Amount.Int64() * 1000
+	}
+	var feeMsat int64
+	if ev.Payment.Fees != nil {
+		feeMsat = ev.Payment.Fees.Int64() * 1000
+	}
 	paymentHash := details.HtlcDetails.PaymentHash
 	var preimage string
 	if details.HtlcDetails.Preimage != nil {

@@ -150,7 +150,10 @@ func (srv *Server) payRefund(rt RefundTx) error {
 		return fmt.Errorf("lnurl pay: %w", err)
 	}
 
-	actualFeeMsat := lnurlPayResp.Payment.Fees.Int64() * 1000
+	var actualFeeMsat int64
+	if lnurlPayResp.Payment.Fees != nil {
+		actualFeeMsat = lnurlPayResp.Payment.Fees.Int64() * 1000
+	}
 	if err := srv.markRefundTxPaid(rt.ID, actualFeeMsat); err != nil {
 		slog.Error("refund worker: mark refund tx paid", "id", rt.ID, "err", err)
 	}
