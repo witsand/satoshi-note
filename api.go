@@ -41,14 +41,14 @@ func (srv *Server) ServeAPI() {
 	mux.HandleFunc("GET /w/{secret}", srv.handleLNURLWithdraw)
 
 	// LNURL Step 2
+	mux.HandleFunc("GET /donate/callback", srv.handleDonateCallback)
 	mux.HandleFunc("GET /fund/{pubKey}/callback", srv.handleLNURLPayCallbackVoucher)
 	mux.HandleFunc("GET /fund/batch/{batchID}/callback", srv.handleLNURLPayCallbackBatch)
-	mux.HandleFunc("GET /donate/callback", srv.handleDonateCallback)
 	mux.HandleFunc("GET /redeem/{secret}/callback", srv.handleLNURLWithdrawCallback)
 
 	// LUD-21 Verify
-	mux.HandleFunc("GET /verify/{key}", srv.handleLNURLVerify)
 	mux.HandleFunc("GET /donate/verify/{key}", srv.handleDonateVerify)
+	mux.HandleFunc("GET /verify/{key}", srv.handleLNURLVerify)
 
 	if err := http.ListenAndServe(":"+srv.cfg.port, corsMiddleware(mux)); err != nil {
 		slog.Error("server", "err", err)

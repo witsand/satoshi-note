@@ -284,6 +284,19 @@ let _batchCount = 8;
 let _batchExpiry = 1209600;
 let _selectedTemplate = 'classic';
 
+function normalizeToE164(raw, dialCode) {
+  const dialDigits = dialCode.replace('+', '');
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('+')) {
+    return trimmed.replace(/\D/g, '');
+  }
+  const digits = trimmed.replace(/\D/g, '').replace(/^0+/, '');
+  if (digits.startsWith(dialDigits)) {
+    return digits;
+  }
+  return dialDigits + digits;
+}
+
 const TEMPLATES = [
   { id: 'classic',  name: 'Classic',       desc: 'Orange header, single QR'         },
   { id: 'dual',     name: 'Dual Panel',     desc: 'Two QRs — claim + fund'           },
@@ -558,8 +571,7 @@ async function handleCreateSingle() {
     state.vouchers = vouchers;
 
     // Store phone for step 3
-    const digits = rawNumber.replace(/\D/g, '').replace(/^0/, '');
-    state.e164 = dialCode.replace('+', '') + digits;
+    state.e164 = normalizeToE164(rawNumber, dialCode);
     state.dialCode = dialCode;
     state.localNumber = rawNumber;
     state.hasPhone = rawNumber.length > 0;
@@ -607,8 +619,7 @@ function renderFundStep(voucher) {
   lnurlEl.onclick = () => copyToClipboard(voucher.fund_lnurl, lnurlEl);
 
   // Save to history now (balance is 0 but LNURLs are ready)
-  const digits = state.localNumber.replace(/\D/g, '').replace(/^0/, '');
-  const e164 = state.dialCode.replace('+', '') + digits;
+  const e164 = normalizeToE164(state.localNumber, state.dialCode);
   pushHistory({
     id: uuidv4(),
     type: 'single',
@@ -624,8 +635,7 @@ function renderFundStep(voucher) {
 }
 
 function renderShareStep(voucher) {
-  const digits = state.localNumber.replace(/\D/g, '').replace(/^0/, '');
-  const e164 = state.dialCode.replace('+', '') + digits;
+  const e164 = normalizeToE164(state.localNumber, state.dialCode);
   $('share-phone-display').textContent = '+' + e164;
 
   // "Sending to" row and WhatsApp button — only when phone was supplied
