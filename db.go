@@ -465,10 +465,10 @@ func (srv *Server) getPendingRefundTxs() ([]RefundTx, error) {
 	return txs, rows.Err()
 }
 
-func (srv *Server) markRefundTxPaid(id, actualFee int64) error {
+func (srv *Server) markRefundTxPaid(id, netDbTxFee, actualFee int64) error {
 	_, err := srv.db.Exec(
-		`UPDATE refund_txs SET refunded = 1, actual_fee = ?, updated_at = ? WHERE id = ?`,
-		actualFee, time.Now().Unix(), id,
+		`UPDATE refund_txs SET refunded = 1, actual_fee = ?, db_tx_fee = ?, updated_at = ? WHERE id = ?`,
+		actualFee, netDbTxFee, time.Now().Unix(), id,
 	)
 	return err
 }
