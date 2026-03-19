@@ -489,7 +489,7 @@
     <div class="state-card">
       <div class="state-icon">⏰</div>
       <div class="state-title">This voucher has expired</div>
-      <div class="state-desc">The Bitcoin is being returned to the sender.<br>Contact them to get a new voucher.</div>
+      <div class="state-desc">The bitcoin is currently being routed back to the sender.<br>Contact them to get a new voucher.</div>
     </div>
     ${buildInfoCard(null)}`;
           return;
@@ -505,8 +505,9 @@
         parts.push(String(s).padStart(2, '0') + 's');
         countdownEl.textContent = '⏳ Expires in ' + parts.join(' ') + ' ⏳';
       }
+      let countdownTimer;
       updateCountdown();
-      const countdownTimer = setInterval(updateCountdown, 1000);
+      countdownTimer = setInterval(updateCountdown, 1000);
     }
 
     // ZAR fiat conversion (non-blocking, silently fails)
@@ -543,7 +544,7 @@
             <div class="state-card">
               <div class="state-icon">⏰</div>
               <div class="state-title">Voucher expired</div>
-              <div class="state-desc">This voucher expired before it was redeemed.<br>Ask the sender for a new one.</div>
+              <div class="state-desc">The bitcoin has successfully been returned to the sender.<br>Contact them to get a new voucher.</div>
             </div>
             ${buildInfoCard(null)}`;
         } else {
