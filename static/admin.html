@@ -221,6 +221,7 @@
     <div class="stat-card"><div class="stat-value" id="s-deposited-sats">—</div><div class="stat-label">Total deposited sats</div></div>
     <div class="stat-card"><div class="stat-value red" id="s-expired-no-refund-sats">—</div><div class="stat-label">Expired sats (no address)</div></div>
     <div class="stat-card"><div class="stat-value" id="s-surplus-sats">—</div><div class="stat-label">Surplus sats</div></div>
+    <div class="stat-card"><div class="stat-value" id="s-db-fees">—</div><div class="stat-label">DB fees sats</div></div>
   </div>
 
   <p class="section-label">Donations</p>
@@ -335,6 +336,8 @@
       surplusEl.textContent = fmtSats(d.surplus_msat);
       surplusEl.className = 'stat-value ' + (d.surplus_msat >= 0 ? 'green' : 'red');
     }
+
+    document.getElementById('s-db-fees').textContent = fmtSats(d.total_db_fee_msat);
 
     document.getElementById('s-donations-confirmed').textContent = fmt(d.confirmed_donations);
     document.getElementById('s-donated-sats').textContent = fmtSats(d.donated_msat);

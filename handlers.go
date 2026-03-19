@@ -861,6 +861,15 @@ func (srv *Server) getAuditStats() (*AuditStats, error) {
 		s.SurplusMsat = -1
 	}
 
+	var redeemFees, refundFees int64
+	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(db_tx_fee),0) FROM redeem_txs WHERE status='confirmed'`).Scan(&redeemFees); err != nil {
+		return nil, err
+	}
+	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(db_tx_fee),0) FROM refund_txs WHERE refunded=1`).Scan(&refundFees); err != nil {
+		return nil, err
+	}
+	s.TotalDbFeeMsat = redeemFees + refundFees
+
 	s.TotalDonations, s.ConfirmedDonations, s.DonatedMsat, err = srv.getDonationStats()
 	if err != nil {
 		return nil, err

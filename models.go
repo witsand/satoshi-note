@@ -80,6 +80,7 @@ type AuditStats struct {
 	TotalDonations      int64 `json:"total_donations"`
 	ConfirmedDonations  int64 `json:"confirmed_donations"`
 	DonatedMsat         int64 `json:"donated_msat"`
+	TotalDbFeeMsat      int64 `json:"total_db_fee_msat"`
 }
 
 type Donation struct {
