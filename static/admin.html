@@ -155,6 +155,34 @@
       text-align: right;
       margin-top: 16px;
     }
+
+    /* Transaction tables */
+    .tx-table-wrap { overflow-x: auto; margin-bottom: 4px; }
+    .tx-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+    }
+    .tx-table th {
+      text-align: left;
+      color: var(--text-muted);
+      font-weight: 600;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--surface-2);
+      white-space: nowrap;
+    }
+    .tx-table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--surface-2);
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .tx-table tr:last-child td { border-bottom: none; }
+    .tx-table tbody tr:hover { background: var(--surface-2); }
+    .tx-status-confirmed { color: var(--green); }
+    .tx-status-failed { color: var(--red); }
+    .tx-status-pending { color: var(--text-muted); }
+    .tx-empty { color: var(--text-muted); font-size: 0.8rem; padding: 10px 0; }
   </style>
 </head>
 <body>
@@ -212,6 +240,26 @@
   </div>
 
   <div class="last-updated" id="last-updated-ts"></div>
+
+  <p class="section-label">Recent redeems</p>
+  <div class="tx-table-wrap" id="recent-redeems-wrap">
+    <table class="tx-table">
+      <thead><tr>
+        <th>ID</th><th>Amount</th><th>DB Fee</th><th>Actual Fee</th><th>Status</th><th>Error</th><th>Date</th>
+      </tr></thead>
+      <tbody id="tbl-redeems"></tbody>
+    </table>
+  </div>
+
+  <p class="section-label">Recent refunds</p>
+  <div class="tx-table-wrap" id="recent-refunds-wrap">
+    <table class="tx-table">
+      <thead><tr>
+        <th>ID</th><th>Refund Code</th><th>Amount</th><th>DB Fee</th><th>Actual Fee</th><th>Paid</th><th>Error</th><th>Date</th>
+      </tr></thead>
+      <tbody id="tbl-refunds"></tbody>
+    </table>
+  </div>
 </div>
 
 {{FOOTER}}
@@ -324,9 +372,71 @@
     }
   }
 
+  async function fetchRecent() {
+    const token = getToken();
+    const resp = await fetch('/admin/recent', {
+      headers: { 'Authorization': 'Bearer ' + token }
+    });
+    if (!resp.ok) return null;
+    return resp.json();
+  }
+
+  function fmtDate(unix) {
+    if (!unix) return '—';
+    return new Date(unix * 1000).toLocaleString();
+  }
+
+  function statusClass(status) {
+    if (status === 'confirmed') return 'tx-status-confirmed';
+    if (status === 'failed') return 'tx-status-failed';
+    return 'tx-status-pending';
+  }
+
+  function renderRecent(d) {
+    const redeemsTbody = document.getElementById('tbl-redeems');
+    if (!d.redeems || d.redeems.length === 0) {
+      redeemsTbody.innerHTML = '<tr><td colspan="7" class="tx-empty">No redeems yet.</td></tr>';
+    } else {
+      redeemsTbody.innerHTML = d.redeems.map(r => `<tr>
+        <td>${r.id}</td>
+        <td>${fmtSats(r.amount_msat)} sat</td>
+        <td>${fmtSats(r.db_tx_fee)} sat</td>
+        <td>${fmtSats(r.actual_ln_fee)} sat</td>
+        <td class="${statusClass(r.status)}">${r.status}</td>
+        <td>${r.error_msg || '—'}</td>
+        <td>${fmtDate(r.created_at)}</td>
+      </tr>`).join('');
+    }
+
+    const refundsTbody = document.getElementById('tbl-refunds');
+    if (!d.refunds || d.refunds.length === 0) {
+      refundsTbody.innerHTML = '<tr><td colspan="8" class="tx-empty">No refunds yet.</td></tr>';
+    } else {
+      refundsTbody.innerHTML = d.refunds.map(r => `<tr>
+        <td>${r.id}</td>
+        <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;">${r.refund_code || '—'}</td>
+        <td>${fmtSats(r.amount_msat)} sat</td>
+        <td>${fmtSats(r.db_tx_fee)} sat</td>
+        <td>${fmtSats(r.actual_fee)} sat</td>
+        <td class="${r.refunded ? 'tx-status-confirmed' : 'tx-status-pending'}">${r.refunded ? 'yes' : 'no'}</td>
+        <td>${r.error_msg || '—'}</td>
+        <td>${fmtDate(r.created_at)}</td>
+      </tr>`).join('');
+    }
+  }
+
+  async function loadRecent() {
+    try {
+      const data = await fetchRecent();
+      if (data) renderRecent(data);
+    } catch (err) {
+      console.error('loadRecent error', err);
+    }
+  }
+
   function startAutoRefresh() {
     stopAutoRefresh();
-    autoRefreshTimer = setInterval(loadStats, 30000);
+    autoRefreshTimer = setInterval(() => { loadStats(); loadRecent(); }, 30000);
   }
   function stopAutoRefresh() {
     if (autoRefreshTimer) { clearInterval(autoRefreshTimer); autoRefreshTimer = null; }
@@ -346,13 +456,14 @@
     showDashboard();
     const data = await resp.json();
     renderStats(data);
+    loadRecent();
     startAutoRefresh();
   });
   document.getElementById('token-input').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') document.getElementById('token-submit').click();
   });
 
-  document.getElementById('btn-refresh').addEventListener('click', loadStats);
+  document.getElementById('btn-refresh').addEventListener('click', () => { loadStats(); loadRecent(); });
   document.getElementById('btn-logout').addEventListener('click', function () {
     stopAutoRefresh();
     clearToken();
@@ -364,6 +475,7 @@
   if (existingToken) {
     showDashboard();
     loadStats();
+    loadRecent();
     startAutoRefresh();
   }
 })();

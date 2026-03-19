@@ -753,6 +753,35 @@ func (srv *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, stats)
 }
 
+func (srv *Server) handleAdminRecent(w http.ResponseWriter, r *http.Request) {
+	if srv.cfg.adminToken == "" || r.Header.Get("Authorization") != "Bearer "+srv.cfg.adminToken {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	redeems, err := srv.getRecentRedeemTxs(10)
+	if err != nil {
+		slog.Error("get recent redeem txs", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	refunds, err := srv.getRecentRefundTxs(10)
+	if err != nil {
+		slog.Error("get recent refund txs", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	if redeems == nil {
+		redeems = []RedeemTx{}
+	}
+	if refunds == nil {
+		refunds = []RefundTx{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"redeems": redeems,
+		"refunds": refunds,
+	})
+}
+
 func (srv *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
 	b, err := os.ReadFile("./static/admin.html")
 	if err != nil {

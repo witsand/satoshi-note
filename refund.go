@@ -139,6 +139,15 @@ func (srv *Server) payRefund(rt RefundTx) error {
 		return fmt.Errorf("prepare lnurl pay: %w", err)
 	}
 
+	estimateFeeMsat := int64(prepResp.FeeSats) * 1000
+	if estimateFeeMsat > rt.DbTxFee {
+		markErr := srv.markRefundTxFailed(rt.ID, "routing fee too high")
+		if markErr != nil {
+			slog.Error("refund worker: mark refund tx failed", "id", rt.ID, "err", markErr)
+		}
+		return fmt.Errorf("routing fee %d msat exceeds db_tx_fee %d msat", estimateFeeMsat, rt.DbTxFee)
+	}
+
 	lnurlPayResp, rawPayErr := srv.ln.LnurlPay(spark.LnurlPayRequest{
 		PrepareResponse: prepResp,
 	})

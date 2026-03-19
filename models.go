@@ -40,14 +40,26 @@ type Voucher struct {
 }
 
 type RefundTx struct {
-	ID         int64
-	RefundCode string
-	AmountMsat int64
-	DbTxFee    int64
-	ActualFee  int64
-	Refunded   bool
-	ErrorMsg   string
-	CreatedAt  int64
+	ID         int64  `json:"id"`
+	RefundCode string `json:"refund_code"`
+	AmountMsat int64  `json:"amount_msat"`
+	DbTxFee    int64  `json:"db_tx_fee"`
+	ActualFee  int64  `json:"actual_fee"`
+	Refunded   bool   `json:"refunded"`
+	ErrorMsg   string `json:"error_msg"`
+	CreatedAt  int64  `json:"created_at"`
+}
+
+type RedeemTx struct {
+	ID          int64    `json:"id"`
+	VoucherID   int64    `json:"voucher_id"`
+	AmountMsat  int64    `json:"amount_msat"`
+	LnFee       int64    `json:"ln_fee"`
+	DbTxFee     int64    `json:"db_tx_fee"`
+	ActualLnFee int64    `json:"actual_ln_fee"`
+	Status      TxStatus `json:"status"`
+	ErrorMsg    string   `json:"error_msg"`
+	CreatedAt   int64    `json:"created_at"`
 }
 
 type AuditStats struct {

@@ -473,6 +473,50 @@ func (srv *Server) markRefundTxPaid(id, actualFee int64) error {
 	return err
 }
 
+func (srv *Server) getRecentRedeemTxs(limit int) ([]RedeemTx, error) {
+	rows, err := srv.db.Query(
+		`SELECT id, voucher_id, msat, ln_fee, db_tx_fee, actual_ln_fee, status, error_msg, created_at
+		 FROM redeem_txs ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var txs []RedeemTx
+	for rows.Next() {
+		var rt RedeemTx
+		var status string
+		if err := rows.Scan(&rt.ID, &rt.VoucherID, &rt.AmountMsat, &rt.LnFee, &rt.DbTxFee, &rt.ActualLnFee, &status, &rt.ErrorMsg, &rt.CreatedAt); err != nil {
+			return nil, err
+		}
+		rt.Status = TxStatus(status)
+		txs = append(txs, rt)
+	}
+	return txs, rows.Err()
+}
+
+func (srv *Server) getRecentRefundTxs(limit int) ([]RefundTx, error) {
+	rows, err := srv.db.Query(
+		`SELECT id, refund_code, amount_msat, db_tx_fee, actual_fee, refunded, error_msg, created_at
+		 FROM refund_txs ORDER BY id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var txs []RefundTx
+	for rows.Next() {
+		var rt RefundTx
+		var refunded int
+		if err := rows.Scan(&rt.ID, &rt.RefundCode, &rt.AmountMsat, &rt.DbTxFee, &rt.ActualFee, &refunded, &rt.ErrorMsg, &rt.CreatedAt); err != nil {
+			return nil, err
+		}
+		rt.Refunded = refunded == 1
+		txs = append(txs, rt)
+	}
+	return txs, rows.Err()
+}
+
 func (srv *Server) markRefundTxFailed(id int64, errMsg string) error {
 	_, err := srv.db.Exec(
 		`UPDATE refund_txs SET error_msg = ?, updated_at = ? WHERE id = ?`,
