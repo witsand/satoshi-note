@@ -19,6 +19,7 @@ func (srv *Server) runRefundWorker() {
 
 func (srv *Server) processRefunds() {
 	slog.Info("refund worker: checking for expired vouchers")
+	defer srv.doPendingRefunds()
 
 	vouchers, err := srv.getExpiredVouchersWithBalance()
 	if err != nil {
@@ -51,7 +52,7 @@ func (srv *Server) processRefunds() {
 	cfg := srv.cfg
 
 	for refundCode, g := range groups {
-		dbTxFee := g.totalMsat * cfg.redeemFeeBPS / 10000 / 1000 * 1000 + 1000
+		dbTxFee := g.totalMsat*cfg.redeemFeeBPS/10000/1000*1000 + 1000
 		if dbTxFee < cfg.minRedeemFeeMsat {
 			dbTxFee = cfg.minRedeemFeeMsat / 1000 * 1000
 		}
@@ -92,7 +93,9 @@ func (srv *Server) processRefunds() {
 			slog.Info("refund worker: dust voucher skipped", "refund_code", refundCode, "net_msat", netMsat)
 		}
 	}
+}
 
+func (srv *Server) doPendingRefunds() {
 	// Attempt payment for all pending refund txs.
 	pending, err := srv.getPendingRefundTxs()
 	if err != nil {
