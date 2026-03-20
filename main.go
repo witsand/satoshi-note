@@ -15,6 +15,7 @@ func main() {
 		slog.Error("load config", "err", err)
 		os.Exit(1)
 	}
+	srv.paymentSema = newPaymentSemaphore()
 	slog.Info("config loaded")
 
 	srv.ln, err = NewBreezClient(srv.cfg.mnemonic, srv.cfg.apiKey, srv.cfg.storageDirectory, srv.cfg.network)

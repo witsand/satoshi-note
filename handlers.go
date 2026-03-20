@@ -406,6 +406,9 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	srv.paymentSema.acquireForWithdrawal()
+	defer srv.paymentSema.releaseAfter(srv.cfg.paymentCooldown)
+
 	prepResp, rawPrepErr := srv.ln.PrepareSendPayment(spark.PrepareSendPaymentRequest{
 		PaymentRequest: pr,
 	})

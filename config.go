@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
 	"github.com/joho/godotenv"
@@ -36,6 +37,7 @@ type Config struct {
 	redeemActive            bool
 	refundActive                bool
 	refundWorkerIntervalSeconds int64
+	paymentCooldown             time.Duration
 	batchEnabled                bool
 	invoiceExpirySeconds    int64
 
@@ -208,6 +210,15 @@ func loadConfig() (*Server, error) {
 			return nil, fmt.Errorf("REFUND_WORKER_INTERVAL_SECONDS must be a positive integer")
 		}
 		cfg.refundWorkerIntervalSeconds = parsed
+	}
+
+	cfg.paymentCooldown = 1000 * time.Millisecond
+	if v := os.Getenv("PAYMENT_COOLDOWN_MS"); v != "" {
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || parsed < 0 {
+			return nil, fmt.Errorf("PAYMENT_COOLDOWN_MS must be a non-negative integer")
+		}
+		cfg.paymentCooldown = time.Duration(parsed) * time.Millisecond
 	}
 
 	if v := os.Getenv("INVOICE_EXPIRY_SECONDS"); v == "" {

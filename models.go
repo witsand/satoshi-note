@@ -9,9 +9,10 @@ import (
 type TxStatus string
 
 type Server struct {
-	ln  *spark.BreezSdk
-	db  *sql.DB
-	cfg *Config
+	ln          *spark.BreezSdk
+	db          *sql.DB
+	cfg         *Config
+	paymentSema *paymentSemaphore
 }
 
 const (
