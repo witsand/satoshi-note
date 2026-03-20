@@ -406,7 +406,10 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	srv.paymentSema.acquireForWithdrawal()
+	if !srv.paymentSema.acquireForWithdrawal() {
+		lnurlError(w, "server busy, please retry")
+		return
+	}
 	defer srv.paymentSema.releaseAfter(srv.cfg.paymentCooldown)
 
 	prepResp, rawPrepErr := srv.ln.PrepareSendPayment(spark.PrepareSendPaymentRequest{

@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -150,11 +149,6 @@ func initSchema(db *sql.DB) error {
 		if _, err := db.Exec(idx); err != nil {
 			return err
 		}
-	}
-
-	_, err = db.Exec(`ALTER TABLE vouchers ADD COLUMN refund_tx_id INTEGER NOT NULL DEFAULT 0`)
-	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
-		return err
 	}
 
 	return nil

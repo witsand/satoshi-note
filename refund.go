@@ -110,9 +110,7 @@ func (srv *Server) processRefunds() {
 }
 
 func (srv *Server) payRefund(rt RefundTx) error {
-	if !srv.paymentSema.tryAcquireForRefund() {
-		return fmt.Errorf("payment semaphore busy (withdrawal pending or cooldown), will retry")
-	}
+	srv.paymentSema.acquireForRefund()
 	defer srv.paymentSema.releaseAfter(srv.cfg.paymentCooldown)
 
 	inputType, rawErr := srv.ln.Parse(rt.RefundCode)
