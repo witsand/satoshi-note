@@ -132,10 +132,12 @@ func (srv *Server) payRefund(rt RefundTx) error {
 	}
 
 	amountSats := uint64(rt.AmountMsat / 1000)
+	comment := "Refund from " + srv.cfg.siteName
 
 	prepResp, rawPrepErr := srv.ln.PrepareLnurlPay(spark.PrepareLnurlPayRequest{
 		AmountSats: amountSats,
 		PayRequest: payRequest,
+		Comment:    &comment,
 	})
 	if err := sdkErr(rawPrepErr); err != nil {
 		markErr := srv.markRefundTxFailed(rt.ID, err.Error())
