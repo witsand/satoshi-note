@@ -70,14 +70,14 @@ func (srv *Server) processRefunds() {
 			errorMsg = "below minimum"
 		}
 
-		_, err = srv.insertRefundTx(dbTx, refundCode, netMsat, dbTxFee, refunded, errorMsg)
+		refundTxID, err := srv.insertRefundTx(dbTx, refundCode, netMsat, dbTxFee, refunded, errorMsg)
 		if err != nil {
 			slog.Error("refund worker: insert refund tx", "refund_code", refundCode, "err", err)
 			dbTx.Rollback()
 			continue
 		}
 
-		if err := srv.markVouchersRefunded(dbTx, g.ids); err != nil {
+		if err := srv.markVouchersRefunded(dbTx, g.ids, refundTxID); err != nil {
 			slog.Error("refund worker: mark vouchers refunded", "refund_code", refundCode, "err", err)
 			dbTx.Rollback()
 			continue

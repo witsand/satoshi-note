@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -51,7 +52,8 @@ func initSchema(db *sql.DB) error {
 		single_use            INTEGER NOT NULL,
 		refunded              INTEGER NOT NULL DEFAULT 0,
 		created_at            INTEGER NOT NULL,
-		updated_at            INTEGER NOT NULL DEFAULT 0
+		updated_at            INTEGER NOT NULL DEFAULT 0,
+		refund_tx_id          INTEGER NOT NULL DEFAULT 0
 	)`)
 	if err != nil {
 		return err
@@ -148,6 +150,11 @@ func initSchema(db *sql.DB) error {
 		if _, err := db.Exec(idx); err != nil {
 			return err
 		}
+	}
+
+	_, err = db.Exec(`ALTER TABLE vouchers ADD COLUMN refund_tx_id INTEGER NOT NULL DEFAULT 0`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		return err
 	}
 
 	return nil
@@ -432,11 +439,11 @@ func (srv *Server) insertRefundTx(dbTx *sql.Tx, refundCode string, amountMsat, d
 	return res.LastInsertId()
 }
 
-func (srv *Server) markVouchersRefunded(dbTx *sql.Tx, ids []int64) error {
+func (srv *Server) markVouchersRefunded(dbTx *sql.Tx, ids []int64, refundTxID int64) error {
 	for _, id := range ids {
 		_, err := dbTx.Exec(
-			`UPDATE vouchers SET balance_msat = 0, refunded = 1, active = 0, updated_at = ? WHERE id = ?`,
-			time.Now().Unix(), id,
+			`UPDATE vouchers SET balance_msat = 0, refunded = 1, active = 0, refund_tx_id = ?, updated_at = ? WHERE id = ?`,
+			refundTxID, time.Now().Unix(), id,
 		)
 		if err != nil {
 			return err
