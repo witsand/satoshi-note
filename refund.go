@@ -134,10 +134,20 @@ func (srv *Server) payRefund(rt RefundTx) error {
 	amountSats := uint64(rt.AmountMsat / 1000)
 	comment := "Refund from " + srv.cfg.siteName
 
+	var commentPtr *string
+	if payRequest.CommentAllowed > 0 {
+		if len(comment) > int(payRequest.CommentAllowed) {
+			truncated := comment[:payRequest.CommentAllowed]
+			commentPtr = &truncated
+		} else {
+			commentPtr = &comment
+		}
+	}
+
 	prepResp, rawPrepErr := srv.ln.PrepareLnurlPay(spark.PrepareLnurlPayRequest{
 		AmountSats: amountSats,
 		PayRequest: payRequest,
-		Comment:    &comment,
+		Comment:    commentPtr,
 	})
 	if err := sdkErr(rawPrepErr); err != nil {
 		markErr := srv.markRefundTxFailed(rt.ID, err.Error())
