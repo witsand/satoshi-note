@@ -2068,14 +2068,23 @@ function renderLeaderboardContent(container, data, counts) {
   }
 
   function redeemedTeaserCard(label, isMonth) {
-    const scope = isMonth ? 'this month' : 'all time';
+    const tips = isMonth
+      ? [
+          'Show someone the QR code and say "scan this for free bitcoin." Watch their face. That first reaction? That\'s the orange pill. ⚡',
+          'The trick? Tell them it\'s real sats they can actually keep or spend. Curiosity does the rest. Try it today.',
+          'Birthday card, coffee bet, random act of orange-pilling — the best redemptions come from the least expected moments. 🌱',
+        ]
+      : [
+          'No redemptions yet — but one changed mind is worth a thousand funded vouchers. Keep planting seeds. 🌱',
+        ];
+    const tip = tips[Math.floor(Date.now() / 60000) % tips.length];
     return `
       <div class="lb-card lb-card-teaser">
         <div class="lb-card-medal">🌱</div>
         <div class="lb-card-label">${label}</div>
         <div class="lb-card-rank">–</div>
         <div class="lb-card-of">${isMonth ? 'no redemptions yet' : 'none yet'}</div>
-        <div class="lb-card-desc">The real test is whether someone redeems your voucher and takes their first step into Bitcoin. Keep sharing — every seed you plant could be the one that changes a life.</div>
+        <div class="lb-card-desc">${tip}</div>
       </div>`;
   }
 
@@ -2110,11 +2119,11 @@ function renderLeaderboardContent(container, data, counts) {
       </div>`;
   }
 
-  const heroRankLine = counts.funded_month > 0
-    ? `<p class="lb-subtitle">You're #${data.funded_month.rank} for sats shared this month — keep going! ⚡</p>`
-    : counts.funded_all_time > 0
-      ? `<p class="lb-subtitle">You're #${data.funded_all_time.rank} all time for sats shared. ⚡</p>`
-      : '';
+  const heroRankLine = counts.redeemed_month > 0
+    ? `<p class="lb-subtitle">You're #${data.redeemed_month.rank} for Bitcoiners Minted this month — keep going! ⚡</p>`
+    : counts.redeemed_all_time > 0
+      ? `<p class="lb-subtitle">You're #${data.redeemed_all_time.rank} all time for Bitcoiners Minted. ⚡</p>`
+      : `<p class="lb-subtitle">Your vouchers are out there — show someone the QR code and say "it's free bitcoin." That first claim changes everything. ⚡</p>`;
 
   container.innerHTML = `
     <div class="lb-hero">
@@ -2145,7 +2154,7 @@ function renderLeaderboardContent(container, data, counts) {
       </div>
     </div>
 
-    <p class="lb-motivate">Keep sending sats. Climb the ranks. Be #1. ⚡</p>`;
+    <p class="lb-motivate">Every redemption mints a new bitcoiner. Be the one who started it all. ⚡</p>`;
 }
 
 async function renderLeaderboardScreen(container) {
