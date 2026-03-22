@@ -2049,7 +2049,7 @@ function computeLeaderboardCounts(history, cache) {
   return { funded_month: fundedMonth, funded_all_time: fundedAllTime, redeemed_month: redeemedMonth, redeemed_all_time: redeemedAllTime };
 }
 
-function renderLeaderboardContent(container, data) {
+function renderLeaderboardContent(container, data, counts) {
   const monthLabel = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
 
   function medalFor(rank, total) {
@@ -2061,14 +2061,29 @@ function renderLeaderboardContent(container, data) {
     return '⚡';
   }
 
-  function cardHTML(key, label) {
+  function ordinal(n) {
+    const s = ['th', 'st', 'nd', 'rd'];
+    const v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  }
+
+  function cardHTML(key, label, count) {
     const { rank, total } = data[key];
+    const v = count !== 1 ? 's' : '';
+    const descriptions = {
+      funded_month:      count > 0 ? `This month you've funded ${count} voucher${v} — putting bitcoin directly into ${count} new set${v} of hands. That's the ${ordinal(rank)} highest score this month. Keep going, the revolution needs you.` : null,
+      redeemed_month:    count > 0 ? `${count} person${v} claimed their sats this month thanks to you — ${count} new bitcoiner${v} minted. You rank ${ordinal(rank)} this month. Every redemption is a mind opened.` : null,
+      funded_all_time:   count > 0 ? `You've funded ${count} voucher${v} in total, spreading the orange pill one sat at a time. All-time rank: ${ordinal(rank)} of ${total}. Legendary.` : null,
+      redeemed_all_time: count > 0 ? `${count} bitcoiner${v} minted by you, for life. You're ${ordinal(rank)} of all time. That's a legacy worth building.` : null,
+    };
+    const desc = descriptions[key];
     return `
       <div class="lb-card">
         <div class="lb-card-medal">${medalFor(rank, total)}</div>
         <div class="lb-card-label">${label}</div>
         <div class="lb-card-rank">${total > 0 ? '#' + rank : '–'}</div>
         <div class="lb-card-of">${total > 0 ? 'of ' + total : 'No data yet'}</div>
+        ${desc ? `<div class="lb-card-desc">${desc}</div>` : ''}
       </div>`;
   }
 
@@ -2086,8 +2101,8 @@ function renderLeaderboardContent(container, data) {
         <span class="lb-category-title">${monthLabel}</span>
       </div>
       <div class="lb-grid">
-        ${cardHTML('funded_month', 'Sats Shared')}
-        ${cardHTML('redeemed_month', 'Bitcoiners Minted')}
+        ${cardHTML('funded_month', 'Sats Shared', counts.funded_month)}
+        ${cardHTML('redeemed_month', 'Bitcoiners Minted', counts.redeemed_month)}
       </div>
     </div>
 
@@ -2097,8 +2112,8 @@ function renderLeaderboardContent(container, data) {
         <span class="lb-category-title">Hall of Legends</span>
       </div>
       <div class="lb-grid">
-        ${cardHTML('funded_all_time', 'Sats Shared')}
-        ${cardHTML('redeemed_all_time', 'Bitcoiners Minted')}
+        ${cardHTML('funded_all_time', 'Sats Shared', counts.funded_all_time)}
+        ${cardHTML('redeemed_all_time', 'Bitcoiners Minted', counts.redeemed_all_time)}
       </div>
     </div>
 
@@ -2128,7 +2143,7 @@ async function renderLeaderboardScreen(container) {
       body: JSON.stringify(counts),
     });
     if (!res.ok) throw new Error();
-    renderLeaderboardContent(container, await res.json());
+    renderLeaderboardContent(container, await res.json(), counts);
   } catch {
     container.innerHTML = `<p class="lb-error">Could not load leaderboard. Try again later.</p>`;
   }

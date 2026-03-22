@@ -504,6 +504,16 @@ select {
 .lb-card-label { font-size: 0.65rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); }
 .lb-card-rank  { font-size: 1.8rem; font-weight: 900; color: var(--orange); line-height: 1.1; margin-top: 6px; }
 .lb-card-of    { font-size: 0.72rem; color: var(--text-muted); }
+.lb-card-desc  {
+  font-size: 0.67rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--surface-2);
+  text-align: center;
+  font-style: italic;
+}
 .lb-motivate {
   text-align: center;
   font-size: 0.8rem;
