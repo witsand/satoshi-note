@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -59,7 +60,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	}
 	req.RefundCode = strings.ToLower(req.RefundCode)
 
-	if req.RefundAfterSeconds == 0 {
+	if req.RefundAfterSeconds <= 0 {
 		http.Error(w, "refund_after_seconds must be greater than 0", http.StatusBadRequest)
 		return
 	}
@@ -400,17 +401,17 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	err = srv.markRedeemSessionUsed(k1, pubKey)
-	if err != nil {
-		lnurlError(w, "invalid or expired k1")
-		return
-	}
-
 	if !srv.paymentSema.acquireForWithdrawal() {
 		lnurlError(w, "server busy, please retry")
 		return
 	}
 	defer srv.paymentSema.releaseAfter(srv.cfg.paymentCooldown)
+
+	err = srv.markRedeemSessionUsed(k1, pubKey)
+	if err != nil {
+		lnurlError(w, "invalid or expired k1")
+		return
+	}
 
 	prepResp, rawPrepErr := srv.ln.PrepareSendPayment(spark.PrepareSendPaymentRequest{
 		PaymentRequest: pr,
@@ -524,39 +525,51 @@ func (srv *Server) updateFundTxConfirmed(tx *FundTx) error {
 		return err
 	}
 
-	if err := srv.updateFundBalance(dbTx, tx); err != nil {
+	dust, err := srv.updateFundBalance(dbTx, tx)
+	if err != nil {
 		slog.Error("update voucher balance", "err", err)
 		return err
+	}
+
+	if dust > 0 {
+		if err := updateFundTxDust(dbTx, tx.Key, dust); err != nil {
+			slog.Error("update fund tx dust", "err", err)
+			return err
+		}
 	}
 
 	return dbTx.Commit()
 }
 
-func (srv *Server) updateFundBalance(dbTx *sql.Tx, tx *FundTx) error {
+// updateFundBalance credits voucher balances for a confirmed fund tx.
+// For batch payments, returns the msat remainder lost to per-sat rounding
+// (tracked in fund_txs.dust_msat). Always returns 0 for single-voucher payments.
+func (srv *Server) updateFundBalance(dbTx *sql.Tx, tx *FundTx) (int64, error) {
 	if tx.PubKey != "" {
 		v, err := srv.getVoucherByPubKey(dbTx, tx.PubKey)
 		if err != nil {
-			return fmt.Errorf("get voucher by pubkey: %w", err)
+			return 0, fmt.Errorf("get voucher by pubkey: %w", err)
 		}
-		return srv.updateVoucherBalance(dbTx, v.ID, int64(tx.Msat)-tx.FeeMsat)
+		return 0, srv.updateVoucherBalance(dbTx, v.ID, int64(tx.Msat)-tx.FeeMsat)
 	}
 
 	vs, err := srv.getVouchersByBatchID(dbTx, tx.BatchID)
 	if err != nil {
-		return fmt.Errorf("get vouchers by batch id: %w", err)
+		return 0, fmt.Errorf("get vouchers by batch id: %w", err)
 	}
 
 	total := int64(tx.Msat) - tx.FeeMsat
 	share := total / int64(len(vs))
 	share = (share / 1000) * 1000
+	dust := total - share*int64(len(vs))
 
 	for _, v := range vs {
 		if err := srv.updateVoucherBalance(dbTx, v.ID, share); err != nil {
-			return fmt.Errorf("update voucher balance: %w", err)
+			return 0, fmt.Errorf("update voucher balance: %w", err)
 		}
 	}
 
-	return nil
+	return dust, nil
 }
 
 type leaderboardRank struct {
@@ -854,7 +867,7 @@ func (srv *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (srv *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
-	if srv.cfg.adminToken == "" || r.Header.Get("Authorization") != "Bearer "+srv.cfg.adminToken {
+	if srv.cfg.adminToken == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+srv.cfg.adminToken)) != 1 {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -868,7 +881,7 @@ func (srv *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (srv *Server) handleAdminRecent(w http.ResponseWriter, r *http.Request) {
-	if srv.cfg.adminToken == "" || r.Header.Get("Authorization") != "Bearer "+srv.cfg.adminToken {
+	if srv.cfg.adminToken == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+srv.cfg.adminToken)) != 1 {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
@@ -956,6 +969,9 @@ func (srv *Server) getAuditStats() (*AuditStats, error) {
 		return nil, err
 	}
 	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(msat),0) FROM fund_txs WHERE status='confirmed'`).Scan(&s.TotalDepositedMsat); err != nil {
+		return nil, err
+	}
+	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(dust_msat),0) FROM fund_txs WHERE status='confirmed'`).Scan(&s.TotalDustMsat); err != nil {
 		return nil, err
 	}
 	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(amount_msat),0) FROM refund_txs WHERE refund_code=''`).Scan(&s.ExpiredNoRefundMsat); err != nil {

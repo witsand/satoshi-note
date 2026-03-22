@@ -245,3 +245,21 @@ sudo systemctl restart send-sats
 - Cloudflare handles TLS automatically via the tunnel
 - The `.env` file contains secrets — keep it private
 - Keep a backup of your `MNEMONIC` somewhere safe — it holds your Lightning wallet funds
+
+---
+
+## Running behind nginx or caddy instead of Cloudflare Tunnel
+
+The rate limiter reads the real client IP from the `CF-Connecting-IP` header (set by Cloudflare) or `X-Real-IP` (set by nginx/caddy). If neither header is present it falls back to the raw TCP connection address. You **must** configure your proxy to set `X-Real-IP`, otherwise all traffic appears to come from `127.0.0.1` and the rate limiter treats the entire world as one client.
+
+**nginx** — add inside your `location /` block:
+```nginx
+proxy_set_header X-Real-IP $remote_addr;
+```
+
+**caddy** — add inside your `reverse_proxy` block:
+```caddy
+header_up X-Real-IP {remote_host}
+```
+
+Do not forward `X-Forwarded-For` as a substitute — its leftmost value is client-controlled and can be spoofed to bypass rate limiting.

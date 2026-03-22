@@ -31,6 +31,10 @@ func openDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("enable WAL: %w", err)
 	}
+	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("set busy_timeout: %w", err)
+	}
 
 	if err := initSchema(db); err != nil {
 		db.Close()
@@ -65,6 +69,7 @@ func initSchema(db *sql.DB) error {
 		pub_key          TEXT NOT NULL,
 		msat             INTEGER NOT NULL,
 		fee_msat         INTEGER NOT NULL,
+		dust_msat        INTEGER NOT NULL DEFAULT 0,
 		pr               TEXT NOT NULL,
 		payment_hash     TEXT NOT NULL DEFAULT "",
 		payment_preimage TEXT NOT NULL DEFAULT "",
@@ -134,6 +139,15 @@ func initSchema(db *sql.DB) error {
 	)`)
 	if err != nil {
 		return err
+	}
+
+	// Migrations: add columns introduced after initial schema.
+	// ALTER TABLE returns "duplicate column name" when the column already exists
+	// (new installs); that error is intentionally ignored.
+	if _, err := db.Exec(`ALTER TABLE fund_txs ADD COLUMN dust_msat INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if !strings.Contains(err.Error(), "duplicate column name") {
+			return err
+		}
 	}
 
 	// Indexes for frequently queried columns.
@@ -264,10 +278,25 @@ func (srv *Server) insertFundTX(tx *FundTx) error {
 }
 
 func updateFundTXStatus(dbTx *sql.Tx, key string, status TxStatus, paymentHash, paymentPreimage string) error {
-	_, err := dbTx.Exec(`
+	res, err := dbTx.Exec(`
 		UPDATE fund_txs SET status = ?, payment_hash = ?, payment_preimage = ?, updated_at = ?
 		WHERE key = ? AND status = ?`,
 		status, paymentHash, paymentPreimage, time.Now().Unix(), key, TxPending)
+	if err != nil {
+		return err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return fmt.Errorf("fund tx %s already confirmed or not found", key)
+	}
+	return nil
+}
+
+func updateFundTxDust(dbTx *sql.Tx, key string, dustMsat int64) error {
+	_, err := dbTx.Exec(`UPDATE fund_txs SET dust_msat = ? WHERE key = ?`, dustMsat, key)
 	return err
 }
 

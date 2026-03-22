@@ -74,14 +74,25 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// clientIP extracts the real client IP, preferring X-Forwarded-For when present.
+// clientIP extracts the real client IP from the request.
+//
+// Header priority:
+//  1. CF-Connecting-IP — set by Cloudflare; cannot be forged by clients when
+//     running behind a Cloudflare Tunnel or proxied through Cloudflare.
+//  2. X-Real-IP — set by nginx/caddy when configured with
+//     `proxy_set_header X-Real-IP $remote_addr` (or equivalent).
+//  3. RemoteAddr — used when running without a reverse proxy (local/dev).
+//
+// X-Forwarded-For is intentionally not used: its leftmost value is
+// client-controlled and can be trivially spoofed to bypass rate limiting.
+// Operators running behind a non-Cloudflare proxy that does not set X-Real-IP
+// should configure it to do so.
 func clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Use the first (leftmost) address — the original client.
-		if i := strings.Index(xff, ","); i >= 0 {
-			return strings.TrimSpace(xff[:i])
-		}
-		return strings.TrimSpace(xff)
+	if cf := strings.TrimSpace(r.Header.Get("CF-Connecting-IP")); cf != "" {
+		return cf
+	}
+	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
+		return xri
 	}
 	// RemoteAddr is host:port — strip the port.
 	addr := r.RemoteAddr

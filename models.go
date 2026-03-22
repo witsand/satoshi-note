@@ -82,6 +82,7 @@ type AuditStats struct {
 	ConfirmedDonations  int64 `json:"confirmed_donations"`
 	DonatedMsat         int64 `json:"donated_msat"`
 	TotalDbFeeMsat      int64 `json:"total_db_fee_msat"`
+	TotalDustMsat       int64 `json:"total_dust_msat"` // msat lost to sat-rounding in batch distributions
 }
 
 type Donation struct {
@@ -102,6 +103,7 @@ type FundTx struct {
 	PubKey          string
 	Msat            int64
 	FeeMsat         int64
+	DustMsat        int64
 	PR              string
 	PaymentHash     string
 	PaymentPreimage string
