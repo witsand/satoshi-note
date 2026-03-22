@@ -527,8 +527,8 @@ async function handleCreateSingle() {
   const rawNumber = $('phone-number').value.trim();
 
   if (rawNumber.length > 0) {
-    // Strip the acceptable "good mistakes": spaces and a leading +
-    const stripped = rawNumber.replace(/[\s+]/g, '');
+    // Strip the acceptable "good mistakes": spaces, leading +, parentheses, dashes
+    const stripped = rawNumber.replace(/[\s+()\-]/g, '');
     // After removing spaces/+, anything non-digit is invalid
     if (/\D/.test(stripped)) {
       errEl.textContent = 'Please enter a valid phone number — digits and spaces only.';

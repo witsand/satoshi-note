@@ -151,14 +151,14 @@
 
         <!-- Step 2: Fund QR -->
         <div id="single-step-2" class="hidden">
-          <div class="card">
+          <div class="card" style="text-align:center;">
             <p class="card-title">Fund your voucher</p>
-            <label>⚠️ After paying, come back here to send the voucher.</label>
+            <p class="card-title" id="step2-voucher-for">Sending to: <span id="step2-phone-display"></span></p>
             <label>👍 Scan the QR code or tap it to open your Bitcoin wallet. Send any amount of sats to fund the voucher.</label>
+            <label>ⓘ After paying, come back here to send the voucher.</label>
             <label id="step2-phone-row">
             </label>
             <div class="qr-wrapper">
-              <p id="step2-voucher-for" class="qr-lnurl"><strong>Voucher for: </strong><span id="step2-phone-display"></span></p>
               <div id="single-qr-container" class="qr-container"></div>
               <p id="single-lnurl-text" class="qr-lnurl"></p>
             </div>
@@ -172,12 +172,10 @@
 
         <!-- Step 3: Share -->
         <div id="single-step-3" class="hidden">
-          <div class="card">
+          <div class="card" style="text-align:center;">
             <p class="card-title">Voucher Ready</p>
             <div id="share-phone-row">
-              <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:12px;">
-                Voucher for: <span id="share-phone-display"></span>
-              </p>
+              <p class="card-title">Sending to: <span id="share-phone-display"></span></p>
             </div>
             <label>Share the link so they can claim the sats.</label>
             <div class="btn-group">
