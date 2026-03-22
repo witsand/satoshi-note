@@ -559,6 +559,114 @@ func (srv *Server) updateFundBalance(dbTx *sql.Tx, tx *FundTx) error {
 	return nil
 }
 
+type leaderboardRank struct {
+	Rank  int `json:"rank"`
+	Total int `json:"total"`
+}
+
+func rankIn(userCount int, dist map[string]int) leaderboardRank {
+	rank := 1
+	for _, cnt := range dist {
+		if cnt > userCount {
+			rank++
+		}
+	}
+	return leaderboardRank{Rank: rank, Total: len(dist)}
+}
+
+func (srv *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		FundedMonth     int `json:"funded_month"`
+		FundedAllTime   int `json:"funded_all_time"`
+		RedeemedMonth   int `json:"redeemed_month"`
+		RedeemedAllTime int `json:"redeemed_all_time"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if req.FundedMonth < 0 || req.FundedAllTime < 0 || req.RedeemedMonth < 0 || req.RedeemedAllTime < 0 {
+		http.Error(w, "counts must be non-negative", http.StatusBadRequest)
+		return
+	}
+
+	now := time.Now().UTC()
+	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).Unix()
+
+	fundedMonth, err := srv.leaderboardFundedMonth(monthStart)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	fundedAll, err := srv.leaderboardFundedAllTime()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	redeemedMonth, err := srv.leaderboardRedeemedMonth(monthStart)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	redeemedAll, err := srv.leaderboardRedeemedAllTime()
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]leaderboardRank{
+		"funded_month":     rankIn(req.FundedMonth, fundedMonth),
+		"funded_all_time":  rankIn(req.FundedAllTime, fundedAll),
+		"redeemed_month":   rankIn(req.RedeemedMonth, redeemedMonth),
+		"redeemed_all_time": rankIn(req.RedeemedAllTime, redeemedAll),
+	})
+}
+
+func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PubKeys []string `json:"pubkeys"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if len(req.PubKeys) > 500 {
+		http.Error(w, "too many pubkeys", http.StatusBadRequest)
+		return
+	}
+
+	statuses, err := srv.getVoucherStatusBatch(req.PubKeys)
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	result := make(map[string]any, len(req.PubKeys))
+	for _, pubKey := range req.PubKeys {
+		s, ok := statuses[pubKey]
+		if !ok {
+			continue
+		}
+		dbTxFee := s.BalanceMsat*srv.cfg.redeemFeeBPS/10000/1000*1000 + 1000
+		if dbTxFee < srv.cfg.minRedeemFeeMsat {
+			dbTxFee = srv.cfg.minRedeemFeeMsat / 1000 * 1000
+		}
+		var maxRedeemable int64
+		if s.BalanceMsat > dbTxFee {
+			maxRedeemable = s.BalanceMsat - dbTxFee
+		}
+		result[pubKey] = map[string]any{
+			"balance_msat":   maxRedeemable,
+			"expires_at":     s.ExpiresAt,
+			"active":         s.Active,
+			"refunded":       s.Refunded,
+			"refund_pending": s.RefundPending,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (srv *Server) handleVoucherStatus(w http.ResponseWriter, r *http.Request) {
 	pubKey := r.PathValue("pubKey")
 	s, err := srv.getVoucherStatusByPubKey(pubKey)
@@ -578,10 +686,11 @@ func (srv *Server) handleVoucherStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"balance_msat": maxRedeemable,
-		"expires_at":   s.ExpiresAt,
-		"active":       s.Active,
-		"refunded":     s.Refunded,
+		"balance_msat":   maxRedeemable,
+		"expires_at":     s.ExpiresAt,
+		"active":         s.Active,
+		"refunded":       s.Refunded,
+		"refund_pending": s.RefundPending,
 	})
 }
 
@@ -609,7 +718,6 @@ func (srv *Server) handleRedeemPage(w http.ResponseWriter, r *http.Request) {
 	}
 	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/donate")
 	html := strings.ReplaceAll(string(b), "{{HEADER}}", readPartial("header.html"))
-	html = strings.ReplaceAll(html, "{{FOOTER}}", readPartial("footer.html"))
 	html = strings.ReplaceAll(html, "{{HEADER_EXTRA}}", "")
 	html = strings.ReplaceAll(html, "{{BASE_URL}}", srv.cfg.baseURL)
 	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
@@ -629,7 +737,7 @@ func (srv *Server) handleIndexPage(w http.ResponseWriter, r *http.Request) {
 	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/donate")
 	html := strings.ReplaceAll(string(b), "{{HEADER}}", readPartial("header.html"))
 	html = strings.ReplaceAll(html, "{{FOOTER}}", readPartial("footer.html"))
-	html = strings.ReplaceAll(html, "{{HEADER_EXTRA}}", `<button id="nav-history" class="nav-btn" title="History" aria-label="View history">🗒️</button>`)
+	html = strings.ReplaceAll(html, "{{HEADER_EXTRA}}", `<div style="display:flex;gap:4px;"><button id="nav-history" class="nav-btn" title="History" aria-label="View history">🗒️</button><button id="nav-leaderboard" class="nav-btn" title="Leaderboard" aria-label="Leaderboard">🏆</button></div>`)
 	html = strings.ReplaceAll(html, "{{BASE_URL}}", srv.cfg.baseURL)
 	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
 	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)

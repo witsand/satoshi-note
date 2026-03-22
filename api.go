@@ -30,6 +30,8 @@ func (srv *Server) ServeAPI() {
 	// --- API sub-mux: read endpoints (2 req/s, burst 10) ---
 	apiMux := http.NewServeMux()
 	apiMux.HandleFunc("GET /voucher/status/{pubKey}", srv.handleVoucherStatus)
+	apiMux.HandleFunc("POST /voucher/status/batch", srv.handleVoucherStatusBatch)
+	apiMux.HandleFunc("POST /leaderboard", srv.handleLeaderboard)
 	apiMux.HandleFunc("GET /admin/stats", srv.handleAdminStats)
 	apiMux.HandleFunc("GET /admin/recent", srv.handleAdminRecent)
 	apiMux.HandleFunc("GET /config", srv.handleConfig)
@@ -69,6 +71,7 @@ func (srv *Server) ServeAPI() {
 
 	// API
 	mux.Handle("/voucher/status/", apiHandler)
+	mux.Handle("/leaderboard", apiHandler)
 	mux.Handle("/admin/", apiHandler)
 	mux.Handle("/config", apiHandler)
 

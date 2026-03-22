@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -288,28 +289,68 @@ func (srv *Server) getVoucherByPubKey(db dbQuerier, pubkey string) (*Voucher, er
 }
 
 type voucherStatus struct {
-	BalanceMsat int64
-	ExpiresAt   int64 // updated_at + refund_after_seconds; 0 means no expiry clock started yet
-	Active      bool
-	Refunded    bool
+	BalanceMsat   int64
+	ExpiresAt     int64 // updated_at + refund_after_seconds; 0 means no expiry clock started yet
+	Active        bool
+	Refunded      bool
+	RefundPending bool // refund tx allocated but not yet paid
 }
 
 func (srv *Server) getVoucherStatusByPubKey(pubKey string) (*voucherStatus, error) {
 	row := srv.db.QueryRow(
-		`SELECT balance_msat, updated_at, refund_after_seconds, active, refunded
+		`SELECT balance_msat, updated_at, refund_after_seconds, active, refunded, refund_tx_id
 		 FROM vouchers WHERE pub_key = ?`, pubKey)
 	var s voucherStatus
-	var updatedAt, refundAfterSeconds int64
+	var updatedAt, refundAfterSeconds, refundTxID int64
 	var activeInt, refundedInt int
-	if err := row.Scan(&s.BalanceMsat, &updatedAt, &refundAfterSeconds, &activeInt, &refundedInt); err != nil {
+	if err := row.Scan(&s.BalanceMsat, &updatedAt, &refundAfterSeconds, &activeInt, &refundedInt, &refundTxID); err != nil {
 		return nil, err
 	}
 	s.Active = activeInt == 1
 	s.Refunded = refundedInt == 1
+	s.RefundPending = refundTxID > 0 && !s.Refunded
 	if updatedAt != 0 {
 		s.ExpiresAt = updatedAt + refundAfterSeconds
 	}
 	return &s, nil
+}
+
+func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherStatus, error) {
+	if len(pubKeys) == 0 {
+		return map[string]*voucherStatus{}, nil
+	}
+	placeholders := make([]string, len(pubKeys))
+	args := make([]any, len(pubKeys))
+	for i, pk := range pubKeys {
+		placeholders[i] = "?"
+		args[i] = pk
+	}
+	rows, err := srv.db.Query(
+		`SELECT pub_key, balance_msat, updated_at, refund_after_seconds, active, refunded, refund_tx_id
+		 FROM vouchers WHERE pub_key IN (`+strings.Join(placeholders, ",")+`)`,
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string]*voucherStatus, len(pubKeys))
+	for rows.Next() {
+		var pubKey string
+		var s voucherStatus
+		var updatedAt, refundAfterSeconds, refundTxID int64
+		var activeInt, refundedInt int
+		if err := rows.Scan(&pubKey, &s.BalanceMsat, &updatedAt, &refundAfterSeconds, &activeInt, &refundedInt, &refundTxID); err != nil {
+			return nil, err
+		}
+		s.Active = activeInt == 1
+		s.Refunded = refundedInt == 1
+		s.RefundPending = refundTxID > 0 && !s.Refunded
+		if updatedAt != 0 {
+			s.ExpiresAt = updatedAt + refundAfterSeconds
+		}
+		result[pubKey] = &s
+	}
+	return result, rows.Err()
 }
 
 func (srv *Server) getVouchersByBatchID(db dbQuerier, batchID string) ([]Voucher, error) {
@@ -604,4 +645,58 @@ func (srv *Server) getDonationByKey(key string) (*Donation, error) {
 func (srv *Server) getDonationStats() (total, confirmed int64, donatedMsat int64, err error) {
 	err = srv.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status='confirmed' THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN status='confirmed' THEN amount_msat ELSE 0 END), 0) FROM donations`).Scan(&total, &confirmed, &donatedMsat)
 	return
+}
+
+// queryLeaderboardDist runs a leaderboard SQL query and returns a map of refund_code → count.
+// The query must SELECT refund_code, count in that order.
+func queryLeaderboardDist(db dbQuerier, query string, args ...any) (map[string]int, error) {
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	dist := make(map[string]int)
+	for rows.Next() {
+		var code string
+		var cnt int
+		if err := rows.Scan(&code, &cnt); err != nil {
+			return nil, err
+		}
+		dist[code] = cnt
+	}
+	return dist, rows.Err()
+}
+
+func (srv *Server) leaderboardFundedMonth(monthStart int64) (map[string]int, error) {
+	return queryLeaderboardDist(srv.db,
+		`SELECT v.refund_code, COUNT(DISTINCT f.pub_key)
+		 FROM fund_txs f JOIN vouchers v ON v.pub_key = f.pub_key
+		 WHERE f.status = 'confirmed' AND f.updated_at >= ?
+		 GROUP BY v.refund_code`,
+		monthStart)
+}
+
+func (srv *Server) leaderboardFundedAllTime() (map[string]int, error) {
+	return queryLeaderboardDist(srv.db,
+		`SELECT v.refund_code, COUNT(DISTINCT f.pub_key)
+		 FROM fund_txs f JOIN vouchers v ON v.pub_key = f.pub_key
+		 WHERE f.status = 'confirmed'
+		 GROUP BY v.refund_code`)
+}
+
+func (srv *Server) leaderboardRedeemedMonth(monthStart int64) (map[string]int, error) {
+	return queryLeaderboardDist(srv.db,
+		`SELECT v.refund_code, COUNT(DISTINCT r.voucher_id)
+		 FROM redeem_txs r JOIN vouchers v ON v.id = r.voucher_id
+		 WHERE r.status = 'confirmed' AND r.created_at >= ?
+		 GROUP BY v.refund_code`,
+		monthStart)
+}
+
+func (srv *Server) leaderboardRedeemedAllTime() (map[string]int, error) {
+	return queryLeaderboardDist(srv.db,
+		`SELECT v.refund_code, COUNT(DISTINCT r.voucher_id)
+		 FROM redeem_txs r JOIN vouchers v ON v.id = r.voucher_id
+		 WHERE r.status = 'confirmed'
+		 GROUP BY v.refund_code`)
 }

@@ -1813,59 +1813,125 @@ function isAutoName(name) {
   return /^batch-\d+$/.test(name) || /^single-\d+$/.test(name);
 }
 
-async function renderHistory() {
-  const container = $('history-list');
-  const history = getHistory();
+// In-memory cache for the current session. Pre-populated from localStorage for terminal states.
+const historyStatusCache = new Map();
 
-  if (!history.length) {
-    container.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state-icon">🗒️</div>
-        <p>No vouchers yet.<br>Create one to see it here.</p>
-      </div>`;
-    return;
-  }
+function isTerminalStatus(s) {
+  if (!s) return false;
+  if (s.refunded === true) return true;
+  // active=false, not refunded, no pending refund → redeemed
+  if (s.active === false && s.refunded === false && s.refund_pending === false) return true;
+  return false;
+}
 
-  // Fetch active status for all vouchers in parallel
-  const statusCache = new Map();
-  const allPubkeys = history.flatMap(e => e.vouchers.map(v => v.pubkey));
-  await Promise.all(allPubkeys.map(async pubkey => {
-    try {
-      const res = await fetch(`/voucher/status/${pubkey}`);
-      if (res.ok) {
-        const data = await res.json();
-        statusCache.set(pubkey, data.active === true);
-      } else {
-        statusCache.set(pubkey, false);
+// Pre-populates historyStatusCache from vouchers that already have a _cachedStatus in localStorage.
+function preloadTerminalStatuses(history) {
+  history.forEach(entry => {
+    entry.vouchers.forEach(v => {
+      if (v._cachedStatus && !historyStatusCache.has(v.pubkey)) {
+        historyStatusCache.set(v.pubkey, v._cachedStatus);
       }
-    } catch {
-      statusCache.set(pubkey, false);
+    });
+  });
+}
+
+// Fetches statuses for the given pubkeys via the batch endpoint, updates the in-memory cache,
+// and persists any newly-terminal statuses back to localStorage.
+async function fetchAndCacheStatuses(pubkeys, history) {
+  try {
+    const res = await fetch('/voucher/status/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pubkeys }),
+    });
+    if (!res.ok) throw new Error();
+    const data = await res.json();
+    for (const pk of pubkeys) {
+      historyStatusCache.set(pk, data[pk] ?? null);
     }
-  }));
+  } catch {
+    for (const pk of pubkeys) {
+      if (!historyStatusCache.has(pk)) historyStatusCache.set(pk, null);
+    }
+  }
 
-  // Filter entries where at least one voucher is still active
-  const activeEntries = history.filter(entry =>
-    entry.vouchers.some(v => statusCache.get(v.pubkey))
-  );
+  // Persist newly-terminal statuses to localStorage so they're never fetched again.
+  let changed = false;
+  history.forEach(entry => {
+    entry.vouchers.forEach(v => {
+      if (!v._cachedStatus) {
+        const s = historyStatusCache.get(v.pubkey);
+        if (isTerminalStatus(s)) {
+          v._cachedStatus = s;
+          changed = true;
+        }
+      }
+    });
+  });
+  if (changed) saveHistory(history);
+}
 
-  if (!activeEntries.length) {
-    container.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state-icon">🗒️</div>
-        <p>No active vouchers.<br>All have been redeemed or expired.</p>
-      </div>`;
+function classifyVoucher(s, now) {
+  if (!s) return 'unfunded';
+  if (s.active && s.expires_at === 0) return 'unfunded';
+  if (s.active) return 'funded';
+  if (s.refunded || s.refund_pending) return 'expired';
+  if (s.expires_at > 0 && now > s.expires_at) return 'expired';
+  return 'redeemed';
+}
+
+function getExpiredSubTag(expiredStatuses) {
+  if (expiredStatuses.some(s => s && s.refund_pending)) return 'pending';
+  if (expiredStatuses.some(s => s && !s.refunded)) return 'processing';
+  return 'refunded';
+}
+
+function buildSectionCards(history) {
+  const now = Math.floor(Date.now() / 1000);
+  const sections = { unfunded: [], funded: [], redeemed: [], expired: [] };
+
+  history.forEach(entry => {
+    const total = entry.vouchers.length;
+    const byState = { unfunded: [], funded: [], redeemed: [], expired: [] };
+
+    entry.vouchers.forEach(v => {
+      const s = historyStatusCache.get(v.pubkey);
+      byState[classifyVoucher(s, now)].push(v);
+    });
+
+    ['unfunded', 'funded', 'redeemed', 'expired'].forEach(state => {
+      const inState = byState[state];
+      if (!inState.length) return;
+      const expiredTag = state === 'expired'
+        ? getExpiredSubTag(inState.map(v => historyStatusCache.get(v.pubkey)))
+        : null;
+      sections[state].push({ entry, count: inState.length, total, expiredTag });
+    });
+  });
+
+  return sections;
+}
+
+function renderSectionBody(body, cards, showQR, history) {
+  body.innerHTML = '';
+  if (!cards.length) {
+    body.innerHTML = `<p style="font-size:0.8rem;color:var(--text-muted);padding:8px 0">Nothing here.</p>`;
     return;
   }
 
-  container.innerHTML = '';
-  activeEntries.forEach(entry => {
+  cards.forEach(({ entry, count, total, expiredTag }) => {
     const card = document.createElement('div');
     card.className = 'history-card';
 
     const date = new Date(entry.createdAt * 1000).toLocaleString();
-    const activeCount = entry.vouchers.filter(v => statusCache.get(v.pubkey)).length;
-    const typeLabel = entry.type === 'single' ? 'Single' : `Batch (${activeCount})`;
-    const badge = entry.type === 'single' ? 'badge-single' : 'badge-batch';
+    let typeLabel, typeBadge;
+    if (entry.type === 'single') {
+      typeLabel = 'Single';
+      typeBadge = 'badge-single';
+    } else {
+      typeLabel = total > 1 ? `Batch (${count}/${total})` : 'Batch';
+      typeBadge = 'badge-batch';
+    }
 
     let metaLine;
     if (entry.type === 'single') {
@@ -1878,27 +1944,235 @@ async function renderHistory() {
       metaLine = (!name || isAutoName(name)) ? date : `${name} &nbsp;·&nbsp; ${date}`;
     }
 
+    const subTagHTML = expiredTag
+      ? ` <span class="badge badge-${expiredTag}">${expiredTag}</span>`
+      : '';
+
+    const actionsHTML = showQR
+      ? `<div class="history-card-actions">
+           <button class="btn btn-secondary btn-sm" data-action="reqr" data-id="${entry.id}">Re-show QR</button>
+         </div>`
+      : '';
+
     card.innerHTML = `
       <div class="history-card-header">
-        <span class="badge ${badge}">${typeLabel}</span>
+        <span class="badge ${typeBadge}">${typeLabel}</span>${subTagHTML}
       </div>
-      <div class="history-card-meta">
-        ${metaLine}
-      </div>
-      <div class="history-card-actions">
-        <button class="btn btn-secondary btn-sm" data-action="reqr" data-id="${entry.id}">Re-show QR</button>
-      </div>`;
+      <div class="history-card-meta">${metaLine}</div>
+      ${actionsHTML}`;
 
-    container.appendChild(card);
+    body.appendChild(card);
   });
 
-  // Bind action buttons
-  container.querySelectorAll('[data-action]').forEach(btn => {
+  body.querySelectorAll('[data-action="reqr"]').forEach(btn => {
     btn.addEventListener('click', () => {
-      const entry = activeEntries.find(e => e.id === btn.dataset.id);
-      if (!entry) return;
-      if (btn.dataset.action === 'reqr') openQRModal(entry);
+      const entry = history.find(e => e.id === btn.dataset.id);
+      if (entry) openQRModal(entry);
     });
+  });
+}
+
+async function expandSection(sectionEl, key, showQR, history) {
+  const body = sectionEl.querySelector('.history-section-body');
+  const isOpen = sectionEl.classList.contains('expanded');
+
+  // Collapse
+  if (isOpen) {
+    sectionEl.classList.remove('expanded');
+    body.style.display = 'none';
+    return;
+  }
+
+  // Expand: load statuses — terminal states come from localStorage, rest are batch-fetched.
+  sectionEl.classList.add('expanded');
+  body.style.display = '';
+
+  preloadTerminalStatuses(history);
+  const missing = history.flatMap(e => e.vouchers.map(v => v.pubkey))
+    .filter(pk => !historyStatusCache.has(pk));
+
+  if (missing.length > 0) {
+    body.innerHTML = `<p style="font-size:0.8rem;color:var(--text-muted);padding:8px 0">Loading…</p>`;
+    await fetchAndCacheStatuses(missing, history);
+  }
+
+  updateSectionCounts(history, $('history-list'));
+  const sections = buildSectionCards(history);
+  renderSectionBody(body, sections[key], showQR, history);
+}
+
+function countByState(history) {
+  const now = Math.floor(Date.now() / 1000);
+  const counts = { unfunded: 0, funded: 0, redeemed: 0, expired: 0 };
+  history.forEach(entry =>
+    entry.vouchers.forEach(v => counts[classifyVoucher(historyStatusCache.get(v.pubkey), now)]++)
+  );
+  return counts;
+}
+
+function updateSectionCounts(history, container) {
+  const counts = countByState(history);
+  container.querySelectorAll('.history-section').forEach(sec => {
+    const key = sec.dataset.sectionKey;
+    const badge = sec.querySelector('.section-count');
+    if (badge && counts[key] !== undefined) {
+      badge.textContent = counts[key] > 0 ? counts[key] : '';
+    }
+  });
+}
+
+function computeLeaderboardCounts(history, cache) {
+  const now = Math.floor(Date.now() / 1000);
+  const d = new Date();
+  const monthStart = Math.floor(new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)).getTime() / 1000);
+
+  let fundedMonth = 0, fundedAllTime = 0, redeemedMonth = 0, redeemedAllTime = 0;
+
+  history.forEach(entry => {
+    entry.vouchers.forEach(v => {
+      const s = cache.get(v.pubkey);
+      const state = classifyVoucher(s, now);
+      const isFunded = state === 'funded' || state === 'redeemed' || state === 'expired';
+      const isRedeemed = state === 'redeemed';
+
+      if (isFunded) {
+        fundedAllTime++;
+        if (entry.createdAt >= monthStart) fundedMonth++;
+      }
+      if (isRedeemed) {
+        redeemedAllTime++;
+        if (entry.createdAt >= monthStart) redeemedMonth++;
+      }
+    });
+  });
+
+  return { funded_month: fundedMonth, funded_all_time: fundedAllTime, redeemed_month: redeemedMonth, redeemed_all_time: redeemedAllTime };
+}
+
+function renderLeaderboardContent(container, data) {
+  const monthLabel = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+
+  function medalFor(rank, total) {
+    if (total === 0) return '–';
+    if (rank === 1) return '🥇';
+    if (rank === 2) return '🥈';
+    if (rank === 3) return '🥉';
+    if (total >= 10 && rank <= Math.ceil(total * 0.1)) return '🔥';
+    return '⚡';
+  }
+
+  function cardHTML(key, label) {
+    const { rank, total } = data[key];
+    return `
+      <div class="lb-card">
+        <div class="lb-card-medal">${medalFor(rank, total)}</div>
+        <div class="lb-card-label">${label}</div>
+        <div class="lb-card-rank">${total > 0 ? '#' + rank : '–'}</div>
+        <div class="lb-card-of">${total > 0 ? 'of ' + total : 'No data yet'}</div>
+      </div>`;
+  }
+
+  container.innerHTML = `
+    <div class="lb-hero">
+      <div class="lb-trophy">🏆</div>
+      <h1 class="lb-title">LEADERBOARD</h1>
+      <p class="lb-subtitle">Every sat sent moves us closer to a Bitcoin standard.</p>
+      <p class="lb-subtitle">You're #${data.redeemed_month.total > 0 ? data.redeemed_month.rank : '?'} this month and #${data.redeemed_all_time.total > 0 ? data.redeemed_all_time.rank : '?'} all time!</p>
+    </div>
+
+    <div class="lb-category">
+      <div class="lb-category-header">
+        <span class="lb-category-cup">🏆</span>
+        <span class="lb-category-title">${monthLabel}</span>
+      </div>
+      <div class="lb-grid">
+        ${cardHTML('funded_month', 'Sats Shared')}
+        ${cardHTML('redeemed_month', 'Bitcoiners Minted')}
+      </div>
+    </div>
+
+    <div class="lb-category">
+      <div class="lb-category-header">
+        <span class="lb-category-cup">🏆</span>
+        <span class="lb-category-title">Hall of Legends</span>
+      </div>
+      <div class="lb-grid">
+        ${cardHTML('funded_all_time', 'Sats Shared')}
+        ${cardHTML('redeemed_all_time', 'Bitcoiners Minted')}
+      </div>
+    </div>
+
+    <p class="lb-motivate">Keep sending sats. Climb the ranks. Be #1. ⚡</p>`;
+}
+
+async function renderLeaderboardScreen(container) {
+  container.innerHTML = `<div class="lb-loading">🏆 Loading your rank…</div>`;
+
+  const history = getHistory();
+
+  if (!history.length) {
+    container.innerHTML = `<div class="lb-empty"><div style="font-size:2.5rem;margin-bottom:12px;">🏆</div><p>No vouchers yet.<br>Create and fund your first voucher<br>to appear on the leaderboard.</p></div>`;
+    return;
+  }
+
+  preloadTerminalStatuses(history);
+  const missing = history.flatMap(e => e.vouchers.map(v => v.pubkey))
+    .filter(pk => !historyStatusCache.has(pk));
+  if (missing.length > 0) await fetchAndCacheStatuses(missing, history);
+
+  const counts = computeLeaderboardCounts(history, historyStatusCache);
+  try {
+    const res = await fetch('/leaderboard', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(counts),
+    });
+    if (!res.ok) throw new Error();
+    renderLeaderboardContent(container, await res.json());
+  } catch {
+    container.innerHTML = `<p class="lb-error">Could not load leaderboard. Try again later.</p>`;
+  }
+}
+
+function renderHistory() {
+  const container = $('history-list');
+  const history = getHistory();
+
+  if (!history.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">🗒️</div>
+        <p>No vouchers yet.<br>Create one to see it here.</p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = '';
+
+  const sectionDefs = [
+    { key: 'unfunded', label: 'Active — Unfunded', showQR: true },
+    { key: 'funded',   label: 'Active — Funded',   showQR: true },
+    { key: 'redeemed', label: 'Redeemed',           showQR: false },
+    { key: 'expired',  label: 'Expired',            showQR: false },
+  ];
+
+  sectionDefs.forEach(({ key, label, showQR }) => {
+    const section = document.createElement('div');
+    section.className = 'history-section';
+    section.dataset.sectionKey = key;
+    section.innerHTML = `
+      <div class="history-section-title" role="button">
+        <span class="section-title-label">${label}</span>
+        <span class="section-count"></span>
+        <span class="section-chevron">›</span>
+      </div>
+      <div class="history-section-body" style="display:none"></div>`;
+
+    section.querySelector('.history-section-title').addEventListener('click', () => {
+      expandSection(section, key, showQR, history);
+    });
+
+    container.appendChild(section);
   });
 }
 
@@ -2096,6 +2370,7 @@ async function init() {
 
   // Nav: history
   $('nav-history').addEventListener('click', () => {
+    historyStatusCache.clear(); // fresh status on each visit
     renderHistory();
     showScreen('screen-history');
   });
@@ -2106,6 +2381,16 @@ async function init() {
     } else {
       showScreen('screen-onboarding');
     }
+  });
+
+  // Nav: leaderboard
+  $('nav-leaderboard').addEventListener('click', () => {
+    showScreen('screen-leaderboard');
+    renderLeaderboardScreen($('leaderboard-content'));
+  });
+
+  $('nav-back-from-leaderboard').addEventListener('click', () => {
+    showScreen(localStorage.getItem(LS_REFUND) ? 'screen-app' : 'screen-onboarding');
   });
 
   // Change refund code
