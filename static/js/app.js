@@ -2067,6 +2067,52 @@ function renderLeaderboardContent(container, data, counts) {
     return n + (s[(v - 20) % 10] || s[v] || s[0]);
   }
 
+  function highScoresTable(scores, counts) {
+    if (!scores) return '';
+    const cols = [
+      { key: 'funded_month',      label: 'Sats Shared',       scope: 'This Month', userCount: counts.funded_month },
+      { key: 'redeemed_month',    label: 'Bitcoiners Minted', scope: 'This Month', userCount: counts.redeemed_month },
+      { key: 'funded_all_time',   label: 'Sats Shared',       scope: 'All Time',   userCount: counts.funded_all_time },
+      { key: 'redeemed_all_time', label: 'Bitcoiners Minted', scope: 'All Time',   userCount: counts.redeemed_all_time },
+    ];
+    const medals = [
+      { cls: 'hs-gold',   icon: '🥇', status: 'LEGENDARY'  },
+      { cls: 'hs-silver', icon: '🥈', status: 'ELITE'       },
+      { cls: 'hs-bronze', icon: '🥉', status: 'RISING STAR' },
+    ];
+    const rows = medals.map((m, i) => `
+      <tr class="hs-row ${m.cls}">
+        <td class="hs-medal-cell">
+          <span class="hs-medal-badge">${m.icon}</span>
+          <span class="hs-status ${m.cls}">${m.status}</span>
+        </td>
+        ${cols.map(c => {
+          const val = scores[c.key] != null && scores[c.key][i] != null ? scores[c.key][i] : null;
+          const isYou = val != null && c.userCount > 0 && c.userCount === val;
+          return `<td class="hs-score-cell ${m.cls}${isYou ? ' hs-you' : ''}">
+            ${val != null ? val : '<span class="hs-empty">–</span>'}
+            ${isYou ? '<span class="hs-you-badge">YOU</span>' : ''}
+          </td>`;
+        }).join('')}
+      </tr>`).join('');
+
+    return `
+      <div class="hs-section">
+        <h2 class="hs-title">⚡ HIGH SCORES ⚡</h2>
+        <div class="hs-table-wrap">
+          <table class="hs-table">
+            <thead>
+              <tr>
+                <th class="hs-rank-head"></th>
+                ${cols.map(c => `<th class="hs-col-head">${c.label}<br><span class="hs-scope">${c.scope}</span></th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      </div>`;
+  }
+
   function redeemedTeaserCard(label, isMonth) {
     const tips = isMonth
       ? [
@@ -2154,7 +2200,8 @@ function renderLeaderboardContent(container, data, counts) {
       </div>
     </div>
 
-    <p class="lb-motivate">Every redemption mints a new bitcoiner. Be the one who started it all. ⚡</p>`;
+    <p class="lb-motivate">Every redemption mints a new bitcoiner. Be the one who started it all. ⚡</p>
+    ${highScoresTable(data.top_scores, counts)}`;
 }
 
 async function renderLeaderboardScreen(container) {

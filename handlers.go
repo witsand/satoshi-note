@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -577,6 +578,18 @@ type leaderboardRank struct {
 	Total int `json:"total"`
 }
 
+func top3(dist map[string]int) []int {
+	vals := make([]int, 0, len(dist))
+	for _, v := range dist {
+		vals = append(vals, v)
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(vals)))
+	if len(vals) > 3 {
+		vals = vals[:3]
+	}
+	return vals
+}
+
 func rankIn(userCount int, dist map[string]int) leaderboardRank {
 	rank := 1
 	for _, cnt := range dist {
@@ -627,11 +640,17 @@ func (srv *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]leaderboardRank{
-		"funded_month":     rankIn(req.FundedMonth, fundedMonth),
-		"funded_all_time":  rankIn(req.FundedAllTime, fundedAll),
-		"redeemed_month":   rankIn(req.RedeemedMonth, redeemedMonth),
+	writeJSON(w, http.StatusOK, map[string]any{
+		"funded_month":      rankIn(req.FundedMonth, fundedMonth),
+		"funded_all_time":   rankIn(req.FundedAllTime, fundedAll),
+		"redeemed_month":    rankIn(req.RedeemedMonth, redeemedMonth),
 		"redeemed_all_time": rankIn(req.RedeemedAllTime, redeemedAll),
+		"top_scores": map[string][]int{
+			"funded_month":      top3(fundedMonth),
+			"funded_all_time":   top3(fundedAll),
+			"redeemed_month":    top3(redeemedMonth),
+			"redeemed_all_time": top3(redeemedAll),
+		},
 	})
 }
 

@@ -543,6 +543,67 @@ select {
   letter-spacing: 0.3px;
 }
 
+/* ── High Scores table ── */
+.hs-section { margin-top: 28px; padding-bottom: 16px; }
+.hs-title {
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--orange);
+  margin-bottom: 14px;
+}
+.hs-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.hs-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+.hs-rank-head { width: 100px; }
+.hs-col-head {
+  text-align: center;
+  font-size: 0.72rem;
+  color: #aaa;
+  padding: 4px 6px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+.hs-scope { font-size: 0.62rem; color: #555; font-weight: 400; }
+.hs-row { border-bottom: 1px solid #1e1e1e; }
+.hs-row:last-child { border-bottom: none; }
+.hs-medal-cell {
+  padding: 10px 8px;
+  white-space: nowrap;
+}
+.hs-medal-badge { font-size: 1.3rem; vertical-align: middle; margin-right: 6px; }
+.hs-status {
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  vertical-align: middle;
+}
+.hs-status.hs-gold   { color: #FFD700; }
+.hs-status.hs-silver { color: #C0C0C0; }
+.hs-status.hs-bronze { color: #CD7F32; }
+.hs-score-cell {
+  text-align: center;
+  padding: 10px 6px;
+  font-weight: 700;
+  font-size: 1rem;
+}
+.hs-score-cell.hs-gold   { color: #FFD700; }
+.hs-score-cell.hs-silver { color: #C0C0C0; }
+.hs-score-cell.hs-bronze { color: #CD7F32; }
+.hs-empty { color: #383838; font-weight: 400; }
+.hs-you-badge {
+  display: inline-block;
+  background: var(--orange);
+  color: #000;
+  font-size: 0.52rem;
+  font-weight: 700;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-left: 3px;
+  vertical-align: middle;
+  letter-spacing: 0.06em;
+}
+
 /* ── Section headers ── */
 .section-header {
   display: flex;
