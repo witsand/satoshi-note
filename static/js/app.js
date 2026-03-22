@@ -2120,7 +2120,6 @@ function renderLeaderboardContent(container, data, counts) {
     <div class="lb-hero">
       <div class="lb-trophy">🏆</div>
       <h1 class="lb-title">LEADERBOARD</h1>
-      <p class="lb-subtitle">Every sat sent moves us closer to a Bitcoin standard.</p>
       ${heroRankLine}
     </div>
 
