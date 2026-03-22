@@ -514,6 +514,10 @@ select {
   text-align: center;
   font-style: italic;
 }
+.lb-card-teaser {
+  border-style: dashed;
+  opacity: 0.75;
+}
 .lb-motivate {
   text-align: center;
   font-size: 0.8rem;

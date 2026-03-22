@@ -2067,32 +2067,61 @@ function renderLeaderboardContent(container, data, counts) {
     return n + (s[(v - 20) % 10] || s[v] || s[0]);
   }
 
+  function redeemedTeaserCard(label, isMonth) {
+    const scope = isMonth ? 'this month' : 'all time';
+    return `
+      <div class="lb-card lb-card-teaser">
+        <div class="lb-card-medal">🌱</div>
+        <div class="lb-card-label">${label}</div>
+        <div class="lb-card-rank">–</div>
+        <div class="lb-card-of">${isMonth ? 'no redemptions yet' : 'none yet'}</div>
+        <div class="lb-card-desc">The real test is whether someone redeems your voucher and takes their first step into Bitcoin. Keep sharing — every seed you plant could be the one that changes a life.</div>
+      </div>`;
+  }
+
   function cardHTML(key, label, count) {
+    const isRedeemed = key === 'redeemed_month' || key === 'redeemed_all_time';
+    if (count === 0 && isRedeemed) return redeemedTeaserCard(label, key === 'redeemed_month');
+
     const { rank, total } = data[key];
+    // If count is 0 for a funded card (e.g. no funding this month) show no rank
+    if (count === 0) return `
+      <div class="lb-card">
+        <div class="lb-card-medal">–</div>
+        <div class="lb-card-label">${label}</div>
+        <div class="lb-card-rank">–</div>
+        <div class="lb-card-of">no activity this month</div>
+      </div>`;
+
     const v = count !== 1 ? 's' : '';
     const descriptions = {
-      funded_month:      count > 0 ? `This month you've funded ${count} voucher${v} — putting bitcoin directly into ${count} new set${v} of hands. That's the ${ordinal(rank)} highest score this month. Keep going, the revolution needs you.` : null,
-      redeemed_month:    count > 0 ? `${count} person${v} claimed their sats this month thanks to you — ${count} new bitcoiner${v} minted. You rank ${ordinal(rank)} this month. Every redemption is a mind opened.` : null,
-      funded_all_time:   count > 0 ? `You've funded ${count} voucher${v} in total, spreading the orange pill one sat at a time. All-time rank: ${ordinal(rank)} of ${total}. Legendary.` : null,
-      redeemed_all_time: count > 0 ? `${count} bitcoiner${v} minted by you, for life. You're ${ordinal(rank)} of all time. That's a legacy worth building.` : null,
+      funded_month:      `This month you've funded ${count} voucher${v} — putting bitcoin directly into ${count} new set${v} of hands. That's the ${ordinal(rank)} highest score this month. Keep going, the revolution needs you.`,
+      redeemed_month:    `${count} person${v} claimed their sats this month thanks to you — ${count} new bitcoiner${v} minted. You rank ${ordinal(rank)} this month. Every redemption is a mind opened.`,
+      funded_all_time:   `You've funded ${count} voucher${v} in total, spreading the orange pill one sat at a time. All-time rank: ${ordinal(rank)} of ${total}. Legendary.`,
+      redeemed_all_time: `${count} bitcoiner${v} minted by you, for life. You're ${ordinal(rank)} of all time. That's a legacy worth building.`,
     };
-    const desc = descriptions[key];
     return `
       <div class="lb-card">
         <div class="lb-card-medal">${medalFor(rank, total)}</div>
         <div class="lb-card-label">${label}</div>
-        <div class="lb-card-rank">${total > 0 ? '#' + rank : '–'}</div>
-        <div class="lb-card-of">${total > 0 ? 'of ' + total : 'No data yet'}</div>
-        ${desc ? `<div class="lb-card-desc">${desc}</div>` : ''}
+        <div class="lb-card-rank">#${rank}</div>
+        <div class="lb-card-of">of ${total}</div>
+        <div class="lb-card-desc">${descriptions[key]}</div>
       </div>`;
   }
+
+  const heroRankLine = counts.funded_month > 0
+    ? `<p class="lb-subtitle">You're #${data.funded_month.rank} for sats shared this month — keep going! ⚡</p>`
+    : counts.funded_all_time > 0
+      ? `<p class="lb-subtitle">You're #${data.funded_all_time.rank} all time for sats shared. ⚡</p>`
+      : '';
 
   container.innerHTML = `
     <div class="lb-hero">
       <div class="lb-trophy">🏆</div>
       <h1 class="lb-title">LEADERBOARD</h1>
       <p class="lb-subtitle">Every sat sent moves us closer to a Bitcoin standard.</p>
-      <p class="lb-subtitle">You're #${data.redeemed_month.total > 0 ? data.redeemed_month.rank : '?'} this month and #${data.redeemed_all_time.total > 0 ? data.redeemed_all_time.rank : '?'} all time!</p>
+      ${heroRankLine}
     </div>
 
     <div class="lb-category">
@@ -2136,6 +2165,11 @@ async function renderLeaderboardScreen(container) {
   if (missing.length > 0) await fetchAndCacheStatuses(missing, history);
 
   const counts = computeLeaderboardCounts(history, historyStatusCache);
+
+  if (counts.funded_all_time === 0) {
+    container.innerHTML = `<div class="lb-empty"><div style="font-size:2.5rem;margin-bottom:12px;">🏆</div><p>No funded vouchers yet.<br>Fund your first voucher<br>to appear on the leaderboard.</p></div>`;
+    return;
+  }
   try {
     const res = await fetch('/leaderboard', {
       method: 'POST',
