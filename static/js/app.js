@@ -1874,9 +1874,11 @@ async function fetchAndCacheStatuses(pubkeys, history) {
 function classifyVoucher(s, now) {
   if (!s) return 'unfunded';
   if (s.active && s.expires_at === 0) return 'unfunded';
-  if (s.active) return 'funded';
+  if (s.active) {
+    if (s.expires_at > 0 && now > s.expires_at) return 'expired';
+    return 'funded';
+  }
   if (s.refunded || s.refund_pending) return 'expired';
-  if (s.expires_at > 0 && now > s.expires_at) return 'expired';
   return 'redeemed';
 }
 
