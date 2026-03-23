@@ -733,8 +733,6 @@ function renderShareStep(voucher) {
     }
   };
 
-  $('btn-edit-msg').onclick = () => showMsgSheet();
-
   $('btn-done-single').onclick = () => {
     state.vouchers = null;
     resetSingleWizard();
@@ -2568,6 +2566,7 @@ async function init() {
   });
 
   // Single voucher
+  $('btn-edit-msg').addEventListener('click', showMsgSheet);
   $('btn-create-single').addEventListener('click', handleCreateSingle);
   $('phone-number').addEventListener('keydown', e => {
     if (e.key === 'Enter') handleCreateSingle();
