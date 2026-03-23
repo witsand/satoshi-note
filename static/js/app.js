@@ -4,6 +4,7 @@
 // ── Constants ────────────────────────────────────────────────────────────────
 const LS_REFUND = 'sn_refund_code';
 const LS_HISTORY = 'sn_history';
+const LS_DIAL_CODE = 'sn_dial_code';
 
 const DIAL_CODES = [
   ['+93',  'Afghanistan (+93)'],
@@ -327,6 +328,7 @@ function buildDialDropdown(preferred) {
       if (code === _dialCode) li.classList.add('selected');
       li.onclick = () => {
         _dialCode = code;
+        localStorage.setItem(LS_DIAL_CODE, code);
         btn.textContent = code;
         btn.classList.remove('open');
         panel.classList.add('hidden');
@@ -455,7 +457,9 @@ async function createVouchers(payload) {
 
 // ── Dial code detect ──────────────────────────────────────────────────────────
 function defaultDialCode() {
-  return (window.DEFAULT_DIAL_CODE && window.DEFAULT_DIAL_CODE.trim()) || '+27';
+  return localStorage.getItem(LS_DIAL_CODE)
+    || (window.DEFAULT_DIAL_CODE && window.DEFAULT_DIAL_CODE.trim())
+    || '+27';
 }
 
 // ── Expiry text ───────────────────────────────────────────────────────────────
