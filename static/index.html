@@ -69,13 +69,19 @@
         <p class="card-title">Your refund address</p>
         <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;">If a voucher isn’t claimed in time, the sats are automatically returned to this Lightning Address.</p>
         <div class="form-group">
-          <input
-            type="text"
-            id="refund-code-input"
-            placeholder="name@wallet.com"
-            autocomplete="off"
-            spellcheck="false"
-          >
+          <div class="input-row">
+            <input
+              type="text"
+              id="refund-code-input"
+              placeholder="satoshi@blink.sv or LNURL1..."
+              autocomplete="off"
+              autocorrect="off"
+              autocapitalize="off"
+              spellcheck="false"
+              inputmode="text"
+            >
+            <button type="button" id="btn-paste-refund" class="btn btn-secondary btn-sm">Paste</button>
+          </div>
           <div id="onboarding-error" class="error-msg"></div>
         </div>
         <button id="btn-onboarding-submit" class="btn btn-primary">Get Started</button>

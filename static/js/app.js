@@ -2494,6 +2494,15 @@ async function init() {
   // Onboarding
   $('btn-onboarding-submit').addEventListener('click', handleOnboardingSubmit);
   $('refund-code-input').addEventListener('keydown', e => { if (e.key === 'Enter') handleOnboardingSubmit(); });
+  $('btn-paste-refund').addEventListener('click', async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      $('refund-code-input').value = text.trim();
+      $('refund-code-input').focus();
+    } catch {
+      $('refund-code-input').focus();
+    }
+  });
 
   // Single voucher
   $('btn-create-single').addEventListener('click', handleCreateSingle);
