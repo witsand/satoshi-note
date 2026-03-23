@@ -603,9 +603,12 @@ function renderFundStep(voucher) {
     showStep(3);
   };
 
-  // QR
+  // QR — tap to open wallet
   const container = $('single-qr-container');
   renderQR(container, voucher.fund_lnurl, 256);
+  container.style.cursor = 'pointer';
+  container.title = 'Tap to open in wallet';
+  container.onclick = () => { window.location.href = 'lightning:' + voucher.fund_lnurl; };
 
   // Copy code button
   const lnurlEl = $('single-lnurl-text');
@@ -680,6 +683,9 @@ function renderShareStep(voucher) {
     if (!visible) {
       const qrEl = $('step3-fund-qr-container');
       renderQR(qrEl, voucher.fund_lnurl, 256);
+      qrEl.style.cursor = 'pointer';
+      qrEl.title = 'Tap to open in wallet';
+      qrEl.onclick = () => { window.location.href = 'lightning:' + voucher.fund_lnurl; };
       const lnEl = $('step3-fund-lnurl-text');
       lnEl.textContent = 'Copy Fund Code';
       lnEl.title = 'Tap to copy';
@@ -781,6 +787,9 @@ function renderBatchResults(vouchers) {
   const batchFundLnurl = vouchers[0].batch_fund_lnurl;
   const container = $('batch-qr-container');
   renderQR(container, batchFundLnurl, 256);
+  container.style.cursor = 'pointer';
+  container.title = 'Tap to open in wallet';
+  container.onclick = () => { window.location.href = 'lightning:' + batchFundLnurl; };
   const lnurlEl = $('batch-lnurl-text');
   lnurlEl.textContent = 'Copy Fund Code';
   lnurlEl.title = 'Tap to copy';
@@ -2270,10 +2279,13 @@ function openQRModal(entry) {
   const lnurl = entry.type === 'single' ? voucher.fund_lnurl : voucher.batch_fund_lnurl;
   const container = $('modal-qr-container');
   renderQR(container, lnurl, 240);
+  container.style.cursor = 'pointer';
+  container.title = 'Tap to open in wallet';
+  container.onclick = () => { window.location.href = 'lightning:' + lnurl; };
   $('modal-title').textContent = entry.type === 'single' ? 'Fund Voucher' : 'Fund Batch';
 
   const lnurlEl = $('modal-lnurl-text');
-  lnurlEl.textContent = 'Copy Fund Code';
+  lnurlEl.textContent = 'Copy Funding Code';
   lnurlEl.title = 'Tap to copy';
   lnurlEl.onclick = () => copyToClipboard(lnurl, lnurlEl);
 

@@ -1,8 +1,10 @@
 /* ── Wallet Picker ───────────────────────────────────────────────────────────
  * Shared by index.html (fund flow) and redeem.html (claim flow).
- * Stores the user's preferred wallet in localStorage so iPhone users
- * always see a clearly-labelled "Open in [Wallet]" button.
+ * Only shown on iOS — Android's lightning: scheme already triggers the
+ * system app picker. Stores preference in localStorage (sn_wallet).
  */
+
+const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
 const LS_WALLET = 'sn_wallet';
 
@@ -43,7 +45,6 @@ function _getOrCreatePicker() {
   overlay.querySelector('.wallet-sheet-cancel').addEventListener('click', () => {
     overlay.classList.add('hidden');
   });
-  // Tap outside sheet to cancel
   overlay.addEventListener('click', e => {
     if (e.target === overlay) overlay.classList.add('hidden');
   });
@@ -76,15 +77,28 @@ function showWalletPicker(onSelect) {
 
 /**
  * Attach a wallet-aware open button + "change wallet" link beneath a QR element.
+ * Only inserts UI on iOS. On other platforms it is a no-op (QR onclick handles opening).
+ * Safe to call multiple times on the same anchor — cleans up previous insertion first.
  *
  * @param {HTMLElement} anchorEl  - element to insert after (the copy-code <p>)
  * @param {string}      lnurl     - the LNURL string to open
  */
 function attachWalletButton(anchorEl, lnurl) {
+  // Remove any previously inserted wallet controls on this anchor
+  let next = anchorEl.nextElementSibling;
+  while (next && (next.classList.contains('wallet-open-btn') || next.classList.contains('wallet-change-link'))) {
+    const toRemove = next;
+    next = next.nextElementSibling;
+    toRemove.remove();
+  }
+
+  // Wallet picker UI is only needed on iOS
+  if (!isIOS) return;
+
   const pref = getPreferredWallet();
 
   const walletBtn = document.createElement('button');
-  walletBtn.className = 'btn btn-secondary btn-sm';
+  walletBtn.className = 'btn btn-secondary btn-sm wallet-open-btn';
   walletBtn.style.marginTop = '6px';
   walletBtn.textContent = pref ? `Open in ${pref.name}` : 'Open in wallet';
 

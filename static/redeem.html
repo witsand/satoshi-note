@@ -448,9 +448,12 @@
       ${buildInfoCard('wallet')}
     `;
 
-    // Render QR
+    // Render QR — tap to open wallet
     const container = document.getElementById('redeem-qr-container');
     new QRCode(container, { text: lnurl, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
+    container.style.cursor = 'pointer';
+    container.title = 'Tap to open in wallet';
+    container.addEventListener('click', () => { window.location.href = 'lightning:' + lnurl; });
 
     // Copy claim code button
     const lnurlEl = document.getElementById('redeem-lnurl-text');
