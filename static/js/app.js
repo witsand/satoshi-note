@@ -2578,18 +2578,23 @@ async function init() {
   }
 
   const LS_INSTALL_DISMISSED = 'sn_install_dismissed';
+  const INSTALL_SNOOZE_MS = 4 * 24 * 60 * 60 * 1000; // 4 days
   const isStandalone = window.matchMedia('(display-mode: standalone)').matches
     || navigator.standalone === true;
 
-  if (!isStandalone && !localStorage.getItem(LS_INSTALL_DISMISSED)) {
+  const dismissedVal = localStorage.getItem(LS_INSTALL_DISMISSED) || '';
+  const snoozed = dismissedVal === 'installed'
+    || (dismissedVal && (Date.now() - parseInt(dismissedVal, 10)) < INSTALL_SNOOZE_MS);
+
+  if (!isStandalone && !snoozed) {
     const banner  = $('install-banner');
     const textEl  = $('install-banner-text');
     const btn     = $('install-banner-btn');
     const dismiss = $('install-banner-dismiss');
 
-    const hideBanner = () => {
+    const hideBanner = (permanent = false) => {
       banner.classList.add('hidden');
-      localStorage.setItem(LS_INSTALL_DISMISSED, '1');
+      localStorage.setItem(LS_INSTALL_DISMISSED, permanent ? 'installed' : String(Date.now()));
     };
     dismiss.addEventListener('click', hideBanner);
 
@@ -2621,7 +2626,7 @@ async function init() {
     }
 
     // Hide automatically once installed
-    window.addEventListener('appinstalled', hideBanner);
+    window.addEventListener('appinstalled', () => hideBanner(true));
   }
 }
 
