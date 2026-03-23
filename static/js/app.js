@@ -603,20 +603,18 @@ function renderFundStep(voucher) {
     showStep(3);
   };
 
-  // QR — click to open wallet
+  // QR
   const container = $('single-qr-container');
   renderQR(container, voucher.fund_lnurl, 256);
-  container.style.cursor = 'pointer';
-  container.title = 'Tap to open in wallet';
-  container.onclick = () => { window.location.href = 'lightning:' + voucher.fund_lnurl; };
 
-  // Truncated LNURL text — click to copy
+  // Copy code button
   const lnurlEl = $('single-lnurl-text');
-  const truncated = voucher.fund_lnurl.slice(0, 20) + '…' + voucher.fund_lnurl.slice(-6);
-  lnurlEl.textContent = truncated;
-  lnurlEl.style.cursor = 'pointer';
+  lnurlEl.textContent = 'Copy Fund Code';
   lnurlEl.title = 'Tap to copy';
   lnurlEl.onclick = () => copyToClipboard(voucher.fund_lnurl, lnurlEl);
+
+  // Wallet open button
+  attachWalletButton(lnurlEl, voucher.fund_lnurl);
 
   // Save to history now (balance is 0 but LNURLs are ready)
   const e164 = normalizeToE164(state.localNumber, state.dialCode);
@@ -682,12 +680,11 @@ function renderShareStep(voucher) {
     if (!visible) {
       const qrEl = $('step3-fund-qr-container');
       renderQR(qrEl, voucher.fund_lnurl, 256);
-      qrEl.style.cursor = 'pointer';
-      qrEl.onclick = () => { window.location.href = 'lightning:' + voucher.fund_lnurl; };
       const lnEl = $('step3-fund-lnurl-text');
-      lnEl.textContent = voucher.fund_lnurl.slice(0, 20) + '…' + voucher.fund_lnurl.slice(-6);
-      lnEl.style.cursor = 'pointer';
+      lnEl.textContent = 'Copy Fund Code';
+      lnEl.title = 'Tap to copy';
       lnEl.onclick = () => copyToClipboard(voucher.fund_lnurl, lnEl);
+      attachWalletButton(lnEl, voucher.fund_lnurl);
       // Restart polling so auto-advance still works from step 3
       startFundingPoll(voucher.pubkey);
     } else {
@@ -784,15 +781,11 @@ function renderBatchResults(vouchers) {
   const batchFundLnurl = vouchers[0].batch_fund_lnurl;
   const container = $('batch-qr-container');
   renderQR(container, batchFundLnurl, 256);
-  container.style.cursor = 'pointer';
-  container.title = 'Tap to open in wallet';
-  container.onclick = () => { window.location.href = 'lightning:' + batchFundLnurl; };
   const lnurlEl = $('batch-lnurl-text');
-  const truncated = batchFundLnurl.slice(0, 20) + '…' + batchFundLnurl.slice(-6);
-  lnurlEl.textContent = truncated;
-  lnurlEl.style.cursor = 'pointer';
+  lnurlEl.textContent = 'Copy Fund Code';
   lnurlEl.title = 'Tap to copy';
   lnurlEl.onclick = () => copyToClipboard(batchFundLnurl, lnurlEl);
+  attachWalletButton(lnurlEl, batchFundLnurl);
   $('batch-fund-note').textContent = `This funds all ${vouchers.length} vouchers equally.`;
 
   // Done
@@ -2277,15 +2270,47 @@ function openQRModal(entry) {
   const lnurl = entry.type === 'single' ? voucher.fund_lnurl : voucher.batch_fund_lnurl;
   const container = $('modal-qr-container');
   renderQR(container, lnurl, 240);
-  container.style.cursor = 'pointer';
-  container.onclick = () => { window.location.href = 'lightning:' + lnurl; };
   $('modal-title').textContent = entry.type === 'single' ? 'Fund Voucher' : 'Fund Batch';
 
   const lnurlEl = $('modal-lnurl-text');
-  const truncated = lnurl.slice(0, 20) + '…' + lnurl.slice(-6);
-  lnurlEl.textContent = truncated;
+  lnurlEl.textContent = 'Copy Fund Code';
   lnurlEl.title = 'Tap to copy';
   lnurlEl.onclick = () => copyToClipboard(lnurl, lnurlEl);
+
+  // Rebuild wallet controls each time the modal opens
+  const walletArea = $('modal-wallet-area');
+  walletArea.innerHTML = '';
+  const pref = getPreferredWallet();
+  const walletBtn = document.createElement('button');
+  walletBtn.className = 'btn btn-secondary btn-sm';
+  walletBtn.textContent = pref ? `Open in ${pref.name}` : 'Open in wallet';
+  walletBtn.addEventListener('click', () => {
+    const current = getPreferredWallet();
+    if (current) {
+      window.location.href = 'lightning:' + lnurl;
+    } else {
+      showWalletPicker(w => {
+        setPreferredWallet(w.id);
+        walletBtn.textContent = `Open in ${w.name}`;
+        changeLink.textContent = 'change wallet';
+        window.location.href = 'lightning:' + lnurl;
+      });
+    }
+  });
+  const changeLink = document.createElement('a');
+  changeLink.href = '#';
+  changeLink.className = 'wallet-change-link';
+  changeLink.textContent = pref ? 'change wallet' : '';
+  changeLink.addEventListener('click', e => {
+    e.preventDefault();
+    showWalletPicker(w => {
+      setPreferredWallet(w.id);
+      walletBtn.textContent = `Open in ${w.name}`;
+      changeLink.textContent = 'change wallet';
+    });
+  });
+  walletArea.appendChild(walletBtn);
+  walletArea.appendChild(changeLink);
 
   $('qr-modal').classList.remove('hidden');
 }

@@ -76,6 +76,7 @@
 </div>
 
 <script src="/js/qrcode.min.js"></script>
+<script src="/js/wallet-picker.js"></script>
 <script>
 (function () {
   'use strict';
@@ -113,8 +114,8 @@
                   <a class="wallet-link" href="https://apps.apple.com/us/app/blink-bitcoin-wallet/id1531383905" target="_blank" rel="noopener">App Store</a>
                 </div>
               </li>
-              <li><strong>Open the app</strong>Tap "Create new account" -> "Accept" -> "Whatsapp" -> "Use WhatsApp"</li>
-              <li><strong>Enter your phone number</strong>Tap "Send via WhatsApp". This is your backup. Confirm the 6 digit code.</li>
+              <li><strong>Open the app</strong>Tap "Create new account" -> "Accept" -> "SMS" -> "Use SMS"</li>
+              <li><strong>Enter your phone number</strong>Tap "Send via SMS". This is your backup. Confirm the 6 digit code.</li>
               <li><strong>Come back here</strong>Tap the QR code above. This will open Blink and allow you to redeem the bitcoin ⚡</li>
             </ol>
           </div>
@@ -436,7 +437,7 @@
 
       <!-- Claim card -->
       <div class="card" style="text-align:center;">
-        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:16px;">Tap the QR code to open your Bitcoin wallet</p>
+        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:16px;">Scan the QR code or use the buttons below</p>
 
         <div class="qr-wrapper" style="padding:0 0 4px;">
           <div id="redeem-qr-container" class="qr-container"></div>
@@ -450,25 +451,24 @@
     // Render QR
     const container = document.getElementById('redeem-qr-container');
     new QRCode(container, { text: lnurl, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
-    container.style.cursor = 'pointer';
-    container.title = 'Tap to open in wallet';
-    container.addEventListener('click', () => { window.location.href = 'lightning:' + lnurl; });
 
-    // Show truncated LNURL — tap to copy
+    // Copy claim code button
     const lnurlEl = document.getElementById('redeem-lnurl-text');
-    const truncated = lnurl.slice(0, 20) + '…' + lnurl.slice(-6);
-    lnurlEl.textContent = truncated;
+    lnurlEl.textContent = 'Copy Claim Code';
     lnurlEl.style.cursor = 'pointer';
     lnurlEl.title = 'Tap to copy';
     lnurlEl.addEventListener('click', async function () {
       try {
         await navigator.clipboard.writeText(lnurl);
         lnurlEl.textContent = 'Copied!';
-        setTimeout(() => { lnurlEl.textContent = truncated; }, 1500);
+        setTimeout(() => { lnurlEl.textContent = 'Copy Claim Code'; }, 1500);
       } catch {
         prompt('Copy this LNURL:', lnurl);
       }
     });
+
+    // Wallet open button
+    attachWalletButton(lnurlEl, lnurl);
 
     document.getElementById('btn-sats-info').addEventListener('click', function () {
       document.getElementById('sats-info-modal').classList.remove('hidden');

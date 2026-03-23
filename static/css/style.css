@@ -312,11 +312,24 @@ select {
 }
 
 .qr-lnurl {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  word-break: break-all;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--orange);
   text-align: center;
-  max-width: 280px;
+  cursor: pointer;
+  padding: 4px 12px;
+  border: 1px solid var(--orange);
+  border-radius: 20px;
+  transition: opacity var(--transition);
+}
+.qr-lnurl:hover { opacity: 0.75; }
+
+.wallet-change-link {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  display: block;
+  text-align: center;
+  margin-top: 2px;
 }
 
 /* ── Mini QR grid ── */
@@ -1073,3 +1086,57 @@ select {
 .footer-btn:hover { color: var(--text); background: var(--surface-2); }
 .footer-btn-donate { color: var(--orange); }
 .footer-btn-donate:hover { background: var(--surface-2); }
+
+/* ── Wallet picker bottom sheet ── */
+.wallet-sheet-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  z-index: 200;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.wallet-sheet-overlay.hidden { display: none; }
+.wallet-sheet {
+  background: var(--surface);
+  width: 100%;
+  max-width: 480px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 20px 20px 32px;
+}
+.wallet-sheet-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-align: center;
+  margin-bottom: 16px;
+  color: var(--text);
+}
+.wallet-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  background: var(--surface-2);
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.9rem;
+  cursor: pointer;
+  text-align: left;
+}
+.wallet-option:hover { background: #2e2e2e; }
+.wallet-sheet-cancel {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  margin-top: 4px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  text-align: center;
+}
