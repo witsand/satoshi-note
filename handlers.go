@@ -750,7 +750,7 @@ func (srv *Server) handleRedeemPage(w http.ResponseWriter, r *http.Request) {
 	}
 	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/donate")
 	html := strings.ReplaceAll(string(b), "{{HEADER}}", readPartial("header.html"))
-	html = strings.ReplaceAll(html, "{{HEADER_EXTRA}}", "")
+	html = strings.ReplaceAll(html, "{{HEADER_EXTRA}}", `<a href="/" style="font-size:0.75rem;color:var(--text-muted);text-decoration:none;white-space:nowrap;">Gift Bitcoin →</a>`)
 	html = strings.ReplaceAll(html, "{{BASE_URL}}", srv.cfg.baseURL)
 	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
 	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)
