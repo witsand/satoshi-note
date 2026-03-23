@@ -2475,10 +2475,17 @@ async function init() {
   $('batch-name').addEventListener('keydown', e => { if (e.key === 'Enter') handleCreateBatch(); });
 
   // Nav: history
-  $('nav-history').addEventListener('click', () => {
+  $('nav-history').addEventListener('click', async () => {
     historyStatusCache.clear(); // fresh status on each visit
     renderHistory();
     showScreen('screen-history');
+    const history = getHistory();
+    if (!history.length) return;
+    preloadTerminalStatuses(history);
+    const missing = history.flatMap(e => e.vouchers.map(v => v.pubkey))
+      .filter(pk => !historyStatusCache.has(pk));
+    if (missing.length) await fetchAndCacheStatuses(missing, history);
+    updateSectionCounts(history, $('history-list'));
   });
 
   $('nav-back-from-history').addEventListener('click', () => {
