@@ -1140,3 +1140,37 @@ select {
   cursor: pointer;
   text-align: center;
 }
+
+/* ── Install banner ── */
+.install-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--surface-2);
+  max-width: 480px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+}
+.install-banner.hidden { display: none; }
+.install-banner-text {
+  flex: 1;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.install-banner-btn {
+  flex-shrink: 0;
+}
+.install-banner-dismiss {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.install-banner-dismiss:hover { color: var(--text); }

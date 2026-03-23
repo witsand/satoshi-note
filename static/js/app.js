@@ -2567,6 +2567,58 @@ async function init() {
   } else {
     showScreen('screen-onboarding');
   }
+
+  // ── Service worker + install banner ──────────────────────────────────────
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+
+  const LS_INSTALL_DISMISSED = 'sn_install_dismissed';
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches
+    || navigator.standalone === true;
+
+  if (!isStandalone && !localStorage.getItem(LS_INSTALL_DISMISSED)) {
+    const banner  = $('install-banner');
+    const textEl  = $('install-banner-text');
+    const btn     = $('install-banner-btn');
+    const dismiss = $('install-banner-dismiss');
+
+    const hideBanner = () => {
+      banner.classList.add('hidden');
+      localStorage.setItem(LS_INSTALL_DISMISSED, '1');
+    };
+    dismiss.addEventListener('click', hideBanner);
+
+    if (isIOS) {
+      // iOS: no programmatic prompt — show manual instructions
+      textEl.textContent = 'Install this app:';
+      btn.textContent = 'Tap Share then "Add to Home Screen"';
+      btn.className = 'btn btn-secondary btn-sm install-banner-btn';
+      btn.style.fontSize = '0.75rem';
+      btn.addEventListener('click', hideBanner);
+      banner.classList.remove('hidden');
+    } else {
+      // Android / desktop: wait for browser's beforeinstallprompt
+      let deferredPrompt = null;
+      window.addEventListener('beforeinstallprompt', e => {
+        e.preventDefault();
+        deferredPrompt = e;
+        textEl.textContent = 'Install this app for quick access';
+        btn.textContent = 'Install';
+        btn.addEventListener('click', () => {
+          deferredPrompt.prompt();
+          deferredPrompt.userChoice.then(choice => {
+            if (choice.outcome === 'accepted') hideBanner();
+            deferredPrompt = null;
+          });
+        });
+        banner.classList.remove('hidden');
+      });
+    }
+
+    // Hide automatically once installed
+    window.addEventListener('appinstalled', hideBanner);
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);
