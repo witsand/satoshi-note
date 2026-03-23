@@ -5,6 +5,16 @@
 const LS_REFUND = 'sn_refund_code';
 const LS_HISTORY = 'sn_history';
 const LS_DIAL_CODE = 'sn_dial_code';
+const LS_MSG_TEMPLATE = 'sn_msg_template';
+
+const DEFAULT_MSG_TEMPLATE =
+`I sent you a small amount of Bitcoin to try.
+
+You can claim it here: {link}
+
+This page explains how to get a wallet and redeem it step by step.
+
+The voucher expires soon, so try claim it when you get a chance.`;
 
 const DIAL_CODES = [
   ['+93',  'Afghanistan (+93)'],
@@ -486,10 +496,47 @@ function expiryAfterFundingLabel(refundAfterSeconds) {
 }
 
 // ── WhatsApp message ──────────────────────────────────────────────────────────
-function buildWAMessage(claimLnurl, refundAfterSeconds) {
+function buildWAMessage(claimLnurl) {
   const link = `${window.location.origin}/redeem?lightning=${encodeURIComponent(claimLnurl)}`;
-  const dur = daysFromSeconds(refundAfterSeconds);
-  return `I sent you a small amount of Bitcoin to try.\n\nYou can claim it here: ${link}\n\nThis page explains how to get a wallet and redeem it step by step.\n\nThe voucher expires soon, so try claim it when you get a chance.`
+  const template = localStorage.getItem(LS_MSG_TEMPLATE) || DEFAULT_MSG_TEMPLATE;
+  return template.replace('{link}', link);
+}
+
+let _msgSheetEl = null;
+function showMsgSheet() {
+  if (!_msgSheetEl) {
+    const overlay = document.createElement('div');
+    overlay.className = 'wallet-sheet-overlay hidden';
+    overlay.innerHTML = `
+      <div class="wallet-sheet">
+        <p class="wallet-sheet-title">Customise your message</p>
+        <p style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;text-align:center;">
+          Use <strong style="color:var(--text);">{link}</strong> where you want the voucher link to appear.
+        </p>
+        <textarea id="msg-sheet-textarea" class="msg-sheet-textarea"></textarea>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;">
+          <button id="msg-sheet-restore" style="background:none;border:none;color:var(--text-muted);font-size:0.82rem;cursor:pointer;padding:0;">Restore default</button>
+          <button id="msg-sheet-save" class="btn btn-primary btn-sm">Save</button>
+        </div>
+      </div>`;
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.add('hidden'); });
+    document.body.appendChild(overlay);
+    _msgSheetEl = overlay;
+  }
+
+  const textarea = _msgSheetEl.querySelector('#msg-sheet-textarea');
+  textarea.value = localStorage.getItem(LS_MSG_TEMPLATE) || DEFAULT_MSG_TEMPLATE;
+
+  _msgSheetEl.querySelector('#msg-sheet-restore').onclick = () => {
+    textarea.value = DEFAULT_MSG_TEMPLATE;
+  };
+  _msgSheetEl.querySelector('#msg-sheet-save').onclick = () => {
+    const val = textarea.value.trim();
+    if (val) localStorage.setItem(LS_MSG_TEMPLATE, val);
+    _msgSheetEl.classList.add('hidden');
+  };
+
+  _msgSheetEl.classList.remove('hidden');
 }
 
 // ── Single voucher wizard ─────────────────────────────────────────────────────
@@ -647,23 +694,19 @@ function renderShareStep(voucher) {
   $('share-phone-row').style.display = state.hasPhone ? '' : 'none';
   $('btn-whatsapp').style.display = state.hasPhone ? '' : 'none';
 
-  const msg = buildWAMessage(voucher.claim_lnurl, voucher.refund_after_seconds);
+  const redeemLink = `${window.location.origin}/redeem?lightning=${encodeURIComponent(voucher.claim_lnurl)}`;
 
   $('btn-whatsapp').onclick = () => {
-    const url = `https://wa.me/${e164}?text=${encodeURIComponent(msg)}`;
+    const url = `https://wa.me/${e164}?text=${encodeURIComponent(buildWAMessage(voucher.claim_lnurl))}`;
     window.open(url, '_blank');
   };
 
-  const redeemLink = `${window.location.origin}/redeem?lightning=${encodeURIComponent(voucher.claim_lnurl)}`;
   const shareBtn = $('btn-share');
   shareBtn.onclick = async () => {
+    const msg = buildWAMessage(voucher.claim_lnurl);
     if (navigator.share) {
       try {
-        await navigator.share({
-          title: 'Your Bitcoin voucher',
-          text: msg,
-          // url: redeemLink,
-        });
+        await navigator.share({ title: 'Your Bitcoin voucher', text: msg });
       } catch (e) {
         if (e.name !== 'AbortError') copyToClipboard(redeemLink, shareBtn);
       }
@@ -671,6 +714,8 @@ function renderShareStep(voucher) {
       copyToClipboard(redeemLink, shareBtn);
     }
   };
+
+  $('btn-edit-msg').onclick = () => showMsgSheet();
 
   $('btn-done-single').onclick = () => {
     state.vouchers = null;

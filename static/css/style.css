@@ -1175,3 +1175,20 @@ select {
   flex-shrink: 0;
 }
 .install-banner-dismiss:hover { color: var(--text); }
+
+/* ── Message template sheet ── */
+.msg-sheet-textarea {
+  width: 100%;
+  min-height: 160px;
+  background: var(--surface-2);
+  border: 1px solid #333;
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  padding: 10px 12px;
+  resize: vertical;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+.msg-sheet-textarea:focus { outline: none; border-color: var(--orange); }
