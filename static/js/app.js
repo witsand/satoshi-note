@@ -514,6 +514,9 @@ function showMsgSheet() {
           Use <strong style="color:var(--text);">{link}</strong> where you want the voucher link to appear.
         </p>
         <textarea id="msg-sheet-textarea" class="msg-sheet-textarea"></textarea>
+        <p id="msg-sheet-warning" style="display:none;font-size:0.78rem;color:#e06c6c;margin-top:8px;">
+          Your message must contain <strong>{link}</strong> so the voucher URL is included.
+        </p>
         <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;">
           <button id="msg-sheet-restore" style="background:none;border:none;color:var(--text-muted);font-size:0.82rem;cursor:pointer;padding:0;">Restore default</button>
           <button id="msg-sheet-save" class="btn btn-primary btn-sm">Save</button>
@@ -522,19 +525,34 @@ function showMsgSheet() {
     overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.add('hidden'); });
     document.body.appendChild(overlay);
     _msgSheetEl = overlay;
+
+    const ta      = overlay.querySelector('#msg-sheet-textarea');
+    const warn    = overlay.querySelector('#msg-sheet-warning');
+
+    overlay.querySelector('#msg-sheet-restore').onclick = () => {
+      ta.value = DEFAULT_MSG_TEMPLATE;
+      warn.style.display = 'none';
+    };
+    overlay.querySelector('#msg-sheet-save').onclick = () => {
+      const val = ta.value.trim();
+      if (!val.includes('{link}')) {
+        warn.style.display = '';
+        ta.focus();
+        return;
+      }
+      warn.style.display = 'none';
+      localStorage.setItem(LS_MSG_TEMPLATE, val);
+      overlay.classList.add('hidden');
+    };
+    ta.addEventListener('input', () => {
+      if (ta.value.includes('{link}')) warn.style.display = 'none';
+    });
   }
 
   const textarea = _msgSheetEl.querySelector('#msg-sheet-textarea');
+  const warning  = _msgSheetEl.querySelector('#msg-sheet-warning');
   textarea.value = localStorage.getItem(LS_MSG_TEMPLATE) || DEFAULT_MSG_TEMPLATE;
-
-  _msgSheetEl.querySelector('#msg-sheet-restore').onclick = () => {
-    textarea.value = DEFAULT_MSG_TEMPLATE;
-  };
-  _msgSheetEl.querySelector('#msg-sheet-save').onclick = () => {
-    const val = textarea.value.trim();
-    if (val) localStorage.setItem(LS_MSG_TEMPLATE, val);
-    _msgSheetEl.classList.add('hidden');
-  };
+  warning.style.display = 'none';
 
   _msgSheetEl.classList.remove('hidden');
 }
