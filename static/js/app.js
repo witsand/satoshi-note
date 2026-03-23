@@ -1974,7 +1974,7 @@ function renderSectionBody(body, cards, showQR, history) {
   });
 }
 
-async function expandSection(sectionEl, key, showQR, history) {
+function expandSection(sectionEl, key, showQR, history) {
   const body = sectionEl.querySelector('.history-section-body');
   const isOpen = sectionEl.classList.contains('expanded');
 
@@ -1985,18 +1985,8 @@ async function expandSection(sectionEl, key, showQR, history) {
     return;
   }
 
-  // Expand: load statuses — terminal states come from localStorage, rest are batch-fetched.
   sectionEl.classList.add('expanded');
   body.style.display = '';
-
-  preloadTerminalStatuses(history);
-  const missing = history.flatMap(e => e.vouchers.map(v => v.pubkey))
-    .filter(pk => !historyStatusCache.has(pk));
-
-  if (missing.length > 0) {
-    body.innerHTML = `<p style="font-size:0.8rem;color:var(--text-muted);padding:8px 0">Loading…</p>`;
-    await fetchAndCacheStatuses(missing, history);
-  }
 
   updateSectionCounts(history, $('history-list'));
   const sections = buildSectionCards(history);
