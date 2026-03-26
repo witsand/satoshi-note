@@ -239,6 +239,17 @@ select {
   color: var(--text);
 }
 
+.link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--orange);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+}
+
 /* ── Buttons ── */
 .btn {
   display: inline-flex;

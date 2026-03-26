@@ -681,7 +681,7 @@ function renderFundStep(voucher) {
 
   // Copy code button
   const lnurlEl = $('single-lnurl-text');
-  lnurlEl.textContent = 'Copy Fund Code';
+  lnurlEl.textContent = 'Copy Funding Code';
   lnurlEl.title = 'Tap to copy';
   lnurlEl.onclick = () => copyToClipboard(voucher.fund_lnurl, lnurlEl);
 
@@ -752,7 +752,7 @@ function renderShareStep(voucher) {
       qrEl.title = 'Tap to open in wallet';
       qrEl.onclick = () => { window.location.href = 'lightning:' + voucher.fund_lnurl; };
       const lnEl = $('step3-fund-lnurl-text');
-      lnEl.textContent = 'Copy Fund Code';
+      lnEl.textContent = 'Copy Funding Code';
       lnEl.title = 'Tap to copy';
       lnEl.onclick = () => copyToClipboard(voucher.fund_lnurl, lnEl);
       attachWalletButton(lnEl, voucher.fund_lnurl);
@@ -856,7 +856,7 @@ function renderBatchResults(vouchers) {
   container.title = 'Tap to open in wallet';
   container.onclick = () => { window.location.href = 'lightning:' + batchFundLnurl; };
   const lnurlEl = $('batch-lnurl-text');
-  lnurlEl.textContent = 'Copy Fund Code';
+  lnurlEl.textContent = 'Copy Funding Code';
   lnurlEl.title = 'Tap to copy';
   lnurlEl.onclick = () => copyToClipboard(batchFundLnurl, lnurlEl);
   attachWalletButton(lnurlEl, batchFundLnurl);
@@ -2354,40 +2354,42 @@ function openQRModal(entry) {
   lnurlEl.title = 'Tap to copy';
   lnurlEl.onclick = () => copyToClipboard(lnurl, lnurlEl);
 
-  // Rebuild wallet controls each time the modal opens
+  // Rebuild wallet controls each time the modal opens (iOS only)
   const walletArea = $('modal-wallet-area');
   walletArea.innerHTML = '';
-  const pref = getPreferredWallet();
-  const walletBtn = document.createElement('button');
-  walletBtn.className = 'btn btn-secondary btn-sm';
-  walletBtn.textContent = pref ? `Open in ${pref.name}` : 'Open in wallet';
-  walletBtn.addEventListener('click', () => {
-    const current = getPreferredWallet();
-    if (current) {
-      window.location.href = 'lightning:' + lnurl;
-    } else {
+  if (isIOS) {
+    const pref = getPreferredWallet();
+    const walletBtn = document.createElement('button');
+    walletBtn.className = 'btn btn-secondary btn-sm';
+    walletBtn.textContent = pref ? `Open in ${pref.name}` : 'Open in wallet';
+    walletBtn.addEventListener('click', () => {
+      const current = getPreferredWallet();
+      if (current) {
+        window.location.href = 'lightning:' + lnurl;
+      } else {
+        showWalletPicker(w => {
+          setPreferredWallet(w.id);
+          walletBtn.textContent = `Open in ${w.name}`;
+          changeLink.textContent = 'change wallet';
+          window.location.href = 'lightning:' + lnurl;
+        });
+      }
+    });
+    const changeLink = document.createElement('a');
+    changeLink.href = '#';
+    changeLink.className = 'wallet-change-link';
+    changeLink.textContent = pref ? 'change wallet' : '';
+    changeLink.addEventListener('click', e => {
+      e.preventDefault();
       showWalletPicker(w => {
         setPreferredWallet(w.id);
         walletBtn.textContent = `Open in ${w.name}`;
         changeLink.textContent = 'change wallet';
-        window.location.href = 'lightning:' + lnurl;
       });
-    }
-  });
-  const changeLink = document.createElement('a');
-  changeLink.href = '#';
-  changeLink.className = 'wallet-change-link';
-  changeLink.textContent = pref ? 'change wallet' : '';
-  changeLink.addEventListener('click', e => {
-    e.preventDefault();
-    showWalletPicker(w => {
-      setPreferredWallet(w.id);
-      walletBtn.textContent = `Open in ${w.name}`;
-      changeLink.textContent = 'change wallet';
     });
-  });
-  walletArea.appendChild(walletBtn);
-  walletArea.appendChild(changeLink);
+    walletArea.appendChild(walletBtn);
+    walletArea.appendChild(changeLink);
+  }
 
   $('qr-modal').classList.remove('hidden');
 }
@@ -2472,6 +2474,12 @@ async function handleOnboardingSubmit() {
   const errEl = $('onboarding-error');
   const btn = $('btn-onboarding-submit');
 
+  if (!$('tos-checkbox').checked) {
+    errEl.textContent = 'Please accept the Terms & Conditions to continue.';
+    errEl.classList.add('visible');
+    return;
+  }
+
   // Second tap after unverifiable warning — proceed anyway
   if (btn._warnDismissed === val) {
     btn._warnDismissed = null;
@@ -2555,6 +2563,9 @@ async function init() {
   // Onboarding
   $('btn-onboarding-submit').addEventListener('click', handleOnboardingSubmit);
   $('refund-code-input').addEventListener('keydown', e => { if (e.key === 'Enter') handleOnboardingSubmit(); });
+  $('btn-tos-inline').addEventListener('click', function () {
+    $('terms-modal').classList.remove('hidden');
+  });
   $('btn-paste-refund').addEventListener('click', async () => {
     try {
       const text = await navigator.clipboard.readText();
