@@ -4,7 +4,7 @@
  * Bump CACHE version when deploying new static asset versions.
  */
 
-const CACHE = 'sn-v2';
+const CACHE = 'sn-v3';
 
 const PRECACHE = [
   '/css/style.css',
