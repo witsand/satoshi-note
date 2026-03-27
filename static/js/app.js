@@ -2655,6 +2655,7 @@ async function createWalletVoucher() {
       fund_url_prefix: v.fund_url_prefix,
       withdraw_url_prefix: v.withdraw_url_prefix,
       refund_after_seconds: v.refund_after_seconds,
+      refund_code: refundCode,
       created_at: Math.floor(Date.now() / 1000),
     }));
     await refreshWalletBalance();
@@ -2907,10 +2908,43 @@ async function init() {
 
   $('btn-create-wallet-voucher').addEventListener('click', createWalletVoucher);
 
-  $('btn-disable-wallet-voucher').addEventListener('click', () => {
+  $('btn-disable-wallet-voucher').addEventListener('click', async () => {
+    const wv = getWalletVoucher();
+    const modal = $('disable-voucher-modal');
+    const msgEl = $('disable-voucher-msg');
+
+    let balanceMsat = 0;
+    try {
+      const res = await fetch(`/voucher/status/${wv.pubkey}`);
+      if (res.ok) { const d = await res.json(); balanceMsat = d.balance_msat || 0; }
+    } catch {}
+
+    const balanceSats = Math.floor(balanceMsat / 1000);
+    const refundAddr = wv.refund_code || localStorage.getItem(LS_REFUND) || '';
+    if (balanceSats > 0 && refundAddr) {
+      msgEl.textContent = `Your local voucher has ${balanceSats.toLocaleString()} sats. These will be refunded to ${refundAddr}. Disable anyway?`;
+    } else if (balanceSats > 0) {
+      msgEl.textContent = `Your local voucher has ${balanceSats.toLocaleString()} sats. Funds will be refunded to your configured Lightning address. Disable anyway?`;
+    } else {
+      msgEl.textContent = 'This will remove your local voucher. You can create a new one at any time.';
+    }
+
+    modal.classList.remove('hidden');
+  });
+
+  $('btn-disable-voucher-cancel').addEventListener('click', () => {
+    $('disable-voucher-modal').classList.add('hidden');
+  });
+
+  $('btn-disable-voucher-confirm').addEventListener('click', () => {
+    $('disable-voucher-modal').classList.add('hidden');
     localStorage.removeItem(LS_WALLET_VOUCHER);
     refreshWalletBalance();
     renderSettingsWalletSection();
+  });
+
+  $('disable-voucher-modal').addEventListener('click', e => {
+    if (e.target === $('disable-voucher-modal')) $('disable-voucher-modal').classList.add('hidden');
   });
 
   // Wallet expiry pills

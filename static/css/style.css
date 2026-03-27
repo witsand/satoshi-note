@@ -10,6 +10,8 @@
   --radius: 14px;
   --radius-sm: 8px;
   --transition: 0.18s ease;
+  --error: #E05252;
+  --error-dark: #B83E3E;
 }
 
 /* ── Reset & Base ── */
@@ -301,6 +303,13 @@ select {
 }
 
 .btn-sm { padding: 8px 14px; font-size: 0.85rem; width: auto; }
+
+.btn-warning {
+  background: transparent;
+  color: var(--error);
+  border: 1px solid var(--error);
+}
+.btn-warning:hover { background: var(--error); color: #fff; border-color: var(--error); }
 
 .btn-group {
   display: flex;

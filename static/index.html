@@ -8,7 +8,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <meta name="theme-color" content="#F7931A">
-  <link rel="stylesheet" href="/css/style.css?v=12">
+  <link rel="stylesheet" href="/css/style.css?v=13">
   <script>window.SITE_NAME = '{{SITE_NAME_FULL}}'; window.BATCH_ENABLED = {{BATCH_ENABLED}}; window.DEFAULT_DIAL_CODE = '{{DEFAULT_DIAL_CODE}}';</script>
 </head>
 <body>
@@ -190,7 +190,7 @@
             <div id="wallet-transfer-error" class="error-msg"></div>
             <div style="display:flex;flex-direction:column;gap:8px;">
               <button id="btn-wallet-transfer" class="btn btn-primary">Transfer</button>
-              <button id="btn-wallet-transfer-skip" class="btn btn-ghost btn-sm">Pay with Lightning instead ↓</button>
+              <button id="btn-wallet-transfer-skip" class="btn btn-ghost btn-sm">⚡ Pay with Lightning instead</button>
             </div>
           </div>
 
@@ -207,7 +207,7 @@
                 <p id="single-lnurl-text" class="qr-lnurl"></p>
               </div>
               <p class="qr-wrapper">Waiting for payment...</p>
-              <button id="btn-pay-local-instead" class="btn btn-ghost btn-sm hidden">⚡ Pay with local voucher instead</button>
+              <button id="btn-pay-local-instead" class="btn btn-ghost btn-sm hidden">Pay with local voucher instead</button>
             </div>
           </div>
 
@@ -403,7 +403,9 @@
             <p id="settings-wallet-lnurl" class="qr-lnurl"></p>
           </div>
           <p class="qr-wrapper">Waiting for payment...</p>
-          <button id="btn-disable-wallet-voucher" class="btn btn-ghost btn-sm" style="margin-top:12px;color:var(--error);">Disable Local Voucher</button>
+          <div style="text-align:center;margin-top:16px;">
+            <button id="btn-disable-wallet-voucher" class="btn btn-warning btn-sm">Disable Local Voucher</button>
+          </div>
         </div>
       </div>
     </section>
@@ -423,12 +425,24 @@
   </div>
 </div>
 
+<!-- ── Disable local voucher confirm dialog ───────────────────────────────────── -->
+<div id="disable-voucher-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+  <div class="modal-box" style="max-width:360px;text-align:center;">
+    <div class="modal-title" style="color:var(--error);margin-bottom:12px;">⚠ Disable Local Voucher?</div>
+    <p id="disable-voucher-msg" style="font-size:0.95rem;color:var(--text-muted);line-height:1.5;margin-bottom:20px;"></p>
+    <div style="display:flex;gap:10px;justify-content:center;">
+      <button id="btn-disable-voucher-cancel" class="btn btn-ghost btn-sm">Cancel</button>
+      <button id="btn-disable-voucher-confirm" class="btn btn-warning btn-sm">Disable</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Print area ─────────────────────────────────────────────────────────────── -->
 <div id="print-area" style="display:none;"></div>
 
 <script src="/js/qrcode.min.js"></script>
-<script src="/js/wallet-picker.js?v=12"></script>
-<script src="/js/app.js?v=12"></script>
+<script src="/js/wallet-picker.js?v=13"></script>
+<script src="/js/app.js?v=13"></script>
 <script>
 (function () {
   'use strict';
