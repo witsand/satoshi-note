@@ -157,15 +157,6 @@ func initSchema(db *sql.DB) error {
 		return err
 	}
 
-	// Migrations: add columns introduced after initial schema.
-	// ALTER TABLE returns "duplicate column name" when the column already exists
-	// (new installs); that error is intentionally ignored.
-	if _, err := db.Exec(`ALTER TABLE fund_txs ADD COLUMN dust_msat INTEGER NOT NULL DEFAULT 0`); err != nil {
-		if !strings.Contains(err.Error(), "duplicate column name") {
-			return err
-		}
-	}
-
 	// Indexes for frequently queried columns.
 	indexes := []string{
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_pub_key ON vouchers(pub_key)`,

@@ -2659,6 +2659,7 @@ async function createWalletVoucher() {
     }));
     await refreshWalletBalance();
     await renderSettingsWalletSection();
+    startSettingsPoller();
   } catch (err) {
     errEl.textContent = err.message || 'Failed to create wallet voucher.';
     errEl.classList.add('visible');
