@@ -2699,7 +2699,7 @@ function showWalletTransferCard(voucher, balanceMsat) {
   errEl.classList.remove('visible');
   const btn = $('btn-wallet-transfer');
   btn.disabled = false;
-  btn.textContent = 'Transfer';
+  btn.textContent = 'Fund Voucher';
 
   // Suggestion pills from previous amounts
   const amounts = getWalletAmounts();
@@ -2755,7 +2755,7 @@ async function doWalletTransfer(voucher) {
 
   const btn = $('btn-wallet-transfer');
   btn.disabled = true;
-  btn.textContent = 'Transferring…';
+  btn.textContent = 'Funding…';
 
   try {
     const res = await fetch('/transfer', {
@@ -2776,7 +2776,7 @@ async function doWalletTransfer(voucher) {
     errEl.textContent = err.message;
     errEl.classList.add('visible');
     btn.disabled = false;
-    btn.textContent = 'Transfer';
+    btn.textContent = 'Fund Voucher';
   }
 }
 
