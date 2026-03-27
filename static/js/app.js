@@ -2723,7 +2723,7 @@ function showWalletTransferCard(voucher, balanceMsat) {
     const btn = document.createElement('button');
     btn.type = 'button';
     btn.className = 'pill-btn pill-btn-recent';
-    btn.textContent = amt.toLocaleString() + ' sats';
+    btn.textContent = amt.toLocaleString();
     btn.addEventListener('click', () => { amtEl.value = amt; doWalletTransfer(voucher); });
     sugEl.appendChild(btn);
   });
