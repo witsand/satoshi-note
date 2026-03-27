@@ -1212,3 +1212,50 @@ select {
   box-sizing: border-box;
 }
 .msg-sheet-textarea:focus { outline: none; border-color: var(--orange); }
+
+/* ── Burger menu dropdown ──────────────────────────────────────────────────── */
+.nav-menu-dropdown {
+  position: fixed;
+  background: var(--surface);
+  border: 1px solid var(--surface-2);
+  border-radius: var(--radius);
+  z-index: 150;
+  min-width: 180px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 14px 18px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 0.95rem;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-item:hover { background: var(--surface-2); }
+.menu-item:first-child { border-radius: var(--radius) var(--radius) 0 0; }
+.menu-item:last-child  { border-radius: 0 0 var(--radius) var(--radius); }
+
+/* ── Balance pill ──────────────────────────────────────────────────────────── */
+.balance-pill {
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: var(--surface-2);
+  border-radius: 99px;
+  padding: 4px 10px;
+  color: var(--orange);
+  white-space: nowrap;
+}
+
+/* ── Wallet transfer card ──────────────────────────────────────────────────── */
+.wallet-transfer-card {
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--surface-2);
+}

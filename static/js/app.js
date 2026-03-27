@@ -6,6 +6,8 @@ const LS_REFUND = 'sn_refund_code';
 const LS_HISTORY = 'sn_history';
 const LS_DIAL_CODE = 'sn_dial_code';
 const LS_MSG_TEMPLATE = 'sn_msg_template';
+const LS_WALLET_VOUCHER = 'sn_wallet_voucher';
+const LS_WALLET_AMOUNTS = 'sn_wallet_amounts';
 
 const DEFAULT_MSG_TEMPLATE =
 `I sent you a small amount of Bitcoin to try.
@@ -236,6 +238,7 @@ const _configReady = (async () => {
     if (res.ok) {
       const d = await res.json();
       if (typeof d.random_bytes_length === 'number') _randomBytesLength = d.random_bytes_length;
+      if (typeof d.min_fund_amount_msat === 'number') _minFundAmountMsat = d.min_fund_amount_msat;
     }
   } catch (_) {}
 })();
@@ -289,10 +292,13 @@ function lnurlEncode(url) {
 }
 
 let _fundPoller = null;
+let _settingsPoller = null;
 let _dialCode = '+1';
 let _singleExpiry = 259200;
 let _batchCount = 8;
 let _batchExpiry = 1209600;
+let _walletExpiry = 2592000;
+let _minFundAmountMsat = 120000; // safe fallback
 let _selectedTemplate = 'classic';
 
 function normalizeToE164(raw, dialCode) {
@@ -647,6 +653,7 @@ async function handleCreateSingle() {
 
     renderFundStep(vouchers[0]);
     showStep(2);
+    await checkWalletForTransfer(vouchers[0]);
   } catch (err) {
     errEl.textContent = err.message || 'Failed to create voucher. Try again.';
     errEl.classList.add('visible');
@@ -665,6 +672,7 @@ function renderFundStep(voucher) {
   const voucherForRow = $('step2-voucher-for');
   if (voucherForRow) voucherForRow.style.display = state.hasPhone ? '' : 'none';
   $('btn-back-step2').textContent = state.hasPhone ? '← Change phone number' : '← Add phone number';
+  $('btn-pay-local-instead').classList.add('hidden');
 
   $('btn-next-step2').onclick = () => {
     stopFundingPoll();
@@ -700,8 +708,6 @@ function renderFundStep(voucher) {
     vouchers: state.vouchers,
   });
 
-  // Start auto-detection
-  startFundingPoll(voucher.pubkey);
 }
 
 function renderShareStep(voucher) {
@@ -813,7 +819,7 @@ async function handleCreateBatch() {
       v.secret = s;
       v.claim_lnurl = lnurlEncode(v.withdraw_url_prefix + s);
       v.fund_lnurl = lnurlEncode(v.fund_url_prefix + v.pubkey);
-      v.batch_fund_lnurl = lnurlEncode(v.batch_fund_url_prefix + v.batch_id);
+      v.batch_fund_lnurl = lnurlEncode(v.fund_url_prefix + v.batch_id);
     }
 
     state.vouchers = vouchers;
@@ -2399,6 +2405,9 @@ function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   const el = $(id);
   if (el) el.classList.add('active');
+  const menuBtn = $('nav-menu');
+  if (menuBtn) menuBtn.classList.toggle('hidden', id === 'screen-onboarding');
+  if (id !== 'screen-settings') stopSettingsPoller();
 }
 
 function showTab(tab) {
@@ -2526,12 +2535,248 @@ async function handleOnboardingSubmit() {
 
 function startApp() {
   showScreen('screen-app');
-  renderRefundCodeDisplay();
+  refreshWalletBalance();
 }
 
-function renderRefundCodeDisplay() {
-  const el = $('refund-code-display');
+// ── Wallet voucher helpers ─────────────────────────────────────────────────────
+function getWalletVoucher() {
+  try { return JSON.parse(localStorage.getItem(LS_WALLET_VOUCHER)); } catch { return null; }
+}
+
+function getWalletAmounts() {
+  try { return JSON.parse(localStorage.getItem(LS_WALLET_AMOUNTS)) || []; } catch { return []; }
+}
+function saveWalletAmount(sats) {
+  const prev = getWalletAmounts().filter(a => a !== sats);
+  localStorage.setItem(LS_WALLET_AMOUNTS, JSON.stringify([sats, ...prev].slice(0, 3)));
+}
+
+function startSettingsPoller() {
+  stopSettingsPoller();
+  if (!getWalletVoucher()) return;
+  _settingsPoller = setInterval(() => refreshWalletBalance(), 3000);
+}
+function stopSettingsPoller() {
+  if (_settingsPoller) { clearInterval(_settingsPoller); _settingsPoller = null; }
+}
+
+async function refreshWalletBalance() {
+  const wv = getWalletVoucher();
+  const pill = $('wallet-balance-pill');
+  if (!wv) { if (pill) pill.classList.add('hidden'); return 0; }
+  try {
+    const res = await fetch(`/voucher/status/${wv.pubkey}`);
+    if (!res.ok) return 0;
+    const data = await res.json();
+    if (!data.active) {
+      localStorage.removeItem(LS_WALLET_VOUCHER);
+      if (pill) pill.classList.add('hidden');
+      return 0;
+    }
+    const sats = Math.floor((data.balance_msat || 0) / 1000);
+    if (pill) {
+      $('wallet-balance-sats').textContent = sats.toLocaleString();
+      pill.classList.toggle('hidden', sats === 0);
+    }
+    return data.balance_msat || 0;
+  } catch { return 0; }
+}
+
+// ── Settings screen ────────────────────────────────────────────────────────────
+function renderSettingsRefund() {
+  const el = $('settings-refund-display');
   if (el) el.textContent = localStorage.getItem(LS_REFUND) || '—';
+}
+
+async function renderSettingsWalletSection() {
+  const wv = getWalletVoucher();
+  const createDiv = $('settings-wallet-create');
+  const activeDiv = $('settings-wallet-active');
+  if (!wv) {
+    createDiv.classList.remove('hidden');
+    activeDiv.classList.add('hidden');
+    return;
+  }
+  createDiv.classList.add('hidden');
+  activeDiv.classList.remove('hidden');
+
+  try {
+    const res = await fetch(`/voucher/status/${wv.pubkey}`);
+    if (res.ok) {
+      const data = await res.json();
+      if (!data.active) {
+        localStorage.removeItem(LS_WALLET_VOUCHER);
+        createDiv.classList.remove('hidden');
+        activeDiv.classList.add('hidden');
+        return;
+      }
+    }
+  } catch {}
+
+  const fundLNURL = lnurlEncode(wv.fund_url_prefix + wv.pubkey);
+  const qrEl = $('settings-wallet-qr');
+  qrEl.innerHTML = '';
+  renderQR(qrEl, fundLNURL, 256);
+  qrEl.onclick = () => { window.location.href = 'lightning:' + fundLNURL; };
+
+  const lnurlEl = $('settings-wallet-lnurl');
+  lnurlEl.textContent = 'Copy Funding Code';
+  lnurlEl.title = 'Tap to copy';
+  lnurlEl.onclick = () => copyToClipboard(fundLNURL, lnurlEl);
+  attachWalletButton(lnurlEl, fundLNURL);
+}
+
+async function createWalletVoucher() {
+  const btn = $('btn-create-wallet-voucher');
+  const errEl = $('settings-wallet-error');
+  errEl.classList.remove('visible');
+
+  await _configReady;
+  const secret = generateSecretHex(_randomBytesLength);
+  const pubKey = await secretToPubKey(secret);
+  const refundCode = localStorage.getItem(LS_REFUND) || '';
+
+  btn.disabled = true;
+  const orig = btn.textContent;
+  btn.textContent = 'Creating…';
+
+  try {
+    const vouchers = await createVouchers({
+      batch_name: 'Wallet',
+      pub_keys: [pubKey],
+      refund_code: refundCode,
+      refund_after_seconds: _walletExpiry,
+      single_use: false,
+    });
+    const v = vouchers[0];
+    localStorage.setItem(LS_WALLET_VOUCHER, JSON.stringify({
+      secret,
+      pubkey: v.pubkey,
+      fund_url_prefix: v.fund_url_prefix,
+      withdraw_url_prefix: v.withdraw_url_prefix,
+      refund_after_seconds: v.refund_after_seconds,
+      created_at: Math.floor(Date.now() / 1000),
+    }));
+    await refreshWalletBalance();
+    await renderSettingsWalletSection();
+  } catch (err) {
+    errEl.textContent = err.message || 'Failed to create wallet voucher.';
+    errEl.classList.add('visible');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+}
+
+// ── Wallet transfer (step 2) ───────────────────────────────────────────────────
+async function checkWalletForTransfer(voucher) {
+  $('wallet-transfer-card').classList.add('hidden');
+  $('step2-lightning-section').classList.remove('hidden');
+  $('btn-pay-local-instead').classList.add('hidden');
+
+  await _configReady;
+  const balanceMsat = await refreshWalletBalance();
+
+  if (balanceMsat >= _minFundAmountMsat) {
+    $('step2-lightning-section').classList.add('hidden');
+    showWalletTransferCard(voucher, balanceMsat);
+  } else {
+    startFundingPoll(voucher.pubkey);
+  }
+}
+
+function showWalletTransferCard(voucher, balanceMsat) {
+  const card = $('wallet-transfer-card');
+  const infoEl = $('wallet-transfer-info');
+  const amtEl = $('wallet-transfer-amount');
+  const errEl = $('wallet-transfer-error');
+
+  const balSats = Math.floor(balanceMsat / 1000);
+  const minSats = Math.ceil(_minFundAmountMsat / 1000);
+  infoEl.textContent = `Local balance: ${balSats.toLocaleString()} sats  ·  min: ${minSats.toLocaleString()} sats`;
+  amtEl.value = '';
+  errEl.classList.remove('visible');
+  const btn = $('btn-wallet-transfer');
+  btn.disabled = false;
+  btn.textContent = 'Transfer';
+
+  // Suggestion pills from previous amounts
+  const amounts = getWalletAmounts();
+  const sugEl = $('wallet-amount-suggestions');
+  sugEl.innerHTML = '';
+  if (amounts.length) {
+    amounts.forEach(amt => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'pill-btn';
+      btn.textContent = amt.toLocaleString() + ' sats';
+      btn.addEventListener('click', () => { amtEl.value = amt; amtEl.focus(); });
+      sugEl.appendChild(btn);
+    });
+    sugEl.style.display = '';
+  } else {
+    sugEl.style.display = 'none';
+  }
+
+  $('btn-wallet-transfer').onclick = () => doWalletTransfer(voucher);
+  amtEl.onkeydown = e => { if (e.key === 'Enter') doWalletTransfer(voucher); };
+  $('btn-wallet-transfer-skip').onclick = () => {
+    card.classList.add('hidden');
+    $('step2-lightning-section').classList.remove('hidden');
+    $('btn-pay-local-instead').classList.remove('hidden');
+    startFundingPoll(voucher.pubkey);
+  };
+
+  $('btn-pay-local-instead').onclick = () => {
+    $('step2-lightning-section').classList.add('hidden');
+    $('btn-pay-local-instead').classList.add('hidden');
+    stopFundingPoll();
+    showWalletTransferCard(voucher, balanceMsat);
+  };
+
+  card.classList.remove('hidden');
+  amtEl.focus();
+}
+
+async function doWalletTransfer(voucher) {
+  const wv = getWalletVoucher();
+  if (!wv) return;
+
+  const errEl = $('wallet-transfer-error');
+  errEl.classList.remove('visible');
+
+  const amountSats = parseInt($('wallet-transfer-amount').value, 10);
+  if (isNaN(amountSats) || amountSats < Math.ceil(_minFundAmountMsat / 1000)) {
+    errEl.textContent = `Minimum amount is ${Math.ceil(_minFundAmountMsat / 1000)} sats.`;
+    errEl.classList.add('visible');
+    return;
+  }
+
+  const btn = $('btn-wallet-transfer');
+  btn.disabled = true;
+  btn.textContent = 'Transferring…';
+
+  try {
+    const res = await fetch('/transfer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret: wv.secret, pub_key: voucher.pubkey, amount: amountSats * 1000 }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Transfer failed (${res.status})`);
+    }
+    await refreshWalletBalance();
+    saveWalletAmount(amountSats);
+    stopFundingPoll();
+    renderShareStep(voucher);
+    showStep(3);
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.add('visible');
+    btn.disabled = false;
+    btn.textContent = 'Transfer';
+  }
 }
 
 function initBatchPills() {
@@ -2576,6 +2821,16 @@ async function init() {
     }
   });
 
+  $('btn-paste-phone').addEventListener('click', async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      $('phone-number').value = text.trim();
+      $('phone-number').focus();
+    } catch {
+      $('phone-number').focus();
+    }
+  });
+
   // Single voucher
   $('btn-edit-msg').addEventListener('click', showMsgSheet);
   $('btn-create-single').addEventListener('click', handleCreateSingle);
@@ -2587,9 +2842,22 @@ async function init() {
   $('btn-create-batch').addEventListener('click', handleCreateBatch);
   $('batch-name').addEventListener('keydown', e => { if (e.key === 'Enter') handleCreateBatch(); });
 
-  // Nav: history
-  $('nav-history').addEventListener('click', async () => {
-    historyStatusCache.clear(); // fresh status on each visit
+  // ── Burger menu ──────────────────────────────────────────────────────────
+  const navMenuBtn = $('nav-menu');
+  const navMenuDropdown = $('nav-menu-dropdown');
+  navMenuBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    const rect = navMenuBtn.getBoundingClientRect();
+    navMenuDropdown.style.top   = rect.bottom + 4 + 'px';
+    navMenuDropdown.style.right = window.innerWidth - rect.right + 'px';
+    navMenuDropdown.style.left  = '';
+    navMenuDropdown.classList.toggle('hidden');
+  });
+  document.addEventListener('click', () => navMenuDropdown.classList.add('hidden'));
+
+  const goHistory = async () => {
+    navMenuDropdown.classList.add('hidden');
+    historyStatusCache.clear();
     renderHistory();
     showScreen('screen-history');
     const history = getHistory();
@@ -2599,31 +2867,60 @@ async function init() {
       .filter(pk => !historyStatusCache.has(pk));
     if (missing.length) await fetchAndCacheStatuses(missing, history);
     updateSectionCounts(history, $('history-list'));
-  });
+  };
 
-  $('nav-back-from-history').addEventListener('click', () => {
-    if (localStorage.getItem(LS_REFUND)) {
-      showScreen('screen-app');
-    } else {
-      showScreen('screen-onboarding');
-    }
-  });
+  $('menu-history').addEventListener('click', goHistory);
 
-  // Nav: leaderboard
-  $('nav-leaderboard').addEventListener('click', () => {
+  $('menu-leaderboard').addEventListener('click', () => {
+    navMenuDropdown.classList.add('hidden');
     showScreen('screen-leaderboard');
     renderLeaderboardScreen($('leaderboard-content'));
+  });
+
+  $('menu-settings').addEventListener('click', () => {
+    navMenuDropdown.classList.add('hidden');
+    renderSettingsRefund();
+    renderSettingsWalletSection();
+    showScreen('screen-settings');
+    startSettingsPoller();
+  });
+
+  // ── Nav backs ────────────────────────────────────────────────────────────
+  $('nav-back-from-history').addEventListener('click', () => {
+    showScreen(localStorage.getItem(LS_REFUND) ? 'screen-app' : 'screen-onboarding');
   });
 
   $('nav-back-from-leaderboard').addEventListener('click', () => {
     showScreen(localStorage.getItem(LS_REFUND) ? 'screen-app' : 'screen-onboarding');
   });
 
-  // Change refund code
-  $('btn-change-refund').addEventListener('click', () => {
+  $('nav-back-from-settings').addEventListener('click', () => {
+    showScreen(localStorage.getItem(LS_REFUND) ? 'screen-app' : 'screen-onboarding');
+  });
+
+  // ── Settings actions ──────────────────────────────────────────────────────
+  $('btn-settings-change-refund').addEventListener('click', () => {
     localStorage.removeItem(LS_REFUND);
-    $('refund-code-input').value = localStorage.getItem(LS_REFUND) || '';
+    $('refund-code-input').value = '';
     showScreen('screen-onboarding');
+  });
+
+  $('btn-create-wallet-voucher').addEventListener('click', createWalletVoucher);
+
+  $('btn-disable-wallet-voucher').addEventListener('click', () => {
+    localStorage.removeItem(LS_WALLET_VOUCHER);
+    refreshWalletBalance();
+    renderSettingsWalletSection();
+  });
+
+  // Wallet expiry pills
+  document.querySelectorAll('#wallet-expiry-pills .pill-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#wallet-expiry-pills .pill-btn')
+        .forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _walletExpiry = parseInt(btn.dataset.secs, 10);
+    });
   });
 
   // QR modal close

@@ -26,6 +26,8 @@ type Config struct {
 	storageDirectory        string
 	randomBytesLength       int
 	redeemFeeBPS            int64
+	internalFeeBPS          int64
+	minInternalFeeMsat      int64
 	minRedeemFeeMsat        int64
 	minFundAmountMsat       int64
 	maxFundAmountMsat       int64
@@ -134,6 +136,24 @@ func loadConfig() (*Server, error) {
 	} else {
 		var err error
 		if cfg.redeemFeeBPS, err = strconv.ParseInt(v, 10, 64); err != nil {
+			return nil, err
+		}
+	}
+
+	if v := os.Getenv("INTERNAL_FEE_BPS"); v == "" {
+		return nil, errMissingEnv("INTERNAL_FEE_BPS")
+	} else {
+		var err error
+		if cfg.internalFeeBPS, err = strconv.ParseInt(v, 10, 64); err != nil {
+			return nil, err
+		}
+	}
+
+	if v := os.Getenv("MIN_INTERNAL_FEE_MSAT"); v == "" {
+		return nil, errMissingEnv("MIN_INTERNAL_FEE_MSAT")
+	} else {
+		var err error
+		if cfg.minInternalFeeMsat, err = strconv.ParseInt(v, 10, 64); err != nil {
 			return nil, err
 		}
 	}

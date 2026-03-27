@@ -125,6 +125,22 @@ func initSchema(db *sql.DB) error {
 		return err
 	}
 
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS transfer_txs (
+		id           INTEGER PRIMARY KEY,
+		from_pub_key TEXT    NOT NULL,
+		to_pub_key   TEXT    NOT NULL DEFAULT "",
+		to_batch_id  TEXT    NOT NULL DEFAULT "",
+		to_donate    INTEGER NOT NULL DEFAULT 0,
+		amount_msat  INTEGER NOT NULL,
+		fee_msat     INTEGER NOT NULL,
+		net_msat     INTEGER NOT NULL,
+		dust_msat    INTEGER NOT NULL DEFAULT 0,
+		created_at   INTEGER NOT NULL
+	)`)
+	if err != nil {
+		return err
+	}
+
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS donations (
 		key              TEXT PRIMARY KEY,
 		amount_msat      INTEGER NOT NULL DEFAULT 0,
@@ -614,6 +630,15 @@ func (srv *Server) insertDonation(pr string, amountMsat, feeMsat int64, comment 
 		key, pr, amountMsat, feeMsat, comment, TxPending, time.Now().Unix(),
 	)
 	return key, err
+}
+
+func (srv *Server) insertTransferTx(dbTx *sql.Tx, fromPubKey, toPubKey, toBatchID string, toDonate bool, amountMsat, feeMsat, netMsat, dustMsat int64) error {
+	_, err := dbTx.Exec(
+		`INSERT INTO transfer_txs (from_pub_key, to_pub_key, to_batch_id, to_donate, amount_msat, fee_msat, net_msat, dust_msat, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		fromPubKey, toPubKey, toBatchID, boolToInt(toDonate), amountMsat, feeMsat, netMsat, dustMsat, time.Now().Unix(),
+	)
+	return err
 }
 
 func (srv *Server) getDonationByPR(pr string) (*Donation, error) {

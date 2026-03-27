@@ -32,7 +32,6 @@ func (srv *Server) newVoucher(pubKey, refundCode, batchName, batchID string, ref
 		FundURLPrefix:        srv.cfg.baseURL + "/f/",
 		BatchName:            batchName,
 		BatchID:              batchID,
-		BatchFundURLPrefix:   srv.cfg.baseURL + "/fb/",
 		WithdrawURLPrefix:    srv.cfg.baseURL + "/w/",
 		RefundCode:           refundCode,
 		RefundAfterSeconds:   refundAfterSeconds,

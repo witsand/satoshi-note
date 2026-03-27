@@ -53,6 +53,13 @@
   <!-- Header -->
   {{HEADER}}
 
+  <!-- Burger menu dropdown -->
+  <div id="nav-menu-dropdown" class="nav-menu-dropdown hidden">
+    <button id="menu-history"     class="menu-item">🗒️ History</button>
+    <button id="menu-leaderboard" class="menu-item">🏆 Leaderboard</button>
+    <button id="menu-settings"    class="menu-item">⚙️ Settings</button>
+  </div>
+
   <!-- Main content -->
   <main class="main-content">
 
@@ -160,6 +167,7 @@
               </div>
               <input type="tel" id="phone-number"
                 placeholder="82 123 4567" autocomplete="off">
+              <button type="button" id="btn-paste-phone" class="btn btn-secondary btn-sm" title="Paste" aria-label="Paste"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="4" rx="1"/><rect x="4" y="6" width="16" height="16" rx="2"/><path d="M9 6h6"/></svg></button>
             </div>
             <div id="single-step1-error" class="error-msg"></div>
           </div>
@@ -169,22 +177,43 @@
 
         <!-- Step 2: Fund QR -->
         <div id="single-step-2" class="hidden">
-          <div class="card" style="text-align:center;">
-            <p class="card-title">Fund your voucher</p>
-            <p class="card-title" id="step2-voucher-for">Sending to: <span id="step2-phone-display"></span></p>
-            <label>👍 Tap or Scan the QR code, or use the buttons below. Send any amount of sats to fund the voucher.</label>
-            <label>ⓘ After paying, come back here to send the voucher.</label>
-            <label id="step2-phone-row">
-            </label>
-            <div class="qr-wrapper">
-              <div id="single-qr-container" class="qr-container"></div>
-              <p id="single-lnurl-text" class="qr-lnurl"></p>
+
+          <!-- Wallet transfer card (shown when local balance is sufficient) -->
+          <div id="wallet-transfer-card" class="wallet-transfer-card hidden">
+            <p style="font-weight:600;margin:0 0 6px;">⚡ Pay from local balance</p>
+            <p id="wallet-transfer-info" style="font-size:0.85rem;color:var(--text-muted);margin:0 0 12px;"></p>
+            <div id="wallet-amount-suggestions" class="pill-group" style="margin-bottom:10px;display:none;"></div>
+            <div style="margin-bottom:12px;">
+              <input id="wallet-transfer-amount" type="text" inputmode="numeric" pattern="[0-9]*"
+                     placeholder="1000" autocomplete="off" style="width:100%;box-sizing:border-box;">
             </div>
-            <p class="qr-wrapper">Waiting for payment...</p>
+            <div id="wallet-transfer-error" class="error-msg"></div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <button id="btn-wallet-transfer" class="btn btn-primary">Transfer</button>
+              <button id="btn-wallet-transfer-skip" class="btn btn-ghost btn-sm">Pay with Lightning instead ↓</button>
+            </div>
           </div>
+
+          <div id="step2-lightning-section">
+            <div class="card" style="text-align:center;">
+              <p class="card-title">Fund your voucher</p>
+              <p class="card-title" id="step2-voucher-for">Sending to: <span id="step2-phone-display"></span></p>
+              <label>👍 Tap or Scan the QR code, or use the buttons below. Send any amount of sats to fund the voucher.</label>
+              <label>ⓘ After paying, come back here to send the voucher.</label>
+              <label id="step2-phone-row">
+              </label>
+              <div class="qr-wrapper">
+                <div id="single-qr-container" class="qr-container"></div>
+                <p id="single-lnurl-text" class="qr-lnurl"></p>
+              </div>
+              <p class="qr-wrapper">Waiting for payment...</p>
+              <button id="btn-pay-local-instead" class="btn btn-ghost btn-sm hidden">⚡ Pay with local balance instead</button>
+            </div>
+          </div>
+
           <div class="btn-group">
             <button id="btn-back-step2" class="btn btn-ghost">Change Phone Number</button>
-            <button id="btn-next-step2" class="btn btn-ghost">I’ve already sent the payment</button>
+            <button id="btn-next-step2" class="btn btn-ghost">I’ll fund the voucher later</button>
           </div>
         </div>
 
@@ -319,13 +348,7 @@
     <section id="screen-history" class="screen">
       <div class="section-header">
         <h2 class="section-title">History</h2>
-        <div style="display:flex;gap:10px;align-items:center;">
-          <button id="btn-change-refund" class="btn btn-ghost btn-sm">Change address</button>
-          <button id="nav-back-from-history" class="btn btn-secondary btn-sm">← Back</button>
-        </div>
-      </div>
-      <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:16px;">
-        Refund address: <span id="refund-code-display" style="color:var(--text)"></span>
+        <button id="nav-back-from-history" class="btn btn-secondary btn-sm">← Back</button>
       </div>
       <div id="history-list"></div>
     </section>
@@ -337,6 +360,52 @@
         <button id="nav-back-from-leaderboard" class="btn btn-secondary btn-sm">← Back</button>
       </div>
       <div id="leaderboard-content"></div>
+    </section>
+
+    <!-- ── Settings screen ────────────────────────────────────────────────────── -->
+    <section id="screen-settings" class="screen">
+      <div class="section-header">
+        <h2 class="section-title">Settings</h2>
+        <button id="nav-back-from-settings" class="btn btn-secondary btn-sm">← Back</button>
+      </div>
+
+      <div class="card">
+        <p class="card-title">Refund Address</p>
+        <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:8px;">Unclaimed sats are returned to this address when a voucher expires.</p>
+        <p id="settings-refund-display" style="font-size:0.875rem;color:var(--text);margin-bottom:12px;word-break:break-all;">—</p>
+        <button id="btn-settings-change-refund" class="btn btn-ghost btn-sm">Change Address</button>
+      </div>
+
+      <div class="card">
+        <p class="card-title">⚡ Local Balance</p>
+        <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:16px;line-height:1.6;">
+          Enable a personal voucher that stays on your device. Top it up once with Lightning, then fund new vouchers instantly — no invoice needed each time. If you stop using it, the balance returns to your refund address when it expires.
+        </p>
+
+        <div id="settings-wallet-create">
+          <div class="form-group">
+            <label>Expiry period</label>
+            <div class="pill-group" id="wallet-expiry-pills">
+              <button type="button" class="pill-btn" data-secs="1209600">2 weeks</button>
+              <button type="button" class="pill-btn active" data-secs="2592000">1 month</button>
+              <button type="button" class="pill-btn" data-secs="7776000">3 months</button>
+              <button type="button" class="pill-btn" data-secs="15552000">6 months</button>
+            </div>
+          </div>
+          <div id="settings-wallet-error" class="error-msg"></div>
+          <button id="btn-create-wallet-voucher" class="btn btn-primary">Enable Local Balance</button>
+        </div>
+
+        <div id="settings-wallet-active" class="hidden">
+          <label>👍 Tap or Scan the QR code to top up your local balance.</label>
+          <div class="qr-wrapper">
+            <div id="settings-wallet-qr" class="qr-container" style="cursor:pointer;"></div>
+            <p id="settings-wallet-lnurl" class="qr-lnurl"></p>
+          </div>
+          <p class="qr-wrapper">Waiting for payment...</p>
+          <button id="btn-disable-wallet-voucher" class="btn btn-ghost btn-sm" style="margin-top:12px;color:var(--error);">Disable Local Balance</button>
+        </div>
+      </div>
     </section>
 
   </main>
@@ -359,7 +428,7 @@
 
 <script src="/js/qrcode.min.js"></script>
 <script src="/js/wallet-picker.js"></script>
-<script src="/js/app.js"></script>
+<script src="/js/app.js?v=10"></script>
 <script>
 (function () {
   'use strict';

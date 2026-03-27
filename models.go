@@ -29,7 +29,6 @@ type Voucher struct {
 	FundURLPrefix      string `json:"fund_url_prefix,omitempty"`
 	BatchName          string `json:"batch_name,omitempty"`
 	BatchID            string `json:"batch_id,omitempty"`
-	BatchFundURLPrefix string `json:"batch_fund_url_prefix,omitempty"`
 	WithdrawURLPrefix  string `json:"withdraw_url_prefix,omitempty"`
 	RefundCode         string `json:"refund_code,omitempty"`
 	RefundAfterSeconds int64  `json:"refund_after_seconds"`

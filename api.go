@@ -22,68 +22,37 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func (srv *Server) ServeAPI() {
-	// --- Strict sub-mux: admin write endpoints (1 req/2s, burst 5) ---
-	strictMux := http.NewServeMux()
-	strictMux.HandleFunc("POST /voucher/create", srv.handleCreateVouchers)
-	strictHandler := newRateLimiter(rate.Every(2*time.Second), 5).Middleware(strictMux)
+	strict := newRateLimiter(rate.Every(5*time.Second), 5).Middleware
+	api := newRateLimiter(rate.Every(time.Second), 5).Middleware
+	lnurl := newRateLimiter(rate.Every(time.Second), 5).Middleware
 
-	// --- API sub-mux: read endpoints (2 req/s, burst 10) ---
-	apiMux := http.NewServeMux()
-	apiMux.HandleFunc("GET /voucher/status/{pubKey}", srv.handleVoucherStatus)
-	apiMux.HandleFunc("POST /voucher/status/batch", srv.handleVoucherStatusBatch)
-	apiMux.HandleFunc("POST /leaderboard", srv.handleLeaderboard)
-	apiMux.HandleFunc("GET /admin/stats", srv.handleAdminStats)
-	apiMux.HandleFunc("GET /admin/recent", srv.handleAdminRecent)
-	apiMux.HandleFunc("GET /config", srv.handleConfig)
-	apiHandler := newRateLimiter(rate.Every(500*time.Millisecond), 10).Middleware(apiMux)
-
-	// --- LNURL sub-mux: wallet-facing endpoints (5 req/s, burst 20) ---
-	lnurlMux := http.NewServeMux()
-	// Step 1
-	lnurlMux.HandleFunc("GET /donate", srv.handleDonate)
-	lnurlMux.HandleFunc("GET /f/{pubKey}", srv.handleLNURLPayVoucher)
-	lnurlMux.HandleFunc("GET /fb/{batchID}", srv.handleLNURLPayBatch)
-	lnurlMux.HandleFunc("GET /w/{secret}", srv.handleLNURLWithdraw)
-	// Step 2
-	lnurlMux.HandleFunc("GET /donate/callback", srv.handleDonateCallback)
-	lnurlMux.HandleFunc("GET /fund/{pubKey}/callback", srv.handleLNURLPayCallbackVoucher)
-	lnurlMux.HandleFunc("GET /fund/batch/{batchID}/callback", srv.handleLNURLPayCallbackBatch)
-	lnurlMux.HandleFunc("GET /redeem/{secret}/callback", srv.handleLNURLWithdrawCallback)
-	// LUD-21 Verify
-	lnurlMux.HandleFunc("GET /donate/verify/{key}", srv.handleDonateVerify)
-	lnurlMux.HandleFunc("GET /verify/{key}", srv.handleLNURLVerify)
-	lnurlHandler := newRateLimiter(rate.Every(200*time.Millisecond), 20).Middleware(lnurlMux)
-
-	// --- Main mux ---
 	mux := http.NewServeMux()
 
 	// Static pages — no rate limit
-	// Note: GET /redeem and GET /admin are exact matches; /redeem/ and /admin/ prefixes
-	// route to their respective rate-limited sub-muxes without ambiguity.
 	mux.Handle("/", http.FileServer(http.Dir("./static")))
 	mux.HandleFunc("GET /{$}", srv.handleIndexPage)
 	mux.HandleFunc("GET /redeem", srv.handleRedeemPage)
 	mux.HandleFunc("GET /admin", srv.handleAdminPage)
 	mux.HandleFunc("GET /manifest.json", srv.handleManifest)
 
-	// Strict
-	mux.Handle("POST /voucher/create", strictHandler)
+	// Strict (1 req/2s, burst 5)
+	mux.Handle("POST /voucher/create", strict(http.HandlerFunc(srv.handleCreateVouchers)))
+	mux.Handle("POST /transfer", strict(http.HandlerFunc(srv.handleTransfer)))
 
-	// API
-	mux.Handle("/voucher/status/", apiHandler)
-	mux.Handle("/leaderboard", apiHandler)
-	mux.Handle("/admin/", apiHandler)
-	mux.Handle("/config", apiHandler)
+	// API (2 req/s, burst 10)
+	mux.Handle("GET /voucher/status/{pubKey}", api(http.HandlerFunc(srv.handleVoucherStatus)))
+	mux.Handle("POST /voucher/status/batch", api(http.HandlerFunc(srv.handleVoucherStatusBatch)))
+	mux.Handle("POST /leaderboard", api(http.HandlerFunc(srv.handleLeaderboard)))
+	mux.Handle("GET /admin/stats", api(http.HandlerFunc(srv.handleAdminStats)))
+	mux.Handle("GET /admin/recent", api(http.HandlerFunc(srv.handleAdminRecent)))
+	mux.Handle("GET /config", api(http.HandlerFunc(srv.handleConfig)))
 
-	// LNURL — each path prefix forwards to the same rate-limited lnurlMux
-	mux.Handle("GET /donate", lnurlHandler)
-	mux.Handle("/donate/", lnurlHandler)
-	mux.Handle("/f/", lnurlHandler)
-	mux.Handle("/fb/", lnurlHandler)
-	mux.Handle("/fund/", lnurlHandler)
-	mux.Handle("/w/", lnurlHandler)
-	mux.Handle("/redeem/", lnurlHandler)
-	mux.Handle("/verify/", lnurlHandler)
+	// LNURL (5 req/s, burst 20)
+	mux.Handle("GET /f/{pubKey}", lnurl(http.HandlerFunc(srv.handleLNURLPayVoucher)))
+	mux.Handle("GET /w/{secret}", lnurl(http.HandlerFunc(srv.handleLNURLWithdraw)))
+	mux.Handle("GET /fund/{pubKey}/callback", lnurl(http.HandlerFunc(srv.handleLNURLPayCallbackVoucher)))
+	mux.Handle("GET /redeem/{secret}/callback", lnurl(http.HandlerFunc(srv.handleLNURLWithdrawCallback)))
+	mux.Handle("GET /verify/{key}", lnurl(http.HandlerFunc(srv.handleLNURLVerify)))
 
 	if err := http.ListenAndServe(":"+srv.cfg.port, corsMiddleware(mux)); err != nil {
 		slog.Error("server", "err", err)
