@@ -297,7 +297,7 @@ let _dialCode = '+1';
 let _singleExpiry = 259200;
 let _batchCount = 8;
 let _batchExpiry = 1209600;
-let _walletExpiry = 2592000;
+let _walletExpiry = 604800;
 let _minFundAmountMsat = 120000; // safe fallback
 let _selectedTemplate = 'classic';
 
@@ -2709,7 +2709,7 @@ function showWalletTransferCard(voucher, balanceMsat) {
     amounts.forEach(amt => {
       const btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'pill-btn';
+      btn.className = 'pill-btn pill-btn-recent';
       btn.textContent = amt.toLocaleString() + ' sats';
       btn.addEventListener('click', () => { amtEl.value = amt; doWalletTransfer(voucher); });
       sugEl.appendChild(btn);
@@ -2920,11 +2920,8 @@ async function init() {
     } catch {}
 
     const balanceSats = Math.floor(balanceMsat / 1000);
-    const refundAddr = wv.refund_code || localStorage.getItem(LS_REFUND) || '';
-    if (balanceSats > 0 && refundAddr) {
-      msgEl.textContent = `Your local voucher has ${balanceSats.toLocaleString()} sats. These will be refunded to ${refundAddr}. Disable anyway?`;
-    } else if (balanceSats > 0) {
-      msgEl.textContent = `Your local voucher has ${balanceSats.toLocaleString()} sats. Funds will be refunded to your configured Lightning address. Disable anyway?`;
+    if (balanceSats > 0) {
+      msgEl.textContent = `Your local voucher has ${balanceSats.toLocaleString()} sats. These will be refunded to the Lightning address that was registed when it was first created as soon as it expires. Disable anyway?`;
     } else {
       msgEl.textContent = 'This will remove your local voucher. You can create a new one at any time.';
     }

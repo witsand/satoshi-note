@@ -968,6 +968,8 @@ select {
 }
 .pill-btn:hover { border-color: var(--orange); color: var(--text); }
 .pill-btn.active { background: var(--orange); color: #000; border-color: var(--orange); font-weight: 600; }
+.pill-btn-recent { border-color: var(--orange); color: var(--text); }
+.pill-btn-recent:hover { background: var(--orange); color: #000; }
 
 /* ── Steps list (onboarding / wallet guides) ── */
 .steps-list {
