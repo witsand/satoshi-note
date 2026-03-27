@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/rand"
-	"crypto/subtle"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -144,29 +143,22 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 	key := r.PathValue("pubKey")
 
 	if key == "donate" {
-		metadata := [][]string{{"text/plain", "Donate to " + srv.cfg.siteName}}
-		metaJSON, _ := json.Marshal(metadata)
-		writeJSON(w, http.StatusOK, map[string]any{
-			"tag":            "payRequest",
-			"callback":       srv.cfg.baseURL + "/fund/donate/callback",
-			"minSendable":    srv.cfg.minFundAmountMsat,
-			"maxSendable":    srv.cfg.maxFundAmountMsat,
-			"metadata":       string(metaJSON),
-			"commentAllowed": 200,
-		})
+		writeJSON(w, http.StatusOK, lnurlPayResponse(
+			"Donate to "+srv.cfg.siteName,
+			srv.cfg.baseURL+"/fund/donate/callback",
+			srv.cfg.minFundAmountMsat, srv.cfg.maxFundAmountMsat,
+			map[string]any{"commentAllowed": 200},
+		))
 		return
 	}
 
 	if _, err := srv.getVoucherByPubKey(srv.db, key); err == nil {
-		metadata := [][]string{{"text/plain", "Fund a " + srv.cfg.siteName + " Voucher: " + key}}
-		metaJSON, _ := json.Marshal(metadata)
-		writeJSON(w, http.StatusOK, map[string]any{
-			"tag":         "payRequest",
-			"callback":    srv.cfg.baseURL + "/fund/" + key + "/callback",
-			"minSendable": srv.cfg.minFundAmountMsat,
-			"maxSendable": srv.cfg.maxFundAmountMsat,
-			"metadata":    string(metaJSON),
-		})
+		writeJSON(w, http.StatusOK, lnurlPayResponse(
+			"Fund a "+srv.cfg.siteName+" Voucher: "+key,
+			srv.cfg.baseURL+"/fund/"+key+"/callback",
+			srv.cfg.minFundAmountMsat, srv.cfg.maxFundAmountMsat,
+			nil,
+		))
 		return
 	}
 
@@ -176,15 +168,13 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	metadata := [][]string{{"text/plain", "Fund " + srv.cfg.siteName + " Vouchers (" + strconv.Itoa(len(vs)) + ") - Batch: " + key}}
-	metaJSON, _ := json.Marshal(metadata)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"tag":         "payRequest",
-		"callback":    srv.cfg.baseURL + "/fund/" + key + "/callback",
-		"minSendable": srv.cfg.minFundAmountMsat * int64(len(vs)),
-		"maxSendable": srv.cfg.maxFundAmountMsat * int64(len(vs)),
-		"metadata":    string(metaJSON),
-	})
+	n := int64(len(vs))
+	writeJSON(w, http.StatusOK, lnurlPayResponse(
+		"Fund "+srv.cfg.siteName+" Vouchers ("+strconv.Itoa(len(vs))+") - Batch: "+key,
+		srv.cfg.baseURL+"/fund/"+key+"/callback",
+		srv.cfg.minFundAmountMsat*n, srv.cfg.maxFundAmountMsat*n,
+		nil,
+	))
 }
 
 // GET /fund/{pubKey}/callback?amount=MSATS — LNURL-pay step 2
@@ -523,10 +513,7 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbTxFee := v.BalanceMsat*srv.cfg.redeemFeeBPS/10000/1000*1000 + 1000
-	if dbTxFee < srv.cfg.minRedeemFeeMsat {
-		dbTxFee = srv.cfg.minRedeemFeeMsat / 1000 * 1000
-	}
+	dbTxFee := srv.calculateRedeemFee(v.BalanceMsat)
 
 	maxRedeemable := v.BalanceMsat - dbTxFee
 	minRedeemable := int64(srv.cfg.minRedeemAmountMsat) / 1000 * 1000
@@ -619,10 +606,7 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	dbTxFee := v.BalanceMsat*srv.cfg.redeemFeeBPS/10000/1000*1000 + 1000
-	if dbTxFee < srv.cfg.minRedeemFeeMsat {
-		dbTxFee = srv.cfg.minRedeemFeeMsat / 1000 * 1000
-	}
+	dbTxFee := srv.calculateRedeemFee(v.BalanceMsat)
 
 	if estimateFeeMsat > dbTxFee {
 		lnurlError(w, "routing fee too high")
@@ -853,21 +837,7 @@ func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Reque
 		if !ok {
 			continue
 		}
-		dbTxFee := s.BalanceMsat*srv.cfg.redeemFeeBPS/10000/1000*1000 + 1000
-		if dbTxFee < srv.cfg.minRedeemFeeMsat {
-			dbTxFee = srv.cfg.minRedeemFeeMsat / 1000 * 1000
-		}
-		var maxRedeemable int64
-		if s.BalanceMsat > dbTxFee {
-			maxRedeemable = s.BalanceMsat - dbTxFee
-		}
-		result[pubKey] = map[string]any{
-			"balance_msat":   maxRedeemable,
-			"expires_at":     s.ExpiresAt,
-			"active":         s.Active,
-			"refunded":       s.Refunded,
-			"refund_pending": s.RefundPending,
-		}
+		result[pubKey] = srv.voucherStatusBody(s)
 	}
 
 	writeJSON(w, http.StatusOK, result)
@@ -881,23 +851,7 @@ func (srv *Server) handleVoucherStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbTxFee := s.BalanceMsat*srv.cfg.redeemFeeBPS/10000/1000*1000 + 1000
-	if dbTxFee < srv.cfg.minRedeemFeeMsat {
-		dbTxFee = srv.cfg.minRedeemFeeMsat / 1000 * 1000
-	}
-
-	var maxRedeemable int64
-	if s.BalanceMsat > dbTxFee {
-		maxRedeemable = s.BalanceMsat - dbTxFee
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"balance_msat":   maxRedeemable,
-		"expires_at":     s.ExpiresAt,
-		"active":         s.Active,
-		"refunded":       s.Refunded,
-		"refund_pending": s.RefundPending,
-	})
+	writeJSON(w, http.StatusOK, srv.voucherStatusBody(s))
 }
 
 func (srv *Server) getCallbackAmount(r *http.Request) (int64, error) {
@@ -917,42 +871,18 @@ func (srv *Server) getCallbackAmount(r *http.Request) (int64, error) {
 }
 
 func (srv *Server) handleRedeemPage(w http.ResponseWriter, r *http.Request) {
-	b, err := os.ReadFile("./static/redeem.html")
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/f/donate")
-	html := strings.ReplaceAll(string(b), "{{HEADER}}", readPartial("header.html"))
-	html = strings.ReplaceAll(html, "{{HEADER_EXTRA}}", `<a href="/" style="font-size:0.75rem;color:var(--text-muted);text-decoration:none;white-space:nowrap;">Gift Bitcoin →</a>`)
-	html = strings.ReplaceAll(html, "{{BASE_URL}}", srv.cfg.baseURL)
-	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
-	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)
-	html = strings.ReplaceAll(html, "{{SITE_NAME_FULL}}", srv.cfg.siteName)
-	html = strings.ReplaceAll(html, "{{SITE_LOGO_INNER}}", srv.cfg.siteLogoInner)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(html))
+	srv.renderPage(w, "redeem.html", map[string]string{
+		"{{HEADER_EXTRA}}": `<a href="/" style="font-size:0.75rem;color:var(--text-muted);text-decoration:none;white-space:nowrap;">Gift Bitcoin →</a>`,
+	})
 }
 
 func (srv *Server) handleIndexPage(w http.ResponseWriter, r *http.Request) {
-	b, err := os.ReadFile("./static/index.html")
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/f/donate")
-	html := strings.ReplaceAll(string(b), "{{HEADER}}", readPartial("header.html"))
-	html = strings.ReplaceAll(html, "{{FOOTER}}", readPartial("footer.html"))
-	html = strings.ReplaceAll(html, "{{HEADER_EXTRA}}", `<div style="display:flex;align-items:center;gap:8px;"><div id="wallet-balance-pill" class="balance-pill hidden">⚡ <span id="wallet-balance-sats">0</span> sats</div><button id="nav-menu" class="nav-btn hidden" aria-label="Menu" style="font-size:1.3rem;padding:4px 8px;">☰</button></div>`)
-	html = strings.ReplaceAll(html, "{{BASE_URL}}", srv.cfg.baseURL)
-	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
-	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)
-	html = strings.ReplaceAll(html, "{{SITE_NAME_FULL}}", srv.cfg.siteName)
-	html = strings.ReplaceAll(html, "{{SITE_LOGO_INNER}}", srv.cfg.siteLogoInner)
-	html = strings.ReplaceAll(html, "{{BATCH_ENABLED}}", strconv.FormatBool(srv.cfg.batchEnabled))
-	html = strings.ReplaceAll(html, "{{DEFAULT_DIAL_CODE}}", srv.cfg.defaultDialCode)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(html))
+	srv.renderPage(w, "index.html", map[string]string{
+		"{{FOOTER}}":           readPartial("footer.html"),
+		"{{HEADER_EXTRA}}":     `<div style="display:flex;align-items:center;gap:8px;"><div id="wallet-balance-pill" class="balance-pill hidden">⚡ <span id="wallet-balance-sats">0</span> sats</div><button id="nav-menu" class="nav-btn hidden" aria-label="Menu" style="font-size:1.3rem;padding:4px 8px;">☰</button></div>`,
+		"{{BATCH_ENABLED}}":    strconv.FormatBool(srv.cfg.batchEnabled),
+		"{{DEFAULT_DIAL_CODE}}": srv.cfg.defaultDialCode,
+	})
 }
 
 
@@ -964,8 +894,7 @@ func (srv *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (srv *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
-	if srv.cfg.adminToken == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+srv.cfg.adminToken)) != 1 {
-		w.WriteHeader(http.StatusUnauthorized)
+	if !srv.requireAdmin(w, r) {
 		return
 	}
 	stats, err := srv.getAuditStats()
@@ -978,8 +907,7 @@ func (srv *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (srv *Server) handleAdminRecent(w http.ResponseWriter, r *http.Request) {
-	if srv.cfg.adminToken == "" || subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+srv.cfg.adminToken)) != 1 {
-		w.WriteHeader(http.StatusUnauthorized)
+	if !srv.requireAdmin(w, r) {
 		return
 	}
 	redeems, err := srv.getRecentRedeemTxs(10)
@@ -1007,21 +935,10 @@ func (srv *Server) handleAdminRecent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (srv *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
-	b, err := os.ReadFile("./static/admin.html")
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/f/donate")
-	html := strings.ReplaceAll(string(b), "{{HEADER}}", readPartial("header.html"))
-	html = strings.ReplaceAll(html, "{{FOOTER}}", readPartial("footer.html"))
-	html = strings.ReplaceAll(html, "{{HEADER_EXTRA}}", `<div class="refresh-row"><span id="last-refresh-label"></span><button class="btn-refresh" id="btn-refresh">Refresh</button><button class="btn-refresh" id="btn-logout" style="color:var(--text-muted);">Logout</button></div>`)
-	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
-	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)
-	html = strings.ReplaceAll(html, "{{SITE_NAME_FULL}}", srv.cfg.siteName)
-	html = strings.ReplaceAll(html, "{{SITE_LOGO_INNER}}", srv.cfg.siteLogoInner)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(html))
+	srv.renderPage(w, "admin.html", map[string]string{
+		"{{FOOTER}}":       readPartial("footer.html"),
+		"{{HEADER_EXTRA}}": `<div class="refresh-row"><span id="last-refresh-label"></span><button class="btn-refresh" id="btn-refresh">Refresh</button><button class="btn-refresh" id="btn-logout" style="color:var(--text-muted);">Logout</button></div>`,
+	})
 }
 
 func (srv *Server) handleManifest(w http.ResponseWriter, r *http.Request) {

@@ -52,10 +52,7 @@ func (srv *Server) processRefunds() {
 	cfg := srv.cfg
 
 	for refundCode, g := range groups {
-		dbTxFee := g.totalMsat*cfg.redeemFeeBPS/10000/1000*1000 + 1000
-		if dbTxFee < cfg.minRedeemFeeMsat {
-			dbTxFee = cfg.minRedeemFeeMsat / 1000 * 1000
-		}
+		dbTxFee := srv.calculateRedeemFee(g.totalMsat)
 		netMsat := g.totalMsat - dbTxFee
 
 		dbTx, err := srv.db.Begin()
