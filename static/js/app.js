@@ -2543,12 +2543,26 @@ function getWalletVoucher() {
   try { return JSON.parse(localStorage.getItem(LS_WALLET_VOUCHER)); } catch { return null; }
 }
 
+const DEFAULT_AMOUNTS = [1000, 2100, 5000, 10000];
+
 function getWalletAmounts() {
-  try { return JSON.parse(localStorage.getItem(LS_WALLET_AMOUNTS)) || []; } catch { return []; }
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_WALLET_AMOUNTS));
+    return (saved && saved.length === 4) ? saved : [...DEFAULT_AMOUNTS];
+  } catch { return [...DEFAULT_AMOUNTS]; }
 }
 function saveWalletAmount(sats) {
-  const prev = getWalletAmounts().filter(a => a !== sats);
-  localStorage.setItem(LS_WALLET_AMOUNTS, JSON.stringify([sats, ...prev].slice(0, 3)));
+  let amounts = getWalletAmounts();
+  if (amounts.includes(sats)) return;
+  // Replace the value closest to the new amount
+  let closestIdx = 0, closestDist = Math.abs(amounts[0] - sats);
+  for (let i = 1; i < amounts.length; i++) {
+    const d = Math.abs(amounts[i] - sats);
+    if (d < closestDist) { closestDist = d; closestIdx = i; }
+  }
+  amounts[closestIdx] = sats;
+  amounts.sort((a, b) => a - b);
+  localStorage.setItem(LS_WALLET_AMOUNTS, JSON.stringify(amounts));
 }
 
 function startSettingsPoller() {
@@ -2701,23 +2715,18 @@ function showWalletTransferCard(voucher, balanceMsat) {
   btn.disabled = false;
   btn.textContent = 'Fund Voucher';
 
-  // Suggestion pills from previous amounts
+  // Favourite amount pills (always 4, defaults when no history)
   const amounts = getWalletAmounts();
   const sugEl = $('wallet-amount-suggestions');
   sugEl.innerHTML = '';
-  if (amounts.length) {
-    amounts.forEach(amt => {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'pill-btn pill-btn-recent';
-      btn.textContent = amt.toLocaleString() + ' sats';
-      btn.addEventListener('click', () => { amtEl.value = amt; doWalletTransfer(voucher); });
-      sugEl.appendChild(btn);
-    });
-    sugEl.style.display = '';
-  } else {
-    sugEl.style.display = 'none';
-  }
+  amounts.forEach(amt => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pill-btn pill-btn-recent';
+    btn.textContent = amt.toLocaleString() + ' sats';
+    btn.addEventListener('click', () => { amtEl.value = amt; doWalletTransfer(voucher); });
+    sugEl.appendChild(btn);
+  });
 
   $('btn-wallet-transfer').onclick = () => doWalletTransfer(voucher);
   amtEl.onkeydown = e => { if (e.key === 'Enter') doWalletTransfer(voucher); };
