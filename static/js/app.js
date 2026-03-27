@@ -2694,7 +2694,6 @@ function showWalletTransferCard(voucher, balanceMsat) {
 
   const balSats = Math.floor(balanceMsat / 1000);
   const minSats = Math.ceil(_minFundAmountMsat / 1000);
-  infoEl.textContent = `Local balance: ${balSats.toLocaleString()} sats  ·  min: ${minSats.toLocaleString()} sats`;
   amtEl.value = '';
   errEl.classList.remove('visible');
   const btn = $('btn-wallet-transfer');
@@ -2711,7 +2710,7 @@ function showWalletTransferCard(voucher, balanceMsat) {
       btn.type = 'button';
       btn.className = 'pill-btn';
       btn.textContent = amt.toLocaleString() + ' sats';
-      btn.addEventListener('click', () => { amtEl.value = amt; amtEl.focus(); });
+      btn.addEventListener('click', () => { amtEl.value = amt; doWalletTransfer(voucher); });
       sugEl.appendChild(btn);
     });
     sugEl.style.display = '';
