@@ -27,7 +27,6 @@ type Voucher struct {
 	ClaimLNURL         string `json:"claim_lnurl,omitempty"`
 	PubKey             string `json:"pubkey,omitempty"`
 	FundURLPrefix      string `json:"fund_url_prefix,omitempty"`
-	BatchName          string `json:"batch_name,omitempty"`
 	BatchID            string `json:"batch_id,omitempty"`
 	WithdrawURLPrefix  string `json:"withdraw_url_prefix,omitempty"`
 	RefundCode         string `json:"refund_code,omitempty"`

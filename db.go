@@ -47,7 +47,6 @@ func initSchema(db *sql.DB) error {
 	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS vouchers (
 		id                    INTEGER PRIMARY KEY,
 		pub_key               TEXT NOT NULL,
-		batch_name            TEXT NOT NULL,
 		batch_id              TEXT NOT NULL,
 		refund_code           TEXT NOT NULL,
 		refund_after_seconds  INTEGER NOT NULL,
@@ -173,14 +172,23 @@ func initSchema(db *sql.DB) error {
 		}
 	}
 
+	// Drop batch_name if it still exists (removed from schema; kept for existing DBs).
+	var hasBatchName int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('vouchers') WHERE name = 'batch_name'`).Scan(&hasBatchName)
+	if hasBatchName > 0 {
+		if _, err := db.Exec(`ALTER TABLE vouchers DROP COLUMN batch_name`); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
 func (srv *Server) insertVoucher(v *Voucher) error {
 	_, err := srv.db.Exec(
-		`INSERT INTO vouchers (pub_key, batch_name, batch_id, refund_code, refund_after_seconds, single_use, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		v.PubKey, v.BatchName, v.BatchID, v.RefundCode, v.RefundAfterSeconds, boolToInt(v.SingleUse), time.Now().Unix(),
+		`INSERT INTO vouchers (pub_key, batch_id, refund_code, refund_after_seconds, single_use, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		v.PubKey, v.BatchID, v.RefundCode, v.RefundAfterSeconds, boolToInt(v.SingleUse), time.Now().Unix(),
 	)
 	return err
 }
@@ -390,7 +398,7 @@ func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherS
 }
 
 func (srv *Server) getVouchersByBatchID(db dbQuerier, batchID string) ([]Voucher, error) {
-	rows, err := db.Query(`SELECT id, batch_name, refund_after_seconds, balance_msat, updated_at
+	rows, err := db.Query(`SELECT id, refund_after_seconds, balance_msat, updated_at
 		FROM vouchers WHERE batch_id = ? AND active = 1`, batchID)
 	if err != nil {
 		return nil, err
@@ -406,7 +414,7 @@ func (srv *Server) getVouchersByBatchID(db dbQuerier, batchID string) ([]Voucher
 	for rows.Next() {
 		var item voucherRow
 		item.v.BatchID = batchID
-		if err := rows.Scan(&item.v.ID, &item.v.BatchName, &item.v.RefundAfterSeconds, &item.v.BalanceMsat, &item.updatedAt); err != nil {
+		if err := rows.Scan(&item.v.ID, &item.v.RefundAfterSeconds, &item.v.BalanceMsat, &item.updatedAt); err != nil {
 			return nil, err
 		}
 		items = append(items, item)

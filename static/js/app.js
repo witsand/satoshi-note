@@ -293,12 +293,15 @@ function lnurlEncode(url) {
 
 let _fundPoller = null;
 let _settingsPoller = null;
+let _countdownTimer = null;
+let _walletCountdownTimer = null;
 let _dialCode = '+1';
 let _singleExpiry = 259200;
 let _batchCount = 8;
 let _batchExpiry = 1209600;
 let _walletExpiry = 604800;
 let _minFundAmountMsat = 120000; // safe fallback
+let _walletRawBalanceMsat = 0;
 let _selectedTemplate = 'classic';
 
 function normalizeToE164(raw, dialCode) {
@@ -632,7 +635,6 @@ async function handleCreateSingle() {
 
   try {
     const vouchers = await createVouchers({
-      batch_name: `single-${ts}`,
       pub_keys: [pubKey],
       refund_code: refundCode,
       refund_after_seconds: _singleExpiry,
@@ -703,7 +705,7 @@ function renderFundStep(voucher) {
     type: 'single',
     createdAt: Math.floor(Date.now() / 1000),
     phone: '+' + e164,
-    batchName: voucher.batch_name,
+    batchName: `single-${Date.now()}`,
     refundAfterSeconds: voucher.refund_after_seconds,
     vouchers: state.vouchers,
   });
@@ -807,7 +809,6 @@ async function handleCreateBatch() {
 
   try {
     const vouchers = await createVouchers({
-      batch_name: name,
       pub_keys: pubKeys,
       refund_code: refundCode,
       refund_after_seconds: _batchExpiry,
@@ -1961,6 +1962,41 @@ function getExpiredSubTag(expiredStatuses) {
   return 'refunded';
 }
 
+function formatCountdown(secsLeft) {
+  if (secsLeft <= 0) return '0s';
+  const d = Math.floor(secsLeft / 86400);
+  const h = Math.floor((secsLeft % 86400) / 3600);
+  const m = Math.floor((secsLeft % 3600) / 60);
+  const s = secsLeft % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
+
+function tickCountdowns() {
+  const now = Math.floor(Date.now() / 1000);
+  document.querySelectorAll('[data-expires-at]').forEach(el => {
+    const expiresAt = parseInt(el.dataset.expiresAt, 10);
+    if (!expiresAt) return;
+    const secsLeft = expiresAt - now;
+    if (secsLeft <= 0) {
+      el.textContent = 'Expired';
+      return;
+    }
+    const d = Math.floor(secsLeft / 86400);
+    const h = Math.floor((secsLeft % 86400) / 3600);
+    const m = Math.floor((secsLeft % 3600) / 60);
+    const s = secsLeft % 60;
+    const parts = [];
+    if (d > 0) parts.push(d + 'd');
+    parts.push(String(h).padStart(2, '0') + 'h');
+    parts.push(String(m).padStart(2, '0') + 'm');
+    parts.push(String(s).padStart(2, '0') + 's');
+    el.textContent = '⏳ Expires in ' + parts.join(' ') + ' ⏳';
+  });
+}
+
 function buildSectionCards(history) {
   const now = Math.floor(Date.now() / 1000);
   const sections = { unfunded: [], funded: [], redeemed: [], expired: [] };
@@ -1980,7 +2016,16 @@ function buildSectionCards(history) {
       const expiredTag = state === 'expired'
         ? getExpiredSubTag(inState.map(v => historyStatusCache.get(v.pubkey)))
         : null;
-      sections[state].push({ entry, count: inState.length, total, expiredTag });
+      let expiresAt = 0;
+      if (state === 'funded') {
+        for (const v of inState) {
+          const s = historyStatusCache.get(v.pubkey);
+          if (s && s.expires_at > 0) {
+            expiresAt = expiresAt === 0 ? s.expires_at : Math.min(expiresAt, s.expires_at);
+          }
+        }
+      }
+      sections[state].push({ entry, count: inState.length, total, expiredTag, expiresAt, vouchers: inState });
     });
   });
 
@@ -1994,7 +2039,7 @@ function renderSectionBody(body, cards, showQR, history) {
     return;
   }
 
-  cards.forEach(({ entry, count, total, expiredTag }) => {
+  cards.forEach(({ entry, count, total, expiredTag, expiresAt, vouchers }) => {
     const card = document.createElement('div');
     card.className = 'history-card';
 
@@ -2023,9 +2068,15 @@ function renderSectionBody(body, cards, showQR, history) {
       ? ` <span class="badge badge-${expiredTag}">${expiredTag}</span>`
       : '';
 
+    const countdownHTML = expiresAt
+      ? `<div class="voucher-info-bar"><span class="expiry" data-expires-at="${expiresAt}"></span></div>`
+      : '';
+
+    const claimLnurl = vouchers && vouchers[0] && vouchers[0].claim_lnurl;
     const actionsHTML = showQR
       ? `<div class="history-card-actions">
            <button class="btn btn-secondary btn-sm" data-action="reqr" data-id="${entry.id}">Re-show QR</button>
+           ${claimLnurl ? `<button class="btn btn-secondary btn-sm" data-action="share" data-claim-lnurl="${claimLnurl}">Share</button>` : ''}
          </div>`
       : '';
 
@@ -2034,6 +2085,7 @@ function renderSectionBody(body, cards, showQR, history) {
         <span class="badge ${typeBadge}">${typeLabel}</span>${subTagHTML}
       </div>
       <div class="history-card-meta">${metaLine}</div>
+      ${countdownHTML}
       ${actionsHTML}`;
 
     body.appendChild(card);
@@ -2043,6 +2095,23 @@ function renderSectionBody(body, cards, showQR, history) {
     btn.addEventListener('click', () => {
       const entry = history.find(e => e.id === btn.dataset.id);
       if (entry) openQRModal(entry);
+    });
+  });
+
+  body.querySelectorAll('[data-action="share"]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const claimLnurl = btn.dataset.claimLnurl;
+      const redeemLink = `${window.location.origin}/redeem?lightning=${encodeURIComponent(claimLnurl)}`;
+      const msg = buildWAMessage(claimLnurl);
+      if (navigator.share) {
+        try {
+          await navigator.share({ title: 'Your Bitcoin voucher', text: msg });
+        } catch (e) {
+          if (e.name !== 'AbortError') copyToClipboard(redeemLink, btn);
+        }
+      } else {
+        copyToClipboard(redeemLink, btn);
+      }
     });
   });
 }
@@ -2543,12 +2612,12 @@ function getWalletVoucher() {
   try { return JSON.parse(localStorage.getItem(LS_WALLET_VOUCHER)); } catch { return null; }
 }
 
-const DEFAULT_AMOUNTS = [1000, 2100, 5000, 10000];
+const DEFAULT_AMOUNTS = [2100, 5000, 10000];
 
 function getWalletAmounts() {
   try {
     const saved = JSON.parse(localStorage.getItem(LS_WALLET_AMOUNTS));
-    return (saved && saved.length === 4) ? saved : [...DEFAULT_AMOUNTS];
+    return (saved && saved.length === 3) ? saved : [...DEFAULT_AMOUNTS];
   } catch { return [...DEFAULT_AMOUNTS]; }
 }
 function saveWalletAmount(sats) {
@@ -2572,6 +2641,40 @@ function startSettingsPoller() {
 }
 function stopSettingsPoller() {
   if (_settingsPoller) { clearInterval(_settingsPoller); _settingsPoller = null; }
+  if (_walletCountdownTimer) { clearInterval(_walletCountdownTimer); _walletCountdownTimer = null; }
+}
+
+function startWalletCountdown(expiresAt) {
+  const expiryBar = $('settings-wallet-expiry-bar');
+  const expiryEl  = $('settings-wallet-expiry');
+  if (!expiryBar || !expiryEl) return;
+  if (_walletCountdownTimer) { clearInterval(_walletCountdownTimer); _walletCountdownTimer = null; }
+  if (expiresAt > 0) {
+    function tick() {
+      const secsLeft = expiresAt - Math.floor(Date.now() / 1000);
+      if (secsLeft <= 0) {
+        expiryEl.textContent = 'Expired';
+        clearInterval(_walletCountdownTimer);
+        _walletCountdownTimer = null;
+        return;
+      }
+      const d = Math.floor(secsLeft / 86400);
+      const h = Math.floor((secsLeft % 86400) / 3600);
+      const m = Math.floor((secsLeft % 3600) / 60);
+      const s = secsLeft % 60;
+      const parts = [];
+      if (d > 0) parts.push(d + 'd');
+      parts.push(String(h).padStart(2, '0') + 'h');
+      parts.push(String(m).padStart(2, '0') + 'm');
+      parts.push(String(s).padStart(2, '0') + 's');
+      expiryEl.textContent = '⏳ Expires in ' + parts.join(' ') + ' ⏳';
+    }
+    expiryBar.style.display = '';
+    tick();
+    _walletCountdownTimer = setInterval(tick, 1000);
+  } else {
+    expiryBar.style.display = 'none';
+  }
 }
 
 async function refreshWalletBalance() {
@@ -2587,12 +2690,17 @@ async function refreshWalletBalance() {
       if (pill) pill.classList.add('hidden');
       return 0;
     }
-    const sats = Math.floor((data.balance_msat || 0) / 1000);
+    _walletRawBalanceMsat = data.raw_balance_msat || 0;
+    const sats = Math.floor((data.raw_balance_msat || 0) / 1000);
     if (pill) {
       $('wallet-balance-sats').textContent = sats.toLocaleString();
       pill.classList.toggle('hidden', sats === 0);
     }
-    return data.balance_msat || 0;
+    const activeDiv = $('settings-wallet-active');
+    if (activeDiv && !activeDiv.classList.contains('hidden')) {
+      startWalletCountdown(data.expires_at || 0);
+    }
+    return _walletRawBalanceMsat;
   } catch { return 0; }
 }
 
@@ -2614,6 +2722,7 @@ async function renderSettingsWalletSection() {
   createDiv.classList.add('hidden');
   activeDiv.classList.remove('hidden');
 
+  let expiresAt = 0;
   try {
     const res = await fetch(`/voucher/status/${wv.pubkey}`);
     if (res.ok) {
@@ -2624,8 +2733,11 @@ async function renderSettingsWalletSection() {
         activeDiv.classList.add('hidden');
         return;
       }
+      expiresAt = data.expires_at || 0;
     }
   } catch {}
+
+  startWalletCountdown(expiresAt);
 
   const fundLNURL = lnurlEncode(wv.fund_url_prefix + wv.pubkey);
   const qrEl = $('settings-wallet-qr');
@@ -2728,6 +2840,7 @@ function showWalletTransferCard(voucher, balanceMsat) {
     sugEl.appendChild(btn);
   });
 
+  $('btn-wallet-max').onclick = () => { amtEl.value = Math.floor(balanceMsat / 1000); doWalletTransfer(voucher); };
   $('btn-wallet-transfer').onclick = () => doWalletTransfer(voucher);
   amtEl.onkeydown = e => { if (e.key === 'Enter') doWalletTransfer(voucher); };
   $('btn-wallet-transfer-skip').onclick = () => {
@@ -2870,6 +2983,9 @@ async function init() {
     historyStatusCache.clear();
     renderHistory();
     showScreen('screen-history');
+    if (_countdownTimer) clearInterval(_countdownTimer);
+    tickCountdowns();
+    _countdownTimer = setInterval(tickCountdowns, 1000);
     const history = getHistory();
     if (!history.length) return;
     preloadTerminalStatuses(history);
@@ -2897,6 +3013,7 @@ async function init() {
 
   // ── Nav backs ────────────────────────────────────────────────────────────
   $('nav-back-from-history').addEventListener('click', () => {
+    if (_countdownTimer) { clearInterval(_countdownTimer); _countdownTimer = null; }
     showScreen(localStorage.getItem(LS_REFUND) ? 'screen-app' : 'screen-onboarding');
   });
 

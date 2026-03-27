@@ -8,7 +8,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <meta name="theme-color" content="#F7931A">
-  <link rel="stylesheet" href="/css/style.css?v=18">
+  <link rel="stylesheet" href="/css/style.css?v=27">
   <script>window.SITE_NAME = '{{SITE_NAME_FULL}}'; window.BATCH_ENABLED = {{BATCH_ENABLED}}; window.DEFAULT_DIAL_CODE = '{{DEFAULT_DIAL_CODE}}';</script>
 </head>
 <body>
@@ -182,8 +182,10 @@
           <div id="wallet-transfer-card" class="wallet-transfer-card hidden">
             <p style="font-weight:600;font-size:1rem;margin:0 0 4px;">⚡ Fund from local voucher</p>
             <p id="wallet-transfer-info" style="font-size:0.85rem;color:var(--text-muted);margin:0 0 14px;"></p>
-            <p style="font-size:0.78rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin:0 0 8px;text-align:center;">Favourites</p>
-            <div id="wallet-amount-suggestions" class="pill-group" style="margin-bottom:16px;"></div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+              <div id="wallet-amount-suggestions" class="pill-group" style="margin:0;flex:1;justify-content:flex-start;flex-wrap:wrap;"></div>
+              <button id="btn-wallet-max" class="btn btn-secondary btn-sm" style="white-space:nowrap;flex-shrink:0;">Max</button>
+            </div>
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
               <div style="flex:1;height:1px;background:var(--surface-2);"></div>
               <span style="font-size:0.8rem;color:var(--text-muted);white-space:nowrap;">or enter a custom amount</span>
@@ -191,7 +193,7 @@
             </div>
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
               <input id="wallet-transfer-amount" type="text" inputmode="numeric" pattern="[0-9]*"
-                     placeholder="1000" autocomplete="off"
+                     placeholder="" autocomplete="off"
                      style="flex:1;text-align:center;min-width:0;">
               <span style="color:var(--text-muted);font-size:0.9rem;white-space:nowrap;flex-shrink:0;">sats</span>
             </div>
@@ -406,6 +408,9 @@
 
         <div id="settings-wallet-active" class="hidden">
           <label>👍 Tap or Scan the QR code to top up your local voucher.</label>
+          <div class="voucher-info-bar" id="settings-wallet-expiry-bar" style="display:none;">
+            <span class="expiry" id="settings-wallet-expiry"></span>
+          </div>
           <div class="qr-wrapper">
             <div id="settings-wallet-qr" class="qr-container" style="cursor:pointer;"></div>
             <p id="settings-wallet-lnurl" class="qr-lnurl"></p>
@@ -449,8 +454,8 @@
 <div id="print-area" style="display:none;"></div>
 
 <script src="/js/qrcode.min.js"></script>
-<script src="/js/wallet-picker.js?v=18"></script>
-<script src="/js/app.js?v=18"></script>
+<script src="/js/wallet-picker.js?v=27"></script>
+<script src="/js/app.js?v=27"></script>
 <script>
 (function () {
   'use strict';

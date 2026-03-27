@@ -448,6 +448,21 @@ select {
 .expiry-warn { color: var(--orange); }
 .expiry-expired { color: var(--text-muted); }
 
+.voucher-info-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  font-size: 0.9rem;
+  flex-wrap: wrap;
+}
+.voucher-info-bar .balance { font-weight: 700; color: var(--orange); }
+.voucher-info-bar .expiry  { color: var(--text-muted); font-size: 0.82rem; }
+
 .history-section { margin-bottom: 8px; }
 .history-section-title {
   font-size: 0.72rem;

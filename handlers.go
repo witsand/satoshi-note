@@ -47,7 +47,6 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req struct {
-		BatchName          string   `json:"batch_name"`
 		PubKeys            []string `json:"pub_keys"`
 		RefundCode         string   `json:"refund_code"`
 		RefundAfterSeconds int64    `json:"refund_after_seconds"`
@@ -103,12 +102,12 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 
 	var vs []Voucher
 	for _, pubKey := range req.PubKeys {
-		voucher := srv.newVoucher(pubKey, req.RefundCode, req.BatchName, batchID, req.RefundAfterSeconds, req.SingleUse)
+		voucher := srv.newVoucher(pubKey, req.RefundCode, batchID, req.RefundAfterSeconds, req.SingleUse)
 
 		if _, err := dbTx.Exec(
-			`INSERT INTO vouchers (pub_key, batch_name, batch_id, refund_code, refund_after_seconds, single_use, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			voucher.PubKey, voucher.BatchName, voucher.BatchID,
+			`INSERT INTO vouchers (pub_key, batch_id, refund_code, refund_after_seconds, single_use, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			voucher.PubKey, voucher.BatchID,
 			voucher.RefundCode, voucher.RefundAfterSeconds, boolToInt(voucher.SingleUse),
 			time.Now().Unix(),
 		); err != nil {
@@ -152,11 +151,16 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if _, err := srv.getVoucherByPubKey(srv.db, key); err == nil {
+	if v, err := srv.getVoucherByPubKey(srv.db, key); err == nil {
+		remaining := srv.cfg.maxFundAmountMsat - v.BalanceMsat
+		if remaining < srv.cfg.minFundAmountMsat {
+			lnurlError(w, "voucher is fully funded")
+			return
+		}
 		writeJSON(w, http.StatusOK, lnurlPayResponse(
 			"Fund a "+srv.cfg.siteName+" Voucher: "+key,
 			srv.cfg.baseURL+"/fund/"+key+"/callback",
-			srv.cfg.minFundAmountMsat, srv.cfg.maxFundAmountMsat,
+			srv.cfg.minFundAmountMsat, remaining,
 			nil,
 		))
 		return
@@ -169,10 +173,21 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 	}
 
 	n := int64(len(vs))
+	minRemaining := srv.cfg.maxFundAmountMsat
+	for _, v := range vs {
+		if rem := srv.cfg.maxFundAmountMsat - v.BalanceMsat; rem < minRemaining {
+			minRemaining = rem
+		}
+	}
+	batchMax := minRemaining * n
+	if batchMax < srv.cfg.minFundAmountMsat*n {
+		lnurlError(w, "batch vouchers are fully funded")
+		return
+	}
 	writeJSON(w, http.StatusOK, lnurlPayResponse(
 		"Fund "+srv.cfg.siteName+" Vouchers ("+strconv.Itoa(len(vs))+") - Batch: "+key,
 		srv.cfg.baseURL+"/fund/"+key+"/callback",
-		srv.cfg.minFundAmountMsat*n, srv.cfg.maxFundAmountMsat*n,
+		srv.cfg.minFundAmountMsat*n, batchMax,
 		nil,
 	))
 }
@@ -242,12 +257,16 @@ func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.
 
 	tx := &FundTx{}
 
-	if _, err := srv.getVoucherByPubKey(srv.db, key); err == nil {
+	if v, err := srv.getVoucherByPubKey(srv.db, key); err == nil {
 		tx.PubKey = key
 		var err error
 		tx.Msat, err = srv.getCallbackAmount(r)
 		if err != nil {
 			lnurlError(w, "invalid amount")
+			return
+		}
+		if tx.Msat+v.BalanceMsat > srv.cfg.maxFundAmountMsat {
+			lnurlError(w, "amount would exceed maximum voucher balance")
 			return
 		}
 		if err = srv.getCallbackBolt11(tx, "Fund a "+srv.cfg.siteName+" Voucher: "+key); err != nil {
@@ -272,8 +291,15 @@ func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.
 			lnurlError(w, "invalid amount")
 			return
 		}
-		batchMin := srv.cfg.minFundAmountMsat * int64(len(vs))
-		batchMax := srv.cfg.maxFundAmountMsat * int64(len(vs))
+		n := int64(len(vs))
+		minRemaining := srv.cfg.maxFundAmountMsat
+		for _, v := range vs {
+			if rem := srv.cfg.maxFundAmountMsat - v.BalanceMsat; rem < minRemaining {
+				minRemaining = rem
+			}
+		}
+		batchMin := srv.cfg.minFundAmountMsat * n
+		batchMax := minRemaining * n
 		if msats < batchMin || msats > batchMax {
 			lnurlError(w, "amount out of range")
 			return
