@@ -4,12 +4,12 @@
  * Bump CACHE version when deploying new static asset versions.
  */
 
-const CACHE = 'sn-v16';
+const CACHE = 'sn-v17';
 
 const PRECACHE = [
-  '/css/style.css?v=16',
-  '/js/app.js?v=16',
-  '/js/wallet-picker.js?v=16',
+  '/css/style.css?v=17',
+  '/js/app.js?v=17',
+  '/js/wallet-picker.js?v=17',
   '/js/qrcode.min.js',
   '/icon-192.png',
   '/icon-512.png',
