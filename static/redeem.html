@@ -91,7 +91,7 @@
 
   const params = new URLSearchParams(location.search);
   const rawLnurl = params.get('lightning') || '';
-  const lnurl = rawLnurl.match(/LNURL1[A-Z2-9]+/i)?.[0]?.toUpperCase() || rawLnurl;
+  const lnurl = rawLnurl.match(/LNURL1[A-Z02-9]+/i)?.[0]?.toUpperCase() || rawLnurl;
   const main = document.getElementById('redeem-main');
 
   // ── Unified "Learn More" info card (accordion) ───────────────────────────
