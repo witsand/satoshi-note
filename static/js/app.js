@@ -493,8 +493,15 @@ function expiryText(createdAt, refundAfterSeconds) {
 
 function daysFromSeconds(secs) {
   const d = Math.round(secs / 86400);
-  return d === 1 ? '1 day' : `${d} days`;
+  if (d < 7) return d === 1 ? '1 day' : `${d} days`;
+  const w = Math.round(d / 7);
+  return w === 1 ? '1 week' : `${w} weeks`;
 }
+
+function fmtSats(msat) {
+  return Math.round(msat / 1000).toLocaleString();
+}
+
 
 function expiryAfterFundingLabel(refundAfterSeconds) {
   const days = Math.round(refundAfterSeconds / 86400);
@@ -647,11 +654,12 @@ async function handleCreateSingle() {
 
     state.vouchers = vouchers;
 
-    // Store phone for step 3
+    // Store phone and note for step 3
     state.e164 = normalizeToE164(rawNumber, dialCode);
     state.dialCode = dialCode;
     state.localNumber = rawNumber;
     state.hasPhone = rawNumber.length > 0;
+    state.note = ($('voucher-note') && $('voucher-note').value.trim()) || '';
 
     renderFundStep(vouchers[0]);
     showStep(2);
@@ -700,7 +708,7 @@ function renderFundStep(voucher) {
 
   // Save to history now (balance is 0 but LNURLs are ready)
   const e164 = normalizeToE164(state.localNumber, state.dialCode);
-  pushHistory({
+  const histEntry = {
     id: uuidv4(),
     type: 'single',
     createdAt: Math.floor(Date.now() / 1000),
@@ -708,7 +716,9 @@ function renderFundStep(voucher) {
     batchName: `single-${Date.now()}`,
     refundAfterSeconds: voucher.refund_after_seconds,
     vouchers: state.vouchers,
-  });
+  };
+  if (state.note) histEntry.note = state.note;
+  pushHistory(histEntry);
 
 }
 
@@ -775,6 +785,7 @@ function renderShareStep(voucher) {
 function resetSingleWizard() {
   stopFundingPoll();
   $('phone-number').value = '';
+  if ($('voucher-note')) $('voucher-note').value = '';
   $('single-step1-error').classList.remove('visible');
   $('single-qr-container').innerHTML = '';
   $('single-lnurl-text').textContent = '';
@@ -1929,16 +1940,19 @@ async function fetchAndCacheStatuses(pubkeys, history) {
     }
   }
 
-  // Persist newly-terminal statuses to localStorage so they're never fetched again.
+  // Persist newly-terminal statuses and track peak net balance for display after redemption.
   let changed = false;
   history.forEach(entry => {
     entry.vouchers.forEach(v => {
-      if (!v._cachedStatus) {
-        const s = historyStatusCache.get(v.pubkey);
-        if (isTerminalStatus(s)) {
-          v._cachedStatus = s;
-          changed = true;
-        }
+      const s = historyStatusCache.get(v.pubkey);
+      if (!v._cachedStatus && isTerminalStatus(s)) {
+        v._cachedStatus = s;
+        changed = true;
+      }
+      // Track the highest seen net balance so redeemed/expired cards can still show an amount.
+      if (s && s.active && s.balance_msat > 0 && s.balance_msat > (v._peakNetMsat || 0)) {
+        v._peakNetMsat = s.balance_msat;
+        changed = true;
       }
     });
   });
@@ -2032,70 +2046,184 @@ function buildSectionCards(history) {
   return sections;
 }
 
-function renderSectionBody(body, cards, showQR, history) {
+function renderSectionBody(body, cards, state, showQR, history) {
   body.innerHTML = '';
   if (!cards.length) {
     body.innerHTML = `<p style="font-size:0.8rem;color:var(--text-muted);padding:8px 0">Nothing here.</p>`;
     return;
   }
 
-  cards.forEach(({ entry, count, total, expiredTag, expiresAt, vouchers }) => {
-    const card = document.createElement('div');
-    card.className = 'history-card';
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
 
-    const date = new Date(entry.createdAt * 1000).toLocaleString();
-    let typeLabel, typeBadge;
-    if (entry.type === 'single') {
-      typeLabel = 'Single';
-      typeBadge = 'badge-single';
-    } else {
-      typeLabel = total > 1 ? `Batch (${count}/${total})` : 'Batch';
-      typeBadge = 'badge-batch';
-    }
-
-    let metaLine;
+  function recipientParts(entry) {
+    const parts = [];
     if (entry.type === 'single') {
       const phoneDigits = entry.phone ? entry.phone.replace(/\D/g, '') : '';
-      metaLine = phoneDigits.length > 3
-        ? `${entry.phone} &nbsp;·&nbsp; ${date}`
-        : date;
+      if (phoneDigits.length > 3) parts.push(esc(entry.phone));
+      if (entry.note) parts.push(`<em>${esc(entry.note)}</em>`);
     } else {
       const name = entry.batchName;
-      metaLine = (!name || isAutoName(name)) ? date : `${name} &nbsp;·&nbsp; ${date}`;
+      if (name && !isAutoName(name)) parts.push(esc(name));
+    }
+    return parts;
+  }
+  function buildRecipientLine(entry, extraClass) {
+    const parts = recipientParts(entry);
+    if (!parts.length) return '';
+    const cls = extraClass ? `hc-recipient ${extraClass}` : 'hc-recipient';
+    return `<div class="${cls}">${parts.join(' &nbsp;·&nbsp; ')}</div>`;
+  }
+
+  cards.forEach(({ entry, count, total, expiredTag, expiresAt, vouchers }, idx) => {
+    const card = document.createElement('div');
+    card.className = 'history-card hc-flip-in';
+    card.style.animationDelay = `${idx * 0.07}s`;
+
+    const date = new Date(entry.createdAt * 1000).toLocaleString();
+    const typeBadge = entry.type === 'single' ? 'badge-single' : 'badge-batch';
+    const typeLabel = entry.type === 'single'
+      ? 'Single'
+      : (total > 1 ? `Batch ${count}/${total}` : 'Batch');
+
+    const recipientLine = buildRecipientLine(entry);
+    const claimLnurl = vouchers && vouchers[0] && vouchers[0].claim_lnurl;
+    const shareBtn = claimLnurl
+      ? `<button class="btn btn-ghost btn-sm hc-share-btn" data-action="share" data-claim-lnurl="${claimLnurl}" title="Share">
+           <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+         </button>`
+      : '';
+    const trashBtn = `<button class="btn btn-ghost btn-sm hc-delete-btn" data-action="delete" data-id="${entry.id}" title="Remove from history">
+        <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+      </button>`;
+
+    let inner = '';
+
+    if (state === 'unfunded') {
+      const fundBtn = showQR
+        ? `<button class="btn btn-primary btn-sm" data-action="fund" data-id="${entry.id}">Fund Voucher</button>`
+        : '';
+      inner = `
+        <div class="hc-row">
+          <span class="badge ${typeBadge}">${typeLabel}</span>
+          <span class="hc-date">${date}</span>
+        </div>
+        ${buildRecipientLine(entry, 'hc-centered')}
+        <div class="hc-awaiting">◎ Awaiting funds</div>
+        <div class="hc-expiry-duration">Expires ${daysFromSeconds(entry.refundAfterSeconds)} after first payment</div>
+        <div class="hc-footer">
+          ${fundBtn}
+          <div class="hc-footer-right">${shareBtn}${trashBtn}</div>
+        </div>`;
+
+    } else if (state === 'funded') {
+      const netMsat = vouchers.reduce((sum, v) => {
+        const s = historyStatusCache.get(v.pubkey);
+        return sum + (s && s.balance_msat > 0 ? s.balance_msat : 0);
+      }, 0);
+      const amountHTML = netMsat > 0
+        ? `<div class="hc-amount">⚡ ${fmtSats(netMsat)} sats</div>`
+        : '';
+      const fundBtn = showQR
+        ? `<button class="btn btn-secondary btn-sm" data-action="fund" data-id="${entry.id}">Fund Voucher</button>`
+        : '';
+      card.classList.add('history-card-funded');
+      inner = `
+        <div class="hc-sticker">FUNDED</div>
+        <div class="hc-row">
+          <span class="badge ${typeBadge}">${typeLabel}</span>
+        </div>
+        <div style="text-align:center;margin-bottom:10px;"><span class="hc-expiry-inline expiry" data-expires-at="${expiresAt}"></span></div>
+        <div class="hc-funded-hero">
+          <img src="/apple-touch-icon.png" class="hc-favicon-icon hc-favicon-funded" alt="" loading="lazy">
+          ${amountHTML}
+        </div>
+        ${buildRecipientLine(entry, 'hc-centered')}
+        <div class="hc-footer">
+          ${fundBtn}
+          <div class="hc-footer-right">${shareBtn}</div>
+        </div>`;
+
+    } else if (state === 'redeemed') {
+      const peakMsat = vouchers.reduce((sum, v) => sum + (v._peakNetMsat || 0), 0);
+      const amountLine = peakMsat > 0
+        ? `<div class="hc-amount hc-amount-redeemed">⚡ ${fmtSats(peakMsat)} sats</div>`
+        : '';
+
+      // Rotating celebration message based on creation time
+      const CELEBRATIONS = [
+        { msg: 'Sats delivered!',     emoji: '🎉' },
+        { msg: 'You made their day!', emoji: '🌟' },
+        { msg: 'Mission complete!',   emoji: '🏆' },
+        { msg: 'Lightning fast!',     emoji: '⚡' },
+        { msg: 'Bitcoin received!',   emoji: '🎊' },
+        { msg: 'Voucher claimed!',    emoji: '✨' },
+      ];
+      const cel = CELEBRATIONS[entry.createdAt % CELEBRATIONS.length];
+
+      // Confetti pieces — seeded positions so they're consistent per card
+      let confettiHTML = '<div class="hc-confetti" aria-hidden="true">';
+      const CONFETTI_COLORS = ['#F7931A','#6dba6d','#7eb5f7','#f5a623','#e879a0','#a78bfa'];
+      for (let i = 0; i < 14; i++) {
+        const seed = entry.createdAt + i;
+        const left  = ((seed * 37 + i * 97) % 86) + 7;
+        const color = CONFETTI_COLORS[(seed + i) % CONFETTI_COLORS.length];
+        const size  = ((seed + i) % 3) + 3;
+        const delay = ((i * 0.18) % 2.4).toFixed(2);
+        const dur   = (2.2 + ((seed * i) % 14) * 0.1).toFixed(1);
+        const rot   = (seed * i * 13) % 360;
+        confettiHTML += `<span class="hc-confetti-piece" style="left:${left}%;background:${color};width:${size}px;height:${size}px;animation-delay:${delay}s;animation-duration:${dur}s;--rot:${rot}deg;"></span>`;
+      }
+      confettiHTML += '</div>';
+
+      card.classList.add('history-card-redeemed');
+      inner = `
+        <div class="hc-sticker hc-sticker-green">CLAIMED</div>
+        ${confettiHTML}
+        <div class="hc-row">
+          <span class="badge ${typeBadge}">${typeLabel}</span>
+        </div>
+        <div class="hc-redeemed-hero">
+          <img src="/apple-touch-icon.png" class="hc-favicon-icon" alt="" loading="lazy">
+          ${amountLine}
+          <div class="hc-celebration-msg">${cel.emoji} ${cel.msg}</div>
+        </div>
+        ${buildRecipientLine(entry, 'hc-centered')}
+        <div class="hc-footer">
+          <div class="hc-date-small">${date}</div>
+          <div class="hc-footer-right">${trashBtn}</div>
+        </div>`;
+
+    } else { // expired
+      const tagHTML = expiredTag
+        ? `<span class="badge badge-${expiredTag}">${expiredTag}</span>`
+        : '';
+      inner = `
+        <div class="hc-row">
+          <span class="badge ${typeBadge}">${typeLabel}</span>
+          ${tagHTML}
+        </div>
+        ${recipientLine}
+        <div class="hc-footer">
+          <div class="hc-date-small">${date}</div>
+          <div class="hc-footer-right">${trashBtn}</div>
+        </div>`;
     }
 
-    const subTagHTML = expiredTag
-      ? ` <span class="badge badge-${expiredTag}">${expiredTag}</span>`
-      : '';
-
-    const countdownHTML = expiresAt
-      ? `<div class="voucher-info-bar"><span class="expiry" data-expires-at="${expiresAt}"></span></div>`
-      : '';
-
-    const claimLnurl = vouchers && vouchers[0] && vouchers[0].claim_lnurl;
-    const actionsHTML = showQR
-      ? `<div class="history-card-actions">
-           <button class="btn btn-secondary btn-sm" data-action="reqr" data-id="${entry.id}">Re-show QR</button>
-           ${claimLnurl ? `<button class="btn btn-secondary btn-sm" data-action="share" data-claim-lnurl="${claimLnurl}">Share</button>` : ''}
-         </div>`
-      : '';
-
-    card.innerHTML = `
-      <div class="history-card-header">
-        <span class="badge ${typeBadge}">${typeLabel}</span>${subTagHTML}
-      </div>
-      <div class="history-card-meta">${metaLine}</div>
-      ${countdownHTML}
-      ${actionsHTML}`;
-
+    card.innerHTML = inner;
     body.appendChild(card);
   });
 
-  body.querySelectorAll('[data-action="reqr"]').forEach(btn => {
+  body.querySelectorAll('[data-action="fund"]').forEach(btn => {
     btn.addEventListener('click', () => {
       const entry = history.find(e => e.id === btn.dataset.id);
-      if (entry) openQRModal(entry);
+      if (entry) openFundHistoryModal(entry);
     });
+  });
+
+  body.querySelectorAll('[data-action="delete"]').forEach(btn => {
+    btn.addEventListener('click', () => promptDeleteHistoryEntry(btn.dataset.id));
   });
 
   body.querySelectorAll('[data-action="share"]').forEach(btn => {
@@ -2132,7 +2260,7 @@ function expandSection(sectionEl, key, showQR, history) {
 
   updateSectionCounts(history, $('history-list'));
   const sections = buildSectionCards(history);
-  renderSectionBody(body, sections[key], showQR, history);
+  renderSectionBody(body, sections[key], key, showQR, history);
 }
 
 function countByState(history) {
@@ -2412,6 +2540,160 @@ function renderHistory() {
 
     container.appendChild(section);
   });
+}
+
+// ── Fund from history modal ───────────────────────────────────────────────────
+
+async function openFundHistoryModal(entry) {
+  const voucher = entry.vouchers[0];
+  const lnurl = entry.type === 'single' ? voucher.fund_lnurl : (voucher.batch_fund_lnurl || voucher.fund_lnurl);
+  const modal = $('fund-history-modal');
+  const walletPanel = $('fhm-wallet-panel');
+  const lightningPanel = $('fhm-lightning-panel');
+  const errEl = $('fhm-wallet-error');
+  const amtEl = $('fhm-amount-input');
+
+  function showWalletPanel() {
+    walletPanel.classList.remove('hidden');
+    lightningPanel.classList.add('hidden');
+  }
+  function showLightningPanel(showLocalLink) {
+    walletPanel.classList.add('hidden');
+    lightningPanel.classList.remove('hidden');
+    $('fhm-btn-local-instead').classList.toggle('hidden', !showLocalLink);
+  }
+
+  // Close behaviour
+  $('fhm-close').onclick = () => modal.classList.add('hidden');
+  modal.onclick = e => { if (e.target === modal) modal.classList.add('hidden'); };
+
+  // Lightning QR setup
+  const qrContainer = $('fhm-qr-container');
+  qrContainer.innerHTML = '';
+  renderQR(qrContainer, lnurl, 220);
+  qrContainer.style.cursor = 'pointer';
+  qrContainer.onclick = () => { window.location.href = 'lightning:' + lnurl; };
+  const lnurlEl = $('fhm-lnurl-text');
+  lnurlEl.textContent = 'Copy Funding Code';
+  lnurlEl.title = 'Tap to copy';
+  lnurlEl.onclick = () => copyToClipboard(lnurl, lnurlEl);
+  attachWalletButton(lnurlEl, lnurl);
+
+  // Button wiring
+  $('fhm-btn-lightning-instead').onclick = () => showLightningPanel(true);
+  $('fhm-btn-local-instead').onclick = () => showWalletPanel();
+
+  errEl.classList.remove('visible');
+  amtEl.value = '';
+
+  // Check wallet balance
+  const balanceMsat = entry.type === 'single' ? await refreshWalletBalance() : 0;
+  await _configReady;
+
+  if (balanceMsat >= _minFundAmountMsat) {
+    const balSats = Math.floor(balanceMsat / 1000);
+
+    const amounts = getWalletAmounts();
+    const pillEl = $('fhm-amount-pills');
+    pillEl.innerHTML = '';
+    amounts.forEach(amt => {
+      const pill = document.createElement('button');
+      pill.type = 'button';
+      pill.className = 'pill-btn pill-btn-recent';
+      pill.textContent = amt.toLocaleString();
+      pill.addEventListener('click', () => { amtEl.value = amt; doHistoryTransfer(voucher, amtEl, errEl); });
+      pillEl.appendChild(pill);
+    });
+
+    $('fhm-btn-max').onclick = () => { amtEl.value = balSats; doHistoryTransfer(voucher, amtEl, errEl); };
+    $('fhm-btn-transfer').onclick = () => doHistoryTransfer(voucher, amtEl, errEl);
+    amtEl.onkeydown = e => { if (e.key === 'Enter') doHistoryTransfer(voucher, amtEl, errEl); };
+
+    showWalletPanel();
+  } else {
+    showLightningPanel(false);
+  }
+
+  modal.classList.remove('hidden');
+}
+
+async function doHistoryTransfer(voucher, amtEl, errEl) {
+  const wv = getWalletVoucher();
+  if (!wv) return;
+
+  errEl.classList.remove('visible');
+
+  const amountSats = parseInt(amtEl.value, 10);
+  if (isNaN(amountSats) || amountSats < Math.ceil(_minFundAmountMsat / 1000)) {
+    errEl.textContent = `Minimum amount is ${Math.ceil(_minFundAmountMsat / 1000)} sats.`;
+    errEl.classList.add('visible');
+    return;
+  }
+
+  const btn = $('fhm-btn-transfer');
+  btn.disabled = true;
+  btn.textContent = 'Funding…';
+
+  try {
+    const res = await fetch('/transfer', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret: wv.secret, pub_key: voucher.pubkey, amount: amountSats * 1000 }),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || `Transfer failed (${res.status})`);
+    }
+    await refreshWalletBalance();
+    saveWalletAmount(amountSats);
+    $('fund-history-modal').classList.add('hidden');
+    // Refresh status and re-render open history sections
+    const history = getHistory();
+    await fetchAndCacheStatuses([voucher.pubkey], history);
+    updateSectionCounts(history, $('history-list'));
+    const sectionMeta = [
+      { key: 'unfunded', showQR: true },
+      { key: 'funded',   showQR: true },
+      { key: 'redeemed', showQR: false },
+      { key: 'expired',  showQR: false },
+    ];
+    const sections = buildSectionCards(history);
+    document.querySelectorAll('.history-section.expanded').forEach(sec => {
+      const key = sec.dataset.sectionKey;
+      const meta = sectionMeta.find(m => m.key === key);
+      if (!meta) return;
+      renderSectionBody(sec.querySelector('.history-section-body'), sections[key], key, meta.showQR, history);
+    });
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.add('visible');
+    btn.disabled = false;
+    btn.textContent = 'Fund Voucher';
+  }
+}
+
+// ── Delete history entry ──────────────────────────────────────────────────────
+
+let _pendingDeleteId = null;
+
+function promptDeleteHistoryEntry(id) {
+  _pendingDeleteId = id;
+  $('delete-history-modal').classList.remove('hidden');
+}
+
+function confirmDeleteHistoryEntry() {
+  if (!_pendingDeleteId) return;
+  const history = getHistory().filter(e => e.id !== _pendingDeleteId);
+  saveHistory(history);
+  _pendingDeleteId = null;
+  $('delete-history-modal').classList.add('hidden');
+  historyStatusCache.clear();
+  renderHistory();
+  if (history.length) {
+    const missing = history.flatMap(e => e.vouchers.map(v => v.pubkey))
+      .filter(pk => !historyStatusCache.has(pk));
+    if (missing.length) fetchAndCacheStatuses(missing, history).then(() => updateSectionCounts(history, $('history-list')));
+  }
 }
 
 function openQRModal(entry) {
@@ -2958,7 +3240,10 @@ async function init() {
   $('btn-edit-msg').addEventListener('click', showMsgSheet);
   $('btn-create-single').addEventListener('click', handleCreateSingle);
   $('phone-number').addEventListener('keydown', e => {
-    if (e.key === 'Enter') handleCreateSingle();
+    if (e.key === 'Enter') { e.preventDefault(); $('voucher-note').focus(); }
+  });
+  $('voucher-note').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); handleCreateSingle(); }
   });
 
   // Batch vouchers
@@ -3068,6 +3353,19 @@ async function init() {
 
   $('disable-voucher-modal').addEventListener('click', e => {
     if (e.target === $('disable-voucher-modal')) $('disable-voucher-modal').classList.add('hidden');
+  });
+
+  // Delete history entry modal
+  $('btn-delete-history-cancel').addEventListener('click', () => {
+    $('delete-history-modal').classList.add('hidden');
+    _pendingDeleteId = null;
+  });
+  $('btn-delete-history-confirm').addEventListener('click', confirmDeleteHistoryEntry);
+  $('delete-history-modal').addEventListener('click', e => {
+    if (e.target === $('delete-history-modal')) {
+      $('delete-history-modal').classList.add('hidden');
+      _pendingDeleteId = null;
+    }
   });
 
   // Wallet expiry pills

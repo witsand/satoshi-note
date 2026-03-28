@@ -172,15 +172,6 @@ func initSchema(db *sql.DB) error {
 		}
 	}
 
-	// Drop batch_name if it still exists (removed from schema; kept for existing DBs).
-	var hasBatchName int
-	_ = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('vouchers') WHERE name = 'batch_name'`).Scan(&hasBatchName)
-	if hasBatchName > 0 {
-		if _, err := db.Exec(`ALTER TABLE vouchers DROP COLUMN batch_name`); err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 

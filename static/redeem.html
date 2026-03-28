@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Claim Your Bitcoin Voucher — {{SITE_NAME_FULL}}</title>
+  <title>Claim Your Voucher — {{SITE_NAME_FULL}}</title>
   <meta name="description" content="You've received a Bitcoin Lightning voucher. Claim it instantly with a Lightning wallet.">
   <meta property="og:type" content="website">
   <meta property="og:title" content="You've received Bitcoin! ⚡">
@@ -12,7 +12,7 @@
   <meta property="og:image:width" content="512">
   <meta property="og:image:height" content="512">
   <meta name="twitter:card" content="summary">
-  <link rel="stylesheet" href="/css/style.css?v=27">
+  <link rel="stylesheet" href="/css/style.css?v=41">
   <style>
     .section-label {
       font-size: 0.7rem;
@@ -28,39 +28,47 @@
       color: var(--text-muted);
       margin: 16px 0 8px;
     }
-    .voucher-info-bar {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 16px;
-      padding: 10px 16px;
-      background: var(--card-bg, #1a1a1a);
-      border-radius: 8px;
-      margin-bottom: 12px;
-      font-size: 0.9rem;
-      flex-wrap: wrap;
+    /* Card flip */
+    .redeem-flipper { perspective: 1200px; margin-bottom: 20px; }
+    .redeem-card-inner {
+      display: grid;
+      transform-style: preserve-3d;
+      transition: transform 0.65s ease;
     }
-    .voucher-info-bar .balance {
-      font-weight: 700;
-      color: var(--orange);
+    .redeem-card-inner.flipped { transform: rotateY(180deg); }
+    .redeem-card-face {
+      grid-area: 1 / 1;
+      backface-visibility: hidden;
+      -webkit-backface-visibility: hidden;
     }
-    .voucher-info-bar .expiry {
-      color: var(--text-muted);
-      font-size: 0.82rem;
-    }
+    .redeem-card-back { transform: rotateY(180deg); }
+    .hc-sticker-gray { background: #666; color: #fff; }
   </style>
 </head>
 <body>
 
 <!-- ── Sats info modal ──────────────────────────────────────────────────────── -->
 <div id="sats-info-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
-  <div class="modal-box">
-    <div class="modal-title">What are sats?</div>
-    <p style="font-size:0.875rem;color:var(--text-muted);line-height:1.6;">
-      Satoshis ("sats") are small units of Bitcoin.<br>
-      You can save them, spend them, or send them to anyone in the world.
+  <div class="modal-box" style="text-align:left;">
+    <div class="modal-title">How to claim your sats</div>
+    <p style="font-size:0.82rem;color:var(--orange);font-weight:700;margin-bottom:4px;">What are sats?</p>
+    <p style="font-size:0.82rem;color:var(--text-muted);line-height:1.6;margin-bottom:14px;">
+      Satoshis ("sats") are the smallest unit of Bitcoin — like cents to a rand.
+      There are 100 million sats in one Bitcoin.
+      You can save them, spend them, or send them to anyone in the world instantly.
     </p>
-    <button class="modal-close" id="sats-info-close">Close</button>
+    <p style="font-size:0.82rem;color:var(--orange);font-weight:700;margin-bottom:4px;">How do I claim them?</p>
+    <ol style="font-size:0.82rem;color:var(--text-muted);line-height:1.8;margin:0 0 14px 16px;padding:0;">
+      <li><strong style="color:var(--text);">Get a Bitcoin wallet</strong> — download Blink (recommended for beginners) from the App Store or Play Store.</li>
+      <li><strong style="color:var(--text);">Tap "Reveal Secret"</strong> on this page to show the QR code.</li>
+      <li><strong style="color:var(--text);">Scan or tap the QR code</strong> in your wallet app to receive the sats.</li>
+    </ol>
+    <p style="font-size:0.82rem;color:var(--orange);font-weight:700;margin-bottom:4px;">What can I do with them?</p>
+    <p style="font-size:0.82rem;color:var(--text-muted);line-height:1.6;margin-bottom:16px;">
+      Spend at thousands of merchants, pay bills, send to friends, or hold as savings.
+      See the wallet guide below for more details.
+    </p>
+    <button class="modal-close" id="sats-info-close">Got it</button>
   </div>
 </div>
 
@@ -76,13 +84,14 @@
 </div>
 
 <script src="/js/qrcode.min.js"></script>
-<script src="/js/wallet-picker.js?v=27"></script>
+<script src="/js/wallet-picker.js?v=41"></script>
 <script>
 (function () {
   'use strict';
 
   const params = new URLSearchParams(location.search);
-  const lnurl = params.get('lightning');
+  const rawLnurl = params.get('lightning') || '';
+  const lnurl = rawLnurl.match(/LNURL1[A-Z2-9]+/i)?.[0]?.toUpperCase() || rawLnurl;
   const main = document.getElementById('redeem-main');
 
   // ── Unified "Learn More" info card (accordion) ───────────────────────────
@@ -309,15 +318,23 @@
     `;
   }
 
+  // ── Styled state card with sticker ──────────────────────────────────────
+  function stateCard(stickerLabel, stickerClass, icon, title, desc, extraHTML) {
+    return `
+      <div class="card" style="position:relative;overflow:hidden;text-align:center;margin-bottom:20px;">
+        <div class="hc-sticker ${stickerClass}">${stickerLabel}</div>
+        <div style="font-size:2rem;margin:20px 0 10px;">${icon}</div>
+        <div style="font-weight:700;margin-bottom:8px;">${title}</div>
+        <div style="font-size:0.85rem;color:var(--text-muted);">${desc}</div>
+        ${extraHTML || ''}
+      </div>`;
+  }
+
   // ── State: invalid link ─────────────────────────────────────────────────
   function showInvalid() {
-    main.innerHTML = `
-      <div class="state-card">
-        <div class="state-icon">🔗</div>
-        <div class="state-title">This link isn't valid</div>
-        <div class="state-desc">Check the link or contact the sender.</div>
-      </div>
-      ${buildInfoCard(null)}`;
+    main.innerHTML =
+      stateCard('INVALID', 'hc-sticker-gray', '🔗', "This link isn't valid", 'Check the link or contact the sender.') +
+      buildInfoCard(null);
   }
 
   if (!lnurl || !lnurl.toUpperCase().startsWith('LNURL1')) {
@@ -375,38 +392,27 @@
 
     // ── State: inactive + refunded (expired) ────────────────────────────
     if (!active && refunded) {
-      main.innerHTML = `
-        <div class="state-card">
-          <div class="state-icon">⏰</div>
-          <div class="state-title">Voucher expired</div>
-          <div class="state-desc">This voucher expired before it was redeemed.<br>Ask the sender for a new one.</div>
-        </div>
-        ${buildInfoCard(null)}`;
+      main.innerHTML =
+        stateCard('EXPIRED', 'hc-sticker-gray', '⏰', 'Voucher expired', 'This voucher expired before it was redeemed. Ask the sender for a new one.') +
+        buildInfoCard(null);
       return;
     }
 
     // ── State: inactive + not refunded (already redeemed) ───────────────
     if (!active && !refunded) {
-      main.innerHTML = `
-        <div class="state-card">
-          <div class="state-icon">✅</div>
-          <div class="state-title">Already claimed</div>
-          <div class="state-desc">This voucher has already been redeemed.</div>
-        </div>
-        ${buildInfoCard('spend')}`;
+      main.innerHTML =
+        stateCard('REDEEMED', 'hc-sticker-green', '✅', 'Already claimed', 'This voucher has already been redeemed.') +
+        buildInfoCard('spend');
       return;
     }
 
     // ── State: active + unfunded ─────────────────────────────────────────
     if (active && balance_msat === 0) {
-      main.innerHTML = `
-        <div class="state-card">
-          <div class="state-icon">⏳</div>
-          <div class="state-title">Not funded yet</div>
-          <div class="state-desc">This voucher hasn't been loaded with Bitcoin yet.<br>Come back once the sender has loaded it.</div>
-          <button class="btn btn-secondary btn-sm" style="width:auto;margin:0 auto;" onclick="location.reload()">Check again</button>
-        </div>
-        ${buildInfoCard(null)}`;
+      main.innerHTML =
+        stateCard('NOT FUNDED', '', '⏳', 'Not funded yet',
+          "This voucher hasn't been loaded with Bitcoin yet. Come back once the sender has loaded it.",
+          '<button class="btn btn-secondary btn-sm" style="width:auto;margin:12px auto 0;" onclick="location.reload()">Check again</button>') +
+        buildInfoCard(null);
       return;
     }
 
@@ -416,46 +422,87 @@
 
     const hasExpiry = expires_at && expires_at > 0;
 
+    // Confetti — seeded from current second so it varies per visit but is stable on render
+    const confettiSeed = Math.floor(Date.now() / 1000);
+    const CELEBRATIONS = [
+      { msg: 'Someone sent you Bitcoin!', emoji: '🎉' },
+      { msg: 'A gift from a friend!',     emoji: '🌟' },
+      { msg: 'Lightning delivery!',       emoji: '🏆' },
+      { msg: 'Sats incoming!',            emoji: '⚡' },
+      { msg: 'Bitcoin gifted!',           emoji: '🎊' },
+      { msg: 'Your voucher awaits!',      emoji: '✨' },
+    ];
+    const cel = CELEBRATIONS[confettiSeed % CELEBRATIONS.length];
+    const CONFETTI_COLORS = ['#F7931A','#6dba6d','#7eb5f7','#f5a623','#e879a0','#a78bfa'];
+    let confettiHTML = '<div class="hc-confetti" aria-hidden="true">';
+    for (let i = 0; i < 14; i++) {
+      const seed = confettiSeed + i;
+      const left  = ((seed * 37 + i * 97) % 86) + 7;
+      const color = CONFETTI_COLORS[(seed + i) % CONFETTI_COLORS.length];
+      const size  = ((seed + i) % 3) + 3;
+      const delay = ((i * 0.18) % 2.4).toFixed(2);
+      const dur   = (2.2 + ((seed * i) % 14) * 0.1).toFixed(1);
+      const rot   = (seed * i * 13) % 360;
+      confettiHTML += `<span class="hc-confetti-piece" style="left:${left}%;background:${color};width:${size}px;height:${size}px;animation-delay:${delay}s;animation-duration:${dur}s;--rot:${rot}deg;"></span>`;
+    }
+    confettiHTML += '</div>';
+
     main.innerHTML = `
-      <!-- Hero -->
-      <div class="redeem-hero">
-        <div style="font-size:2.8rem;margin-bottom:10px;">🎁</div>
-        <h1>You've received Bitcoin!</h1>
-        <p>Someone sent you some sats.<br>Tap the QR code to claim them in your wallet.</p>
-      </div>
+      <div class="redeem-flipper">
+        <div class="redeem-card-inner" id="redeem-card-inner">
 
-      <!-- Amount -->
-      <div class="redeem-amount">
-        <div class="redeem-sats">⚡ ${satsFormatted} sats <button id="btn-sats-info" style="background:none;border:1px solid var(--text-muted);border-radius:50%;width:18px;height:18px;font-size:0.7rem;color:var(--text-muted);cursor:pointer;line-height:1;padding:0;vertical-align:middle;margin-left:4px;" aria-label="What are sats?">?</button></div>
-        <div class="redeem-fiat" id="redeem-fiat-value"></div>
-      </div>
+          <!-- FRONT FACE -->
+          <div class="redeem-card-face redeem-card-front card" style="position:relative;overflow:hidden;text-align:center;background:linear-gradient(160deg,#2a1f0e 0%,#1a1a1a 55%);border:1px solid rgba(247,147,26,0.25);animation:hc-card-glow-orange 4s ease-in-out infinite,hc-card-flip-in 0.45s ease-out both;padding-bottom:20px;">
+            <div class="hc-sticker" id="redeem-sticker">VOUCHER</div>
+            ${confettiHTML}
 
-      <!-- Expiry bar -->
-      <div class="voucher-info-bar" ${hasExpiry ? '' : 'style="display:none;"'}>
-        <span class="expiry" id="expiry-countdown"></span>
-      </div>
+            <!-- Header: site name left -->
+            <div style="text-align:left;margin-bottom:4px;">
+              <span style="font-size:0.7rem;color:var(--text-muted);font-weight:600;letter-spacing:0.3px;">${window.location.hostname}</span>
+            </div>
+            <!-- Expiry centered below header -->
+            ${hasExpiry ? '<div style="text-align:center;margin-bottom:14px;"><span id="expiry-countdown" style="font-size:0.72rem;color:var(--text-muted);"></span></div>' : '<div style="margin-bottom:14px;"></div>'}
 
-      <!-- Claim card -->
-      <div class="card" style="text-align:center;">
-        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:16px;">Tap or Scan the QR code, or use the buttons below</p>
+            <!-- Favicon + amount -->
+            <div class="hc-redeemed-hero" style="padding-top:0;margin-bottom:4px;">
+              <img src="/apple-touch-icon.png" class="hc-favicon-icon hc-favicon-funded" alt="" loading="eager">
+              <div style="font-size:2rem;font-weight:800;color:var(--text);letter-spacing:-1px;margin-bottom:2px;">
+                ⚡ ${satsFormatted} sats
+                <button id="btn-sats-info" style="background:none;border:1.5px solid var(--text-muted);border-radius:50%;width:20px;height:20px;font-size:0.72rem;color:var(--text-muted);cursor:pointer;line-height:1;padding:0;vertical-align:middle;margin-left:5px;" aria-label="How to claim">?</button>
+              </div>
+              <div id="redeem-fiat-value" style="font-size:0.85rem;color:var(--text-muted);margin-bottom:0;"></div>
+            </div>
 
-        <div class="qr-wrapper" style="padding:0 0 4px;">
-          <div id="redeem-qr-container" class="qr-container"></div>
-          <p id="redeem-lnurl-text" class="qr-lnurl" style="margin-top:8px;"></p>
+            <!-- Guidance text -->
+            <div id="redeem-celebration" style="font-size:1rem;font-weight:700;color:var(--text);margin:14px 0 20px;">${cel.emoji} You've received a Bitcoin voucher!</div>
+
+            <!-- Big reveal button -->
+            <button id="btn-reveal-secret" class="btn btn-primary" style="width:100%;font-size:1rem;font-weight:800;padding:14px 0;letter-spacing:1px;">REVEAL SECRET</button>
+          </div>
+
+          <!-- BACK FACE -->
+          <div class="redeem-card-face redeem-card-back card" style="text-align:center;">
+            <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:16px;">Tap or Scan the QR code to claim</p>
+            <div class="qr-wrapper" style="padding:0 0 4px;">
+              <div id="redeem-qr-container" class="qr-container"></div>
+              <p id="redeem-lnurl-text" class="qr-lnurl" style="margin-top:8px;"></p>
+            </div>
+            <button id="btn-flip-back" class="btn btn-secondary btn-sm" style="width:auto;margin:14px auto 4px;">← Back</button>
+          </div>
+
         </div>
       </div>
-
       ${buildInfoCard('wallet')}
     `;
 
-    // Render QR — tap to open wallet
+    // ── QR on back face ──────────────────────────────────────────────────
     const container = document.getElementById('redeem-qr-container');
-    new QRCode(container, { text: lnurl, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
+    new QRCode(container, { text: 'lightning:' + lnurl, width: 180, height: 180, correctLevel: QRCode.CorrectLevel.M });
     container.style.cursor = 'pointer';
     container.title = 'Tap to open in wallet';
     container.addEventListener('click', () => { window.location.href = 'lightning:' + lnurl; });
 
-    // Copy claim code button
+    // Copy claim code
     const lnurlEl = document.getElementById('redeem-lnurl-text');
     lnurlEl.textContent = 'Copy Claim Code';
     lnurlEl.style.cursor = 'pointer';
@@ -473,6 +520,20 @@
     // Wallet open button
     attachWalletButton(lnurlEl, lnurl);
 
+    // ── Flip controls ────────────────────────────────────────────────────
+    const cardInner = document.getElementById('redeem-card-inner');
+    let pollInterval = null;
+
+    document.getElementById('btn-reveal-secret').addEventListener('click', function () {
+      cardInner.classList.add('flipped');
+      if (!pollInterval) pollInterval = startRedemptionPoll();
+    });
+
+    document.getElementById('btn-flip-back').addEventListener('click', function () {
+      cardInner.classList.remove('flipped');
+    });
+
+    // ── Sats info modal ──────────────────────────────────────────────────
     document.getElementById('btn-sats-info').addEventListener('click', function () {
       document.getElementById('sats-info-modal').classList.remove('hidden');
     });
@@ -483,20 +544,21 @@
       if (e.target === this) this.classList.add('hidden');
     });
 
-    // Expiry countdown
+    // ── Expiry countdown ─────────────────────────────────────────────────
     if (hasExpiry) {
       const countdownEl = document.getElementById('expiry-countdown');
+      let countdownTimer;
       function updateCountdown() {
         const secsLeft = expires_at - Math.floor(Date.now() / 1000);
         if (secsLeft <= 0) {
           clearInterval(countdownTimer);
-          main.innerHTML = `
-    <div class="state-card">
-      <div class="state-icon">⏰</div>
-      <div class="state-title">This voucher has expired</div>
-      <div class="state-desc">The bitcoin is currently being routed back to the sender.<br>Contact them to get a new voucher.</div>
-    </div>
-    ${buildInfoCard(null)}`;
+          const sticker = document.getElementById('redeem-sticker');
+          const revealBtn = document.getElementById('btn-reveal-secret');
+          const celEl = document.getElementById('redeem-celebration');
+          if (sticker) { sticker.textContent = 'EXPIRED'; sticker.className = 'hc-sticker hc-sticker-gray'; }
+          if (revealBtn) { revealBtn.disabled = true; revealBtn.style.opacity = '0.5'; }
+          if (celEl) celEl.textContent = 'This voucher has expired.';
+          if (countdownEl) countdownEl.textContent = '';
           return;
         }
         const d = Math.floor(secsLeft / 86400);
@@ -508,14 +570,13 @@
         parts.push(String(h).padStart(2, '0') + 'h');
         parts.push(String(m).padStart(2, '0') + 'm');
         parts.push(String(s).padStart(2, '0') + 's');
-        countdownEl.textContent = '⏳ Expires in ' + parts.join(' ') + ' ⏳';
+        countdownEl.textContent = '⏳ Expires in ' + parts.join(' ');
       }
-      let countdownTimer;
       updateCountdown();
       countdownTimer = setInterval(updateCountdown, 1000);
     }
 
-    // ZAR fiat conversion (non-blocking, silently fails)
+    // ── ZAR fiat conversion (non-blocking) ───────────────────────────────
     (async function fetchFiat() {
       const fiatEl = document.getElementById('redeem-fiat-value');
       if (!fiatEl) return;
@@ -532,37 +593,36 @@
         fiatEl.textContent = '≈ R' + zarValue.toLocaleString('en-ZA', {
           minimumFractionDigits: 2, maximumFractionDigits: 2
         });
-      } catch (e) { /* silently ignore */ }
+      } catch { /* silently ignore */ }
     })();
 
-    // ── Background polling — auto-transition when voucher is redeemed ──────
-    const pollInterval = setInterval(async function () {
-      try {
-        const pk = await secretToPubKey(secret);
-        const r = await fetch('/voucher/status/' + pk);
-        if (!r.ok) return;
-        const s = await r.json();
-        if (s.active) return;
-        clearInterval(pollInterval);
-        if (s.refunded) {
-          main.innerHTML = `
-            <div class="state-card">
-              <div class="state-icon">⏰</div>
-              <div class="state-title">Voucher expired</div>
-              <div class="state-desc">The bitcoin has successfully been returned to the sender.<br>Contact them to get a new voucher.</div>
-            </div>
-            ${buildInfoCard(null)}`;
-        } else {
-          main.innerHTML = `
-            <div class="state-card">
-              <div class="state-icon">✅</div>
-              <div class="state-title">Already claimed</div>
-              <div class="state-desc">This voucher has already been redeemed.</div>
-            </div>
-            ${buildInfoCard('spend')}`;
-        }
-      } catch { /* silently ignore network errors */ }
-    }, 12000);
+    // ── Poll for redemption — starts when REVEAL SECRET is tapped ────────
+    function startRedemptionPoll() {
+      return setInterval(async function () {
+        try {
+          const pk = await secretToPubKey(secret);
+          const r = await fetch('/voucher/status/' + pk);
+          if (!r.ok) return;
+          const s = await r.json();
+          if (s.active) return;
+          clearInterval(pollInterval);
+          pollInterval = null;
+          // Flip back to front
+          cardInner.classList.remove('flipped');
+          const sticker = document.getElementById('redeem-sticker');
+          const revealBtn = document.getElementById('btn-reveal-secret');
+          const celEl = document.getElementById('redeem-celebration');
+          if (s.refunded) {
+            if (sticker) { sticker.textContent = 'EXPIRED'; sticker.className = 'hc-sticker hc-sticker-gray'; }
+            if (celEl) celEl.textContent = 'This voucher has expired.';
+          } else {
+            if (sticker) { sticker.textContent = 'REDEEMED'; sticker.className = 'hc-sticker hc-sticker-green'; }
+            if (celEl) celEl.textContent = '✓ Claimed successfully!';
+          }
+          if (revealBtn) { revealBtn.disabled = true; revealBtn.style.opacity = '0.5'; }
+        } catch { /* silently ignore network errors */ }
+      }, 12000);
+    }
   }
 
   init();

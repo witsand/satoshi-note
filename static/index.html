@@ -8,7 +8,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <meta name="theme-color" content="#F7931A">
-  <link rel="stylesheet" href="/css/style.css?v=27">
+  <link rel="stylesheet" href="/css/style.css?v=41">
   <script>window.SITE_NAME = '{{SITE_NAME_FULL}}'; window.BATCH_ENABLED = {{BATCH_ENABLED}}; window.DEFAULT_DIAL_CODE = '{{DEFAULT_DIAL_CODE}}';</script>
 </head>
 <body>
@@ -16,12 +16,17 @@
 <!-- ── Phone info modal ───────────────────────────────────────────────────── -->
 <div id="phone-info-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
   <div class="modal-box" style="text-align:left;">
-    <div class="modal-title" style="text-align:center;">About the Phone Number</div>
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      The phone number is used <strong style="color:var(--text);">only on your device</strong> to pre-fill the WhatsApp message when you share the voucher link. It is never sent to the server.
+    <div class="modal-title" style="text-align:center;">About This Screen</div>
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:16px;line-height:1.6;">
+      Create a voucher, fund it with Lightning, then share the claim link. <strong style="color:var(--text);">Unclaimed sats automatically return to your Lightning Address</strong> once the voucher expires.
     </p>
-    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:14px;line-height:1.6;">
-      If you'd rather not enter a number, just leave it blank and tap <strong style="color:var(--text);">Create Voucher</strong>. You can share the link any other way you like.
+    <p style="font-size:0.875rem;color:var(--text);font-weight:600;margin-bottom:4px;">Voucher Expiry</p>
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:16px;line-height:1.6;">
+      The expiry timer <strong style="color:var(--text);">starts when the voucher is first funded</strong>, not when it is created. Each time you add more funds, the expiry resets from that point.
+    </p>
+    <p style="font-size:0.875rem;color:var(--text);font-weight:600;margin-bottom:4px;">Phone Number &amp; Note</p>
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:16px;line-height:1.6;">
+      Both are <strong style="color:var(--text);">optional</strong> and <strong style="color:var(--text);">never sent to the server</strong> — they stay on your device only. The phone number pre-fills the WhatsApp sharing message. The note appears in your history so you can track individual vouchers.
     </p>
     <button class="modal-close" id="phone-info-close">Close</button>
   </div>
@@ -145,7 +150,7 @@
         <!-- Step 1: Phone input -->
         <div id="single-step-1">
           <div class="card">
-            <p class="card-title">Create a Voucher</p>
+            <p class="card-title" style="display:flex;align-items:center;gap:6px;">Create a Voucher <button type="button" id="btn-phone-info" style="background:none;border:1px solid var(--text-muted);border-radius:50%;width:18px;height:18px;font-size:0.7rem;color:var(--text-muted);cursor:pointer;line-height:1;padding:0;flex-shrink:0;" aria-label="About this screen">?</button></p>
             <div class="form-group">
             <label>Voucher Expiry</label>
               <div class="pill-group" id="single-expiry-pills">
@@ -155,7 +160,7 @@
                 <button type="button" class="pill-btn" data-secs="2592000">1 month</button>
               </div>
             </div>
-            <label style="display:flex;align-items:center;gap:6px;">Recipient's Phone Number <button type="button" id="btn-phone-info" style="background:none;border:1px solid var(--text-muted);border-radius:50%;width:18px;height:18px;font-size:0.7rem;color:var(--text-muted);cursor:pointer;line-height:1;padding:0;flex-shrink:0;" aria-label="About phone number">?</button></label>
+            <label>Recipient's Phone Number <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(optional)</span></label>
             <div class="input-row">
               <div id="dial-code-wrapper" class="dial-dropdown">
                 <button type="button" id="dial-code-btn" class="dial-code-trigger">+1</button>
@@ -170,6 +175,10 @@
               <button type="button" id="btn-paste-phone" class="btn btn-secondary btn-sm" title="Paste" aria-label="Paste"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="4" rx="1"/><rect x="4" y="6" width="16" height="16" rx="2"/><path d="M9 6h6"/></svg></button>
             </div>
             <div id="single-step1-error" class="error-msg"></div>
+            <div class="form-group" style="margin-top:14px;margin-bottom:0;">
+              <label for="voucher-note">Note <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(optional — stays on your device)</span></label>
+              <input type="text" id="voucher-note" placeholder="e.g. Birthday gift for Mom" autocomplete="off" maxlength="120">
+            </div>
           </div>
           <div class="notice">Unclaimed sats will automatically return to your Lightning Address. Next you’ll fund the voucher with your Bitcoin wallet.</div>
           <button id="btn-create-single" class="btn btn-primary">Create Voucher</button>
@@ -450,12 +459,67 @@
   </div>
 </div>
 
+<!-- ── Fund from history modal ────────────────────────────────────────────────── -->
+<div id="fund-history-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+  <div class="modal-box">
+    <div class="modal-title">Fund Voucher</div>
+
+    <!-- Panel A: Wallet transfer -->
+    <div id="fhm-wallet-panel">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+        <div id="fhm-amount-pills" class="pill-group" style="margin:0;flex:1;justify-content:flex-start;flex-wrap:wrap;"></div>
+        <button id="fhm-btn-max" class="btn btn-secondary btn-sm" style="white-space:nowrap;flex-shrink:0;">Max</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+        <div style="flex:1;height:1px;background:var(--surface-2);"></div>
+        <span style="font-size:0.8rem;color:var(--text-muted);white-space:nowrap;">or custom amount</span>
+        <div style="flex:1;height:1px;background:var(--surface-2);"></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+        <input id="fhm-amount-input" type="text" inputmode="numeric" pattern="[0-9]*"
+               placeholder="" autocomplete="off" style="flex:1;text-align:center;min-width:0;">
+        <span style="color:var(--text-muted);font-size:0.9rem;white-space:nowrap;flex-shrink:0;">sats</span>
+      </div>
+      <div id="fhm-wallet-error" class="error-msg"></div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <button id="fhm-btn-transfer" class="btn btn-primary">Fund Voucher</button>
+        <button id="fhm-btn-lightning-instead" class="btn btn-ghost btn-sm">⚡ Fund with Lightning instead</button>
+      </div>
+    </div>
+
+    <!-- Panel B: Lightning QR -->
+    <div id="fhm-lightning-panel" class="hidden">
+      <label style="display:block;text-align:center;margin-bottom:12px;">👍 Tap or Scan the QR code to fund the voucher.</label>
+      <div class="qr-wrapper">
+        <div id="fhm-qr-container" class="qr-container"></div>
+        <p id="fhm-lnurl-text" class="qr-lnurl"></p>
+      </div>
+      <div id="fhm-wallet-area" style="display:flex;flex-direction:column;align-items:center;gap:2px;margin-top:4px;"></div>
+      <button id="fhm-btn-local-instead" class="btn btn-ghost btn-sm hidden" style="margin-top:10px;width:100%;">Fund with local voucher instead</button>
+    </div>
+
+    <button id="fhm-close" class="modal-close" style="margin-top:16px;">Close</button>
+  </div>
+</div>
+
+<!-- ── Delete history confirm dialog ──────────────────────────────────────────── -->
+<div id="delete-history-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+  <div class="modal-box" style="max-width:320px;text-align:center;">
+    <div class="modal-title" style="margin-bottom:12px;">Remove from history?</div>
+    <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:20px;line-height:1.5;">This only removes it from your local history. The voucher itself is not affected.</p>
+    <div style="display:flex;gap:10px;justify-content:center;">
+      <button id="btn-delete-history-cancel" class="btn btn-ghost btn-sm">Cancel</button>
+      <button id="btn-delete-history-confirm" class="btn btn-sm" style="background:var(--red,#e57373);color:#fff;border:none;border-radius:var(--radius-sm);padding:8px 16px;font-weight:600;cursor:pointer;">Remove</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── Print area ─────────────────────────────────────────────────────────────── -->
 <div id="print-area" style="display:none;"></div>
 
 <script src="/js/qrcode.min.js"></script>
-<script src="/js/wallet-picker.js?v=27"></script>
-<script src="/js/app.js?v=27"></script>
+<script src="/js/wallet-picker.js?v=41"></script>
+<script src="/js/app.js?v=41"></script>
 <script>
 (function () {
   'use strict';
