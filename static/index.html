@@ -8,7 +8,7 @@
   <link rel="manifest" href="/manifest.json">
   <link rel="apple-touch-icon" href="/apple-touch-icon.png">
   <meta name="theme-color" content="#F7931A">
-  <link rel="stylesheet" href="/css/style.css?v=41">
+  <link rel="stylesheet" href="/css/style.css?v=45">
   <script>window.SITE_NAME = '{{SITE_NAME_FULL}}'; window.BATCH_ENABLED = {{BATCH_ENABLED}}; window.DEFAULT_DIAL_CODE = '{{DEFAULT_DIAL_CODE}}';</script>
 </head>
 <body>
@@ -107,16 +107,16 @@
         <p class="card-title">How it works</p>
         <ol class="steps-list" style="margin-top:0;">
           <li>
-            <strong>Enter a phone number</strong>
-            Create a voucher for the person you want to send sats to.
+            <strong>Create a voucher</strong>
+            Choose the voucher settings.
           </li>
           <li>
             <strong>Fund the voucher</strong>
-            Pay the Lightning invoice with any Bitcoin wallet.
+            Pay the Lightning invoice from your Bitcoin wallet.
           </li>
           <li>
             <strong>Send the link</strong>
-            Share the claim link via WhatsApp so they can redeem the sats.
+            Share the claim link so they can redeem the sats.
           </li>
           <li>
             <strong>They claim the sats</strong>
@@ -132,7 +132,8 @@
 
       <!-- Tabs -->
       <div class="tabs">
-        <button class="tab-btn active" data-tab="single">Single Voucher</button>
+        <button class="tab-btn active" data-tab="single">Single</button>
+        <button class="tab-btn" data-tab="batch" disabled>Multi - Coming soon</button>
         <button class="tab-btn" data-tab="batch" disabled>Batch - Coming soon</button>
       </div>
 
@@ -147,7 +148,7 @@
           <span style="font-size:0.75rem;color:var(--text-muted);margin-left:6px;" id="step-label">Step 1 of 3</span>
         </div>
 
-        <!-- Step 1: Phone input -->
+        <!-- Step 1: Create voucher -->
         <div id="single-step-1">
           <div class="card">
             <p class="card-title" style="display:flex;align-items:center;gap:6px;">Create a Voucher <button type="button" id="btn-phone-info" style="background:none;border:1px solid var(--text-muted);border-radius:50%;width:18px;height:18px;font-size:0.7rem;color:var(--text-muted);cursor:pointer;line-height:1;padding:0;flex-shrink:0;" aria-label="About this screen">?</button></p>
@@ -160,28 +161,14 @@
                 <button type="button" class="pill-btn" data-secs="2592000">1 month</button>
               </div>
             </div>
-            <label>Recipient's Phone Number <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(optional)</span></label>
-            <div class="input-row">
-              <div id="dial-code-wrapper" class="dial-dropdown">
-                <button type="button" id="dial-code-btn" class="dial-code-trigger">+1</button>
-                <div id="dial-code-panel" class="dial-code-panel hidden">
-                  <input type="text" id="dial-code-search" class="dial-code-search"
-                         placeholder="Search country…" autocomplete="off">
-                  <ul id="dial-code-list" class="dial-code-list"></ul>
-                </div>
-              </div>
-              <input type="tel" id="phone-number"
-                placeholder="82 123 4567" autocomplete="off">
-              <button type="button" id="btn-paste-phone" class="btn btn-secondary btn-sm" title="Paste" aria-label="Paste"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="4" rx="1"/><rect x="4" y="6" width="16" height="16" rx="2"/><path d="M9 6h6"/></svg></button>
-            </div>
-            <div id="single-step1-error" class="error-msg"></div>
             <div class="form-group" style="margin-top:14px;margin-bottom:0;">
-              <label for="voucher-note">Note <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(optional — stays on your device)</span></label>
+              <label for="voucher-note">Personal note</label>
               <input type="text" id="voucher-note" placeholder="e.g. Birthday gift for Mom" autocomplete="off" maxlength="120">
             </div>
+            <div id="single-step1-error" class="error-msg"></div>
           </div>
           <div class="notice">Unclaimed sats will automatically return to your Lightning Address. Next you’ll fund the voucher with your Bitcoin wallet.</div>
-          <button id="btn-create-single" class="btn btn-primary">Create Voucher</button>
+          <button id="btn-create-single" class="btn btn-primary" disabled>Create Voucher</button>
         </div>
 
         <!-- Step 2: Fund QR -->
@@ -212,27 +199,25 @@
               <button id="btn-wallet-transfer-skip" class="btn btn-ghost btn-sm">⚡ Fund with Lightning instead</button>
             </div>
           </div>
-
+          
           <div id="step2-lightning-section">
             <div class="card" style="text-align:center;">
               <p class="card-title">Fund your voucher</p>
               <p class="card-title" id="step2-voucher-for">Sending to: <span id="step2-phone-display"></span></p>
               <label>👍 Tap or Scan the QR code, or use the buttons below. Send any amount of sats to fund the voucher.</label>
-              <label>ⓘ After paying the invoice, come back here to send the voucher.</label>
-              <label id="step2-phone-row">
-              </label>
               <div class="qr-wrapper">
+                <p>Waiting for payment...</p>
                 <div id="single-qr-container" class="qr-container"></div>
                 <p id="single-lnurl-text" class="qr-lnurl"></p>
+                <button id="btn-pay-local-instead" class="btn btn-ghost btn-sm hidden">Fund with local voucher instead</button>
               </div>
-              <p class="qr-wrapper">Waiting for payment...</p>
-              <button id="btn-pay-local-instead" class="btn btn-ghost btn-sm hidden">Fund with local voucher instead</button>
             </div>
+            <div class="notice">ⓘ After paying the invoice, come back here to share the voucher.</div>
           </div>
-
+          
           <div class="btn-group">
-            <button id="btn-back-step2" class="btn btn-ghost">Change Phone Number</button>
             <button id="btn-next-step2" class="btn btn-ghost">I’ll fund the voucher later</button>
+            <button id="btn-back-step2" class="btn btn-ghost">Cancel</button>
           </div>
         </div>
 
@@ -240,12 +225,34 @@
         <div id="single-step-3" class="hidden">
           <div class="card" style="text-align:center;">
             <p class="card-title">Voucher Ready</p>
-            <div id="share-phone-row">
-              <p class="card-title">Sending to: <span id="share-phone-display"></span></p>
+            <label>
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                     fill="none" stroke="currentColor" stroke-width="2.2"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+                  <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+                  <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+                </svg>
+                Share the link so they can claim the sats.
+            </label>
+            <div class="form-group" style="text-align:left;margin-bottom:12px;">
+              <label>Recipient's Phone Number (optional)</label>
+              <div class="input-row">
+                <div id="dial-code-wrapper" class="dial-dropdown">
+                  <button type="button" id="dial-code-btn" class="dial-code-trigger">+27</button>
+                  <div id="dial-code-panel" class="dial-code-panel hidden">
+                    <input type="text" id="dial-code-search" class="dial-code-search"
+                           placeholder="Search country…" autocomplete="off">
+                    <ul id="dial-code-list" class="dial-code-list"></ul>
+                  </div>
+                </div>
+                <input type="tel" id="phone-number"
+                  placeholder="82 123 4567" autocomplete="off">
+                <button type="button" id="btn-paste-phone" class="btn btn-secondary btn-sm" title="Paste" aria-label="Paste"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="4" rx="1"/><rect x="4" y="6" width="16" height="16" rx="2"/><path d="M9 6h6"/></svg></button>
+              </div>
             </div>
-            <label>Share the link so they can claim the sats.</label>
             <div class="btn-group">
-              <button id="btn-whatsapp" class="btn btn-primary">
+              <button id="btn-whatsapp" class="btn btn-primary" disabled>
                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
                      fill="currentColor" aria-hidden="true">
                   <path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.558 4.117 1.532 5.85L0 24l6.302-1.51A11.94 11.94 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22c-1.89 0-3.663-.5-5.2-1.373l-.373-.213-3.74.897.937-3.635-.237-.385A9.96 9.96 0 0 1 2 12C2 6.477 6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm5.44-7.387c-.298-.149-1.765-.87-2.038-.968-.273-.099-.472-.149-.67.149-.198.298-.769.968-.942 1.167-.174.198-.347.224-.645.075-.298-.149-1.258-.464-2.396-1.48-.885-.789-1.482-1.763-1.656-2.061-.173-.298-.018-.459.13-.607.134-.133.298-.347.447-.521.149-.174.199-.298.298-.497.1-.199.05-.373-.025-.521-.075-.149-.67-1.612-.918-2.207-.242-.579-.487-.5-.67-.51l-.57-.01c-.198 0-.521.074-.794.372-.273.298-1.042 1.018-1.042 2.481s1.067 2.878 1.216 3.077c.149.198 2.1 3.205 5.09 4.493.712.307 1.268.49 1.701.627.715.227 1.367.195 1.882.118.574-.085 1.765-.722 2.014-1.42.248-.698.248-1.297.174-1.42-.075-.124-.273-.199-.571-.348z"/>
@@ -518,8 +525,8 @@
 <div id="print-area" style="display:none;"></div>
 
 <script src="/js/qrcode.min.js"></script>
-<script src="/js/wallet-picker.js?v=41"></script>
-<script src="/js/app.js?v=41"></script>
+<script src="/js/wallet-picker.js?v=45"></script>
+<script src="/js/app.js?v=45"></script>
 <script>
 (function () {
   'use strict';

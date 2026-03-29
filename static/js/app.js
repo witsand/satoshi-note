@@ -591,8 +591,6 @@ function showStep(n) {
 }
 
 function initSingleStep1() {
-  buildDialDropdown(defaultDialCode());
-
   document.querySelectorAll('#single-expiry-pills .pill-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('#single-expiry-pills .pill-btn')
@@ -601,6 +599,12 @@ function initSingleStep1() {
       _singleExpiry = parseInt(btn.dataset.secs, 10);
     });
   });
+
+  const createBtn = $('btn-create-single');
+  const noteInput = $('voucher-note');
+  noteInput.addEventListener('input', () => {
+    createBtn.disabled = noteInput.value.trim().length < 3;
+  });
 }
 
 async function handleCreateSingle() {
@@ -608,29 +612,14 @@ async function handleCreateSingle() {
   const errEl = $('single-step1-error');
   errEl.classList.remove('visible');
 
-  const dialCode = _dialCode;
-  const rawNumber = $('phone-number').value.trim();
-
-  if (rawNumber.length > 0) {
-    // Strip the acceptable "good mistakes": spaces, leading +, parentheses, dashes
-    const stripped = rawNumber.replace(/[\s+()\-]/g, '');
-    // After removing spaces/+, anything non-digit is invalid
-    if (/\D/.test(stripped)) {
-      errEl.textContent = 'Please enter a valid phone number — digits and spaces only.';
-      errEl.classList.add('visible');
-      return;
-    }
-    // Remove leading zeros (common local format), then check minimum length
-    const digits = stripped.replace(/^0+/, '');
-    if (digits.length < 6) {
-      errEl.textContent = 'That phone number looks too short. Please double-check it.';
-      errEl.classList.add('visible');
-      return;
-    }
+  const note = ($('voucher-note') && $('voucher-note').value.trim()) || '';
+  if (note.length < 3) {
+    errEl.textContent = 'Please add a note (at least 3 characters).';
+    errEl.classList.add('visible');
+    return;
   }
 
   const refundCode = localStorage.getItem(LS_REFUND) || '';
-  const ts = Date.now();
 
   await _configReady;
   const secret = generateSecretHex(_randomBytesLength);
@@ -653,13 +642,12 @@ async function handleCreateSingle() {
     vouchers[0].fund_lnurl = lnurlEncode(vouchers[0].fund_url_prefix + vouchers[0].pubkey);
 
     state.vouchers = vouchers;
-
-    // Store phone and note for step 3
-    state.e164 = normalizeToE164(rawNumber, dialCode);
-    state.dialCode = dialCode;
-    state.localNumber = rawNumber;
-    state.hasPhone = rawNumber.length > 0;
-    state.note = ($('voucher-note') && $('voucher-note').value.trim()) || '';
+    state.note = note;
+    // Phone will be collected in step 3
+    state.hasPhone = false;
+    state.e164 = '';
+    state.dialCode = defaultDialCode();
+    state.localNumber = '';
 
     renderFundStep(vouchers[0]);
     showStep(2);
@@ -674,14 +662,9 @@ async function handleCreateSingle() {
 }
 
 function renderFundStep(voucher) {
-  // Show phone from step 1
-  const phoneLine = $('step2-phone-display');
-  if (phoneLine) phoneLine.textContent = '+' + state.e164;
-  const phoneRow = $('step2-phone-row');
-  if (phoneRow) phoneRow.style.display = state.hasPhone ? '' : 'none';
+  // Phone is not yet known — hide phone-related rows on step 2
   const voucherForRow = $('step2-voucher-for');
-  if (voucherForRow) voucherForRow.style.display = state.hasPhone ? '' : 'none';
-  $('btn-back-step2').textContent = state.hasPhone ? '← Change phone number' : '← Add phone number';
+  if (voucherForRow) voucherForRow.style.display = 'none';
   $('btn-pay-local-instead').classList.add('hidden');
 
   $('btn-next-step2').onclick = () => {
@@ -706,34 +689,86 @@ function renderFundStep(voucher) {
   // Wallet open button
   attachWalletButton(lnurlEl, voucher.fund_lnurl);
 
-  // Save to history now (balance is 0 but LNURLs are ready)
-  const e164 = normalizeToE164(state.localNumber, state.dialCode);
+  // Save to history now (balance is 0 but LNURLs are ready; phone added in step 3)
   const histEntry = {
     id: uuidv4(),
     type: 'single',
     createdAt: Math.floor(Date.now() / 1000),
-    phone: '+' + e164,
     batchName: `single-${Date.now()}`,
     refundAfterSeconds: voucher.refund_after_seconds,
     vouchers: state.vouchers,
   };
   if (state.note) histEntry.note = state.note;
   pushHistory(histEntry);
+  state.historyId = histEntry.id;
 
 }
 
 function renderShareStep(voucher) {
-  const e164 = normalizeToE164(state.localNumber, state.dialCode);
-  $('share-phone-display').textContent = '+' + e164;
+  // Reset phone state for step 3
+  state.hasPhone = false;
+  state.e164 = '';
+  state.localNumber = '';
 
-  // "Sending to" row and WhatsApp button — only when phone was supplied
-  $('share-phone-row').style.display = state.hasPhone ? '' : 'none';
-  $('btn-whatsapp').style.display = state.hasPhone ? '' : 'none';
+  // Build dial dropdown now that the phone input is in the DOM (step 3)
+  buildDialDropdown(defaultDialCode());
+
+  // WhatsApp button starts disabled until a valid number is entered
+  const waBtn = $('btn-whatsapp');
+  waBtn.disabled = true;
+
+  const phoneInput = $('phone-number');
+  phoneInput.value = '';
+
+  function validateAndUpdatePhone() {
+    const rawNumber = phoneInput.value.trim();
+    const dialCode = _dialCode;
+    let valid = false;
+    if (rawNumber.length > 0) {
+      const stripped = rawNumber.replace(/[\s+()\-]/g, '');
+      if (!/\D/.test(stripped)) {
+        const digits = stripped.replace(/^0+/, '');
+        if (digits.length >= 6) valid = true;
+      }
+    }
+    state.hasPhone = valid;
+    if (valid) {
+      state.e164 = normalizeToE164(rawNumber, dialCode);
+      state.localNumber = rawNumber;
+      $('share-phone-display').textContent = '+' + state.e164;
+      $('share-phone-row').classList.remove('hidden');
+    } else {
+      state.e164 = '';
+      state.localNumber = rawNumber;
+      $('share-phone-row').classList.add('hidden');
+    }
+    waBtn.disabled = !valid;
+  }
+
+  phoneInput.addEventListener('input', validateAndUpdatePhone);
+
+  $('btn-paste-phone').onclick = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      phoneInput.value = text;
+      phoneInput.dispatchEvent(new Event('input'));
+    } catch (e) { /* clipboard access denied */ }
+  };
 
   const redeemLink = `${window.location.origin}/redeem?lightning=${encodeURIComponent(voucher.claim_lnurl)}`;
 
-  $('btn-whatsapp').onclick = () => {
-    const url = `https://wa.me/${e164}?text=${encodeURIComponent(buildWAMessage(voucher.claim_lnurl))}`;
+  waBtn.onclick = () => {
+    if (!state.hasPhone) return;
+    // Persist phone to history entry
+    if (state.historyId) {
+      const hist = getHistory();
+      const entry = hist.find(e => e.id === state.historyId);
+      if (entry) {
+        entry.phone = '+' + state.e164;
+        saveHistory(hist);
+      }
+    }
+    const url = `https://wa.me/${state.e164}?text=${encodeURIComponent(buildWAMessage(voucher.claim_lnurl))}`;
     window.open(url, '_blank');
   };
 
@@ -784,8 +819,9 @@ function renderShareStep(voucher) {
 
 function resetSingleWizard() {
   stopFundingPoll();
-  $('phone-number').value = '';
+  if ($('phone-number')) $('phone-number').value = '';
   if ($('voucher-note')) $('voucher-note').value = '';
+  $('btn-create-single').disabled = true;
   $('single-step1-error').classList.remove('visible');
   $('single-qr-container').innerHTML = '';
   $('single-lnurl-text').textContent = '';
