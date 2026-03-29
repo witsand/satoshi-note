@@ -104,7 +104,7 @@
 
         <p class="faq-section-label">🟠 Getting Started</p>
 
-        <details class="faq-item"${blinkOpen}>
+        <details id="details-blink" class="faq-item"${blinkOpen}>
           <summary class="faq-question">Download "Blink (Bitcoin Wallet)"
             <span style="background:var(--orange);color:#000;font-size:0.68rem;font-weight:700;padding:2px 8px;border-radius:10px;letter-spacing:0.3px;">Recommended</span>
             <span style="color:var(--text-muted);">＋</span>
@@ -181,7 +181,7 @@
 
         <p class="faq-section-label">🟠 Spending Bitcoin</p>
 
-        <details class="faq-item"${spendOpen}>
+        <details id="details-spend" class="faq-item"${spendOpen}>
           <summary class="faq-question">Where can I spend Bitcoin in South Africa?<span style="color:var(--text-muted);">＋</span></summary>
           <div class="faq-answer">
             <div class="spend-item">
@@ -618,6 +618,10 @@
           } else {
             if (sticker) { sticker.textContent = 'REDEEMED'; sticker.className = 'hc-sticker hc-sticker-green'; }
             if (celEl) celEl.textContent = '✓ Claimed successfully!';
+            const blinkDetails = document.getElementById('details-blink');
+            const spendDetails = document.getElementById('details-spend');
+            if (blinkDetails) blinkDetails.removeAttribute('open');
+            if (spendDetails) spendDetails.setAttribute('open', '');
           }
           if (revealBtn) { revealBtn.disabled = true; revealBtn.style.opacity = '0.5'; }
         } catch { /* silently ignore network errors */ }
