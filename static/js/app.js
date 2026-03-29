@@ -735,12 +735,9 @@ function renderShareStep(voucher) {
     if (valid) {
       state.e164 = normalizeToE164(rawNumber, dialCode);
       state.localNumber = rawNumber;
-      $('share-phone-display').textContent = '+' + state.e164;
-      $('share-phone-row').classList.remove('hidden');
     } else {
       state.e164 = '';
       state.localNumber = rawNumber;
-      $('share-phone-row').classList.add('hidden');
     }
     waBtn.disabled = !valid;
   }
