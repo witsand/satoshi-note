@@ -789,6 +789,19 @@ function renderShareStep(voucher) {
     showStep(1);
   };
 
+  // Show QR Code toggle — shows redemption QR
+  const claimQrSection = $('claim-qr-section');
+  $('btn-show-qr').onclick = () => {
+    const visible = !claimQrSection.classList.contains('hidden');
+    claimQrSection.classList.toggle('hidden', visible);
+    $('btn-show-qr').textContent = visible ? 'Show QR Code' : 'Hide QR Code';
+    if (!visible) {
+      renderQR($('claim-qr-container'), redeemLink, 256);
+    } else {
+      $('claim-qr-container').innerHTML = '';
+    }
+  };
+
   // Add Funds toggle — shows fund QR inline without leaving step 3
   const addFundsSection = $('add-funds-section');
   $('btn-add-funds').onclick = () => {

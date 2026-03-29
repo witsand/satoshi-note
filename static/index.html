@@ -259,9 +259,28 @@
                 </svg>
                 Share Link
               </button>
-              <div class="btn-row">
-                <button id="btn-edit-msg" class="btn btn-ghost" style="flex:1">Edit Message</button>
-                <button id="btn-add-funds" class="btn btn-ghost" style="flex:1">Add More Funds</button>
+              <label>or</label>
+              <button id="btn-show-qr" class="btn btn-secondary">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"
+                     fill="none" stroke="currentColor" stroke-width="2.2"
+                     stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                  <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="3" height="3"/>
+                  <rect x="18" y="14" width="3" height="3"/><rect x="14" y="18" width="3" height="3"/>
+                  <rect x="18" y="18" width="3" height="3"/>
+                </svg>
+                Show QR Code
+              </button>
+              <button id="btn-edit-msg" class="btn btn-ghost">Edit Message</button>
+            </div>
+          </div>
+
+          <!-- Claim QR collapsible -->
+          <div id="claim-qr-section" class="hidden">
+            <div class="card" style="text-align:center;">
+              <p class="card-title">Scan to Claim</p>
+              <div class="qr-wrapper">
+                <div id="claim-qr-container" class="qr-container"></div>
               </div>
             </div>
           </div>
@@ -278,8 +297,9 @@
           </div>
 
           <div class="notice">
-            Share the link so they can claim the sats. They can claim the sats whenever they’re ready. Unclaimed sats return to you after the expiry time.
+            They can claim the sats whenever they’re ready. Unclaimed sats return to you after the expiry time.
           </div>
+          <button id="btn-add-funds" class="btn btn-ghost">Add More Funds</button>
           <button id="btn-done-single" class="btn btn-ghost">Create Another Voucher</button>
         </div>
 
