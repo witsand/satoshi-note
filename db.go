@@ -497,11 +497,11 @@ func (srv *Server) getExpiredVouchersWithBalance() ([]Voucher, error) {
 	return vs, rows.Err()
 }
 
-func (srv *Server) insertRefundTx(dbTx *sql.Tx, refundCode string, amountMsat, dbTxFee int64, refunded bool, errorMsg string) (int64, error) {
+func (srv *Server) insertRefundTx(dbTx *sql.Tx, refundCode string, amountMsat, dbTxFee int64) (int64, error) {
 	res, err := dbTx.Exec(
-		`INSERT INTO refund_txs (refund_code, amount_msat, db_tx_fee, refunded, error_msg, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		refundCode, amountMsat, dbTxFee, boolToInt(refunded), errorMsg, time.Now().Unix(),
+		`INSERT INTO refund_txs (refund_code, amount_msat, db_tx_fee, created_at)
+		 VALUES (?, ?, ?, ?)`,
+		refundCode, amountMsat, dbTxFee, time.Now().Unix(),
 	)
 	if err != nil {
 		return 0, err

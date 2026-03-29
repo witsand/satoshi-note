@@ -55,20 +55,17 @@ func (srv *Server) processRefunds() {
 		dbTxFee := srv.calculateRedeemFee(g.totalMsat)
 		netMsat := g.totalMsat - dbTxFee
 
+		if netMsat < cfg.minRedeemAmountMsat {
+			continue
+		}
+
 		dbTx, err := srv.db.Begin()
 		if err != nil {
 			slog.Error("refund worker: begin tx", "refund_code", refundCode, "err", err)
 			continue
 		}
 
-		var refunded bool
-		var errorMsg string
-		if netMsat < cfg.minRedeemAmountMsat {
-			refunded = true
-			errorMsg = "below minimum"
-		}
-
-		refundTxID, err := srv.insertRefundTx(dbTx, refundCode, netMsat, dbTxFee, refunded, errorMsg)
+		refundTxID, err := srv.insertRefundTx(dbTx, refundCode, netMsat, dbTxFee)
 		if err != nil {
 			slog.Error("refund worker: insert refund tx", "refund_code", refundCode, "err", err)
 			dbTx.Rollback()
@@ -84,10 +81,6 @@ func (srv *Server) processRefunds() {
 		if err := dbTx.Commit(); err != nil {
 			slog.Error("refund worker: commit", "refund_code", refundCode, "err", err)
 			continue
-		}
-
-		if refunded {
-			slog.Info("refund worker: dust voucher skipped", "refund_code", refundCode, "net_msat", netMsat)
 		}
 	}
 }

@@ -24,9 +24,9 @@
     <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:16px;line-height:1.6;">
       The expiry timer <strong style="color:var(--text);">starts when the voucher is first funded</strong>, not when it is created. Each time you add more funds, the expiry resets from that point.
     </p>
-    <p style="font-size:0.875rem;color:var(--text);font-weight:600;margin-bottom:4px;">Phone Number &amp; Note</p>
+    <p style="font-size:0.875rem;color:var(--text);font-weight:600;margin-bottom:4px;">Personal note</p>
     <p style="font-size:0.875rem;color:var(--text-muted);margin-bottom:16px;line-height:1.6;">
-      Both are <strong style="color:var(--text);">optional</strong> and <strong style="color:var(--text);">never sent to the server</strong> — they stay on your device only. The phone number pre-fills the WhatsApp sharing message. The note appears in your history so you can track individual vouchers.
+      It is <strong style="color:var(--text);">never sent to the server</strong> — it's stay on your device only. The note appears in your history so you can track individual vouchers.
     </p>
     <button class="modal-close" id="phone-info-close">Close</button>
   </div>
@@ -167,7 +167,7 @@
             </div>
             <div id="single-step1-error" class="error-msg"></div>
           </div>
-          <div class="notice">Unclaimed sats will automatically return to your Lightning Address. Next you’ll fund the voucher with your Bitcoin wallet.</div>
+          <div class="notice">Unclaimed sats will automatically return to your Lightning Address. Next you’ll fund the voucher from your Bitcoin wallet.</div>
           <button id="btn-create-single" class="btn btn-primary" disabled>Create Voucher</button>
         </div>
 
@@ -285,9 +285,15 @@
             </div>
           </div>
 
+          <div class="notice">
+            They can claim the sats whenever they’re ready. Unclaimed sats return to you after the expiry time.
+          </div>
+
+          <button id="btn-add-funds" class="btn btn-ghost">Add More Funds</button>
+
           <!-- Add Funds collapsible -->
           <div id="add-funds-section" class="hidden">
-            <div class="card">
+            <div class="card" style="text-align:center;">
               <p class="card-title">Add More Sats</p>
               <div class="qr-wrapper">
                 <div id="step3-fund-qr-container" class="qr-container"></div>
@@ -295,11 +301,7 @@
               </div>
             </div>
           </div>
-
-          <div class="notice">
-            They can claim the sats whenever they’re ready. Unclaimed sats return to you after the expiry time.
-          </div>
-          <button id="btn-add-funds" class="btn btn-ghost">Add More Funds</button>
+          
           <button id="btn-done-single" class="btn btn-ghost">Create Another Voucher</button>
         </div>
 
