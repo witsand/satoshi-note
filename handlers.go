@@ -10,7 +10,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,13 +18,6 @@ import (
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
 )
 
-func readPartial(name string) string {
-	data, err := os.ReadFile("./static/" + name)
-	if err != nil {
-		return ""
-	}
-	return string(data)
-}
 
 func lnurlError(w http.ResponseWriter, reason string) {
 	writeJSON(w, http.StatusOK, map[string]string{
@@ -896,26 +888,20 @@ func (srv *Server) getCallbackAmount(r *http.Request) (int64, error) {
 	return msats, nil
 }
 
-func (srv *Server) handleRedeemPage(w http.ResponseWriter, r *http.Request) {
-	srv.renderPage(w, "redeem.html", map[string]string{
-		"{{HEADER_EXTRA}}": `<a href="/" style="font-size:0.75rem;color:var(--text-muted);text-decoration:none;white-space:nowrap;">Gift Bitcoin →</a>`,
-	})
-}
-
-func (srv *Server) handleIndexPage(w http.ResponseWriter, r *http.Request) {
-	srv.renderPage(w, "index.html", map[string]string{
-		"{{FOOTER}}":           readPartial("footer.html"),
-		"{{HEADER_EXTRA}}":     `<div style="display:flex;align-items:center;gap:8px;"><div id="wallet-balance-pill" class="balance-pill hidden">⚡ <span id="wallet-balance-sats">0</span> sats</div><button id="nav-menu" class="nav-btn hidden" aria-label="Menu" style="font-size:1.3rem;padding:4px 8px;">☰</button></div>`,
-		"{{BATCH_ENABLED}}":    strconv.FormatBool(srv.cfg.batchEnabled),
-		"{{DEFAULT_DIAL_CODE}}": srv.cfg.defaultDialCode,
-	})
-}
 
 
 func (srv *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/f/donate")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"random_bytes_length":  srv.cfg.randomBytesLength,
 		"min_fund_amount_msat": srv.cfg.minFundAmountMsat,
+		"site_name":            srv.cfg.siteName,
+		"site_logo_inner":      srv.cfg.siteLogoInner,
+		"base_url":             srv.cfg.baseURL,
+		"github_url":           srv.cfg.githubURL,
+		"donate_lnurl":         donateLNURL,
+		"batch_enabled":        srv.cfg.batchEnabled,
+		"default_dial_code":    srv.cfg.defaultDialCode,
 	})
 }
 
@@ -960,23 +946,6 @@ func (srv *Server) handleAdminRecent(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (srv *Server) handleAdminPage(w http.ResponseWriter, r *http.Request) {
-	srv.renderPage(w, "admin.html", map[string]string{
-		"{{FOOTER}}":       readPartial("footer.html"),
-		"{{HEADER_EXTRA}}": `<div class="refresh-row"><span id="last-refresh-label"></span><button class="btn-refresh" id="btn-refresh">Refresh</button><button class="btn-refresh" id="btn-logout" style="color:var(--text-muted);">Logout</button></div>`,
-	})
-}
-
-func (srv *Server) handleManifest(w http.ResponseWriter, r *http.Request) {
-	b, err := os.ReadFile("./static/manifest.json")
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	out := strings.ReplaceAll(string(b), "{{SITE_NAME_FULL}}", srv.cfg.siteName)
-	w.Header().Set("Content-Type", "application/manifest+json")
-	_, _ = w.Write([]byte(out))
-}
 
 func (srv *Server) getAuditStats() (*AuditStats, error) {
 	s := &AuditStats{}

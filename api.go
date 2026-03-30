@@ -22,22 +22,14 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func (srv *Server) ServeAPI() {
-	strict := newRateLimiter(rate.Every(5*time.Second), 5).Middleware
-	api := newRateLimiter(rate.Every(time.Second), 5).Middleware
+	strict := newRateLimiter(rate.Every(60*time.Second), 2).Middleware
+	api := newRateLimiter(rate.Every(time.Second), 200).Middleware
 	lnurl := newRateLimiter(rate.Every(time.Second), 5).Middleware
 
 	mux := http.NewServeMux()
 
-	// Static pages — no rate limit
-	mux.Handle("/", http.FileServer(http.Dir("./static")))
-	mux.HandleFunc("GET /{$}", srv.handleIndexPage)
-	mux.HandleFunc("GET /redeem", srv.handleRedeemPage)
-	mux.HandleFunc("GET /admin", srv.handleAdminPage)
-	mux.HandleFunc("GET /manifest.json", srv.handleManifest)
-
 	// Strict (1 req/2s, burst 5)
 	mux.Handle("POST /voucher/create", strict(http.HandlerFunc(srv.handleCreateVouchers)))
-	mux.Handle("POST /transfer", strict(http.HandlerFunc(srv.handleTransfer)))
 
 	// API (2 req/s, burst 10)
 	mux.Handle("GET /voucher/status/{pubKey}", api(http.HandlerFunc(srv.handleVoucherStatus)))
@@ -48,6 +40,8 @@ func (srv *Server) ServeAPI() {
 	mux.Handle("GET /config", api(http.HandlerFunc(srv.handleConfig)))
 
 	// LNURL (5 req/s, burst 20)
+	mux.Handle("POST /transfer", lnurl(http.HandlerFunc(srv.handleTransfer)))
+
 	mux.Handle("GET /f/{pubKey}", lnurl(http.HandlerFunc(srv.handleLNURLPayVoucher)))
 	mux.Handle("GET /w/{secret}", lnurl(http.HandlerFunc(srv.handleLNURLWithdraw)))
 	mux.Handle("GET /fund/{pubKey}/callback", lnurl(http.HandlerFunc(srv.handleLNURLPayCallbackVoucher)))

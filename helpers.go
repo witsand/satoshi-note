@@ -4,8 +4,6 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"net/http"
-	"os"
-	"strings"
 )
 
 // calculateRedeemFee returns the fee in msat for a redeem, rounded down to the
@@ -45,31 +43,6 @@ func (srv *Server) voucherStatusBody(s *voucherStatus) map[string]any {
 	}
 }
 
-// renderPage reads a static HTML file, applies common template substitutions,
-// then applies any page-specific extras before writing the response.
-func (srv *Server) renderPage(w http.ResponseWriter, filename string, extras map[string]string) {
-	b, err := os.ReadFile("./static/" + filename)
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/f/donate")
-	// Step 1: expand {{HEADER}} so {{HEADER_EXTRA}} inside it is present.
-	html := strings.ReplaceAll(string(b), "{{HEADER}}", readPartial("header.html"))
-	// Step 2: apply page-specific extras ({{HEADER_EXTRA}}, {{FOOTER}}, etc.)
-	// so footer partial tokens are present for the common pass below.
-	for k, v := range extras {
-		html = strings.ReplaceAll(html, k, v)
-	}
-	// Step 3: resolve common tokens (including those inside expanded partials).
-	html = strings.ReplaceAll(html, "{{BASE_URL}}", srv.cfg.baseURL)
-	html = strings.ReplaceAll(html, "{{GITHUB_URL}}", srv.cfg.githubURL)
-	html = strings.ReplaceAll(html, "{{DONATE_LNURL}}", donateLNURL)
-	html = strings.ReplaceAll(html, "{{SITE_NAME_FULL}}", srv.cfg.siteName)
-	html = strings.ReplaceAll(html, "{{SITE_LOGO_INNER}}", srv.cfg.siteLogoInner)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write([]byte(html))
-}
 
 // requireAdmin returns true if the request carries a valid admin token.
 // It writes a 401 and returns false otherwise.

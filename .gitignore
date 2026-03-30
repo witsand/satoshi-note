@@ -13,3 +13,6 @@ vendor/
 *.test
 *.out
 coverage.txt
+
+# Claude plans for later review
+plan/
