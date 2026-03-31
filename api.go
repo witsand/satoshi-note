@@ -29,18 +29,14 @@ func (srv *Server) ServeAPI() {
 	mux := http.NewServeMux()
 
 	// Strict (1 req/2s, burst 5)
-	mux.Handle("POST /voucher/create", strict(http.HandlerFunc(srv.handleCreateVouchers)))
+	mux.Handle("POST /create", strict(http.HandlerFunc(srv.handleCreateVouchers)))
 
 	// API (2 req/s, burst 10)
-	mux.Handle("GET /voucher/status/{pubKey}", api(http.HandlerFunc(srv.handleVoucherStatus)))
-	mux.Handle("POST /voucher/status/batch", api(http.HandlerFunc(srv.handleVoucherStatusBatch)))
-	mux.Handle("POST /leaderboard", api(http.HandlerFunc(srv.handleLeaderboard)))
-	mux.Handle("GET /admin/stats", api(http.HandlerFunc(srv.handleAdminStats)))
-	mux.Handle("GET /admin/recent", api(http.HandlerFunc(srv.handleAdminRecent)))
+	mux.Handle("POST /status", api(http.HandlerFunc(srv.handleVoucherStatusBatch)))
 	mux.Handle("GET /config", api(http.HandlerFunc(srv.handleConfig)))
 
 	// LNURL (5 req/s, burst 20)
-	mux.Handle("POST /transfer", lnurl(http.HandlerFunc(srv.handleTransfer)))
+	mux.Handle("GET /transfer/{secret}/{pubKey}", lnurl(http.HandlerFunc(srv.handleTransfer)))
 
 	mux.Handle("GET /f/{pubKey}", lnurl(http.HandlerFunc(srv.handleLNURLPayVoucher)))
 	mux.Handle("GET /w/{secret}", lnurl(http.HandlerFunc(srv.handleLNURLWithdraw)))

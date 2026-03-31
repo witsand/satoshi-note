@@ -10,14 +10,12 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
 )
-
 
 func lnurlError(w http.ResponseWriter, reason string) {
 	writeJSON(w, http.StatusOK, map[string]string{
@@ -133,16 +131,6 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 
 	key := r.PathValue("pubKey")
 
-	if key == "donate" {
-		writeJSON(w, http.StatusOK, lnurlPayResponse(
-			"Donate to "+srv.cfg.siteName,
-			srv.cfg.baseURL+"/fund/donate/callback",
-			srv.cfg.minFundAmountMsat, srv.cfg.maxFundAmountMsat,
-			map[string]any{"commentAllowed": 200},
-		))
-		return
-	}
-
 	if v, err := srv.getVoucherByPubKey(srv.db, key); err == nil {
 		remaining := srv.cfg.maxFundAmountMsat - v.BalanceMsat
 		if remaining < srv.cfg.minFundAmountMsat {
@@ -150,7 +138,7 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		writeJSON(w, http.StatusOK, lnurlPayResponse(
-			"Fund a "+srv.cfg.siteName+" Voucher: "+key,
+			"Fund a Voucher",
 			srv.cfg.baseURL+"/fund/"+key+"/callback",
 			srv.cfg.minFundAmountMsat, remaining,
 			nil,
@@ -177,7 +165,7 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, lnurlPayResponse(
-		"Fund "+srv.cfg.siteName+" Vouchers ("+strconv.Itoa(len(vs))+") - Batch: "+key,
+		"Fund a Batch Vouchers",
 		srv.cfg.baseURL+"/fund/"+key+"/callback",
 		srv.cfg.minFundAmountMsat*n, batchMax,
 		nil,
@@ -193,66 +181,12 @@ func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.
 
 	key := r.PathValue("pubKey")
 
-	if key == "donate" {
-		amountMsat, err := srv.getCallbackAmount(r)
-		if err != nil {
-			lnurlError(w, "invalid amount")
-			return
-		}
-		comment := r.URL.Query().Get("comment")
-		if len(comment) > 200 {
-			comment = comment[:200]
-		}
-		sat := amountMsat / 1000
-		amountMsat = sat * 1000
-		usat, err := Int64ToUint64(sat)
-		if err != nil {
-			lnurlError(w, "invalid amount")
-			return
-		}
-		uexpiry, err := Int64ToUint32(srv.cfg.invoiceExpirySeconds)
-		if err != nil {
-			lnurlError(w, "internal error")
-			return
-		}
-		resp, rawErr := srv.ln.ReceivePayment(spark.ReceivePaymentRequest{
-			PaymentMethod: spark.ReceivePaymentMethodBolt11Invoice{
-				AmountSats:  &usat,
-				Description: "Donate to " + srv.cfg.siteName,
-				ExpirySecs:  &uexpiry,
-			},
-		})
-		if err := sdkErr(rawErr); err != nil {
-			slog.Error("create donation invoice", "err", err)
-			lnurlError(w, "failed to create invoice")
-			return
-		}
-		var feeMsat int64
-		if resp.Fee != nil {
-			feeMsat = resp.Fee.Int64() * 1000
-		}
-		pr := resp.PaymentRequest
-		donKey, err := srv.insertDonation(pr, amountMsat, feeMsat, comment)
-		if err != nil {
-			slog.Error("insert donation", "err", err)
-			lnurlError(w, "internal error")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "OK",
-			"pr":     pr,
-			"routes": []any{},
-			"verify": srv.cfg.baseURL + "/verify/" + donKey,
-		})
-		return
-	}
-
 	tx := &FundTx{}
 
 	if v, err := srv.getVoucherByPubKey(srv.db, key); err == nil {
 		tx.PubKey = key
 		var err error
-		tx.Msat, err = srv.getCallbackAmount(r)
+		tx.Msat, err = srv.getCallbackAmount(r, 1)
 		if err != nil {
 			lnurlError(w, "invalid amount")
 			return
@@ -261,7 +195,7 @@ func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.
 			lnurlError(w, "amount would exceed maximum voucher balance")
 			return
 		}
-		if err = srv.getCallbackBolt11(tx, "Fund a "+srv.cfg.siteName+" Voucher: "+key); err != nil {
+		if err = srv.getCallbackBolt11(tx, "Fund a Voucher"); err != nil {
 			slog.Error("create invoice", "err", err)
 			lnurlError(w, "failed to create invoice")
 			return
@@ -273,31 +207,23 @@ func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.
 			return
 		}
 		tx.BatchID = key
-		msatsStr := r.URL.Query().Get("amount")
-		if msatsStr == "" {
-			lnurlError(w, "missing amount")
-			return
-		}
-		msats, err := strconv.ParseInt(msatsStr, 10, 64)
-		if err != nil {
-			lnurlError(w, "invalid amount")
-			return
-		}
 		n := int64(len(vs))
+		tx.Msat, err = srv.getCallbackAmount(r, n)
+		if err != nil {
+			lnurlError(w, err.Error())
+			return
+		}
 		minRemaining := srv.cfg.maxFundAmountMsat
 		for _, v := range vs {
 			if rem := srv.cfg.maxFundAmountMsat - v.BalanceMsat; rem < minRemaining {
 				minRemaining = rem
 			}
 		}
-		batchMin := srv.cfg.minFundAmountMsat * n
-		batchMax := minRemaining * n
-		if msats < batchMin || msats > batchMax {
-			lnurlError(w, "amount out of range")
+		if tx.Msat > minRemaining*n {
+			lnurlError(w, "amount would exceed maximum voucher balance")
 			return
 		}
-		tx.Msat = msats
-		if err = srv.getCallbackBolt11(tx, "Fund "+srv.cfg.siteName+" Vouchers ("+strconv.Itoa(len(vs))+") - Batch: "+key); err != nil {
+		if err = srv.getCallbackBolt11(tx, "Fund a Batch Vouchers"); err != nil {
 			slog.Error("create invoice", "err", err)
 			lnurlError(w, "failed to create invoice")
 			return
@@ -318,29 +244,22 @@ func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.
 	})
 }
 
-// POST /transfer — move funds from a non-single-use voucher to any destination (pubKey, batchID, or "donate")
+// POST /transfer — move funds from a non-single-use voucher to any destination (pubKey or batchID)
 func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	if !srv.cfg.fundActive || !srv.cfg.redeemActive {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "transfers are currently disabled"})
 		return
 	}
 
-	var req struct {
-		Secret     string `json:"secret"`
-		PubKey     string `json:"pub_key"`
-		AmountMsat int64  `json:"amount"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request body"})
-		return
-	}
-	if req.Secret == "" || req.PubKey == "" || req.AmountMsat <= 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "secret, pub_key, and amount are required"})
+	secret := r.PathValue("secret")
+	pubKey := r.PathValue("pubKey")
+	if secret == "" || pubKey == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "secret and pubKey are required"})
 		return
 	}
 
 	// Resolve source voucher
-	srcPubKey, err := secretToPubKey(req.Secret)
+	srcPubKey, err := secretToPubKey(secret)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid secret"})
 		return
@@ -355,45 +274,50 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve destination and validate minimum amount
-	isDonate := req.PubKey == "donate"
+	// Resolve destination
+	var dstVoucher *Voucher
+	var dstVouchers []Voucher
 	var dstPubKey, dstBatchID string
-	var dstCount int64 = 1
 
-	if !isDonate {
-		if _, err := srv.getVoucherByPubKey(srv.db, req.PubKey); err == nil {
-			if req.PubKey == srcPubKey {
-				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "source and destination cannot be the same voucher"})
-				return
-			}
-			dstPubKey = req.PubKey
-		} else {
-			vs, err := srv.getVouchersByBatchID(srv.db, req.PubKey)
-			if err != nil {
-				writeJSON(w, http.StatusNotFound, map[string]string{"error": "destination not found"})
-				return
-			}
-			dstBatchID = req.PubKey
-			dstCount = int64(len(vs))
+	if v, err := srv.getVoucherByPubKey(srv.db, pubKey); err == nil {
+		if pubKey == srcPubKey {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "source and destination cannot be the same voucher"})
+			return
 		}
+		dstVoucher = v
+		dstPubKey = pubKey
+	} else {
+		vs, err := srv.getVouchersByBatchID(srv.db, pubKey)
+		if err != nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "destination not found"})
+			return
+		}
+		dstVouchers = vs
+		dstBatchID = pubKey
 	}
 
-	if req.AmountMsat < srv.cfg.minFundAmountMsat*dstCount {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "amount below minimum"})
+	dstCount := int64(1)
+	if dstBatchID != "" {
+		dstCount = int64(len(dstVouchers))
+	}
+
+	amountMsat, err := srv.getCallbackAmount(r, dstCount)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+
+	if amountMsat > src.BalanceMsat {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "insufficient balance"})
 		return
 	}
 
 	// Calculate fee (rounded down to nearest sat)
-	feeMsat := req.AmountMsat * srv.cfg.internalFeeBPS / 10000 / 1000 * 1000
+	feeMsat := amountMsat * srv.cfg.internalFeeBPS / 10000 / 1000 * 1000
 	if feeMsat < srv.cfg.minInternalFeeMsat {
 		feeMsat = srv.cfg.minInternalFeeMsat / 1000 * 1000
 	}
-	netMsat := req.AmountMsat - feeMsat
-
-	if req.AmountMsat > src.BalanceMsat {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "insufficient balance"})
-		return
-	}
+	netMsat := amountMsat - feeMsat
 
 	// Execute atomically
 	dbTx, err := srv.db.Begin()
@@ -405,35 +329,23 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	defer dbTx.Rollback()
 
 	// Deduct from source
-	if err := srv.updateVoucherBalance(dbTx, src.ID, -req.AmountMsat); err != nil {
+	if err := srv.updateVoucherBalance(dbTx, src.ID, -amountMsat); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "insufficient balance"})
 		return
 	}
 
 	// Credit destination
 	var dustMsat int64
-	if isDonate {
-		// funds remain in node wallet; audit record inserted below
-	} else if dstPubKey != "" {
-		dst, err := srv.getVoucherByPubKey(dbTx, dstPubKey)
-		if err != nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "destination voucher not found"})
-			return
-		}
-		if err := srv.updateVoucherBalance(dbTx, dst.ID, netMsat); err != nil {
-			slog.Error("transfer credit destination", "err", err)
+	if dstVoucher != nil {
+		if err := srv.updateVoucherBalance(dbTx, dstVoucher.ID, netMsat); err != nil {
+			slog.Error("transfer credit voucher", "err", err)
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to credit destination"})
 			return
 		}
 	} else {
-		vs, err := srv.getVouchersByBatchID(dbTx, dstBatchID)
-		if err != nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "destination batch not found"})
-			return
-		}
-		share := netMsat / int64(len(vs)) / 1000 * 1000
-		dustMsat = netMsat - share*int64(len(vs))
-		for _, v := range vs {
+		share := netMsat / int64(len(dstVouchers)) / 1000 * 1000
+		dustMsat = netMsat - share*int64(len(dstVouchers))
+		for _, v := range dstVouchers {
 			if err := srv.updateVoucherBalance(dbTx, v.ID, share); err != nil {
 				slog.Error("transfer credit batch voucher", "err", err)
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to credit destination"})
@@ -442,7 +354,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := srv.insertTransferTx(dbTx, srcPubKey, dstPubKey, dstBatchID, isDonate, req.AmountMsat, feeMsat, netMsat, dustMsat); err != nil {
+	if err := srv.insertTransferTx(dbTx, srcPubKey, dstPubKey, dstBatchID, amountMsat, feeMsat, netMsat, dustMsat); err != nil {
 		slog.Error("insert transfer tx", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record transfer"})
 		return
@@ -455,9 +367,9 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"amount": req.AmountMsat,
-		"fee_msat":    feeMsat,
-		"net_msat":    netMsat,
+		"amount":   amountMsat,
+		"fee_msat": feeMsat,
+		"net_msat": netMsat,
 	})
 }
 
@@ -469,26 +381,16 @@ func (srv *Server) handleLNURLVerify(w http.ResponseWriter, r *http.Request) {
 
 	key := r.PathValue("key")
 
-	if tx, err := srv.getFundTxByKey(key); err == nil {
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status":   "OK",
-			"settled":  tx.Status == TxConfirmed,
-			"preimage": tx.PaymentPreimage,
-			"pr":       tx.PR,
-		})
-		return
-	}
-
-	don, err := srv.getDonationByKey(key)
+	tx, err := srv.getFundTxByKey(key)
 	if err != nil {
 		lnurlError(w, "not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":   "OK",
-		"settled":  don.Status == TxConfirmed,
-		"preimage": don.PaymentPreimage,
-		"pr":       don.PR,
+		"settled":  tx.Status == TxConfirmed,
+		"preimage": tx.PaymentPreimage,
+		"pr":       tx.PR,
 	})
 }
 
@@ -551,7 +453,7 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 		"k1":                 k1,
 		"minWithdrawable":    minRedeemable,
 		"maxWithdrawable":    maxRedeemable,
-		"defaultDescription": "Redeem Voucher from " + srv.cfg.siteName,
+		"defaultDescription": "Redeem Voucher",
 	})
 }
 
@@ -749,87 +651,6 @@ func (srv *Server) updateFundBalance(dbTx *sql.Tx, tx *FundTx) (int64, error) {
 	return dust, nil
 }
 
-type leaderboardRank struct {
-	Rank  int `json:"rank"`
-	Total int `json:"total"`
-}
-
-func top3(dist map[string]int) []int {
-	vals := make([]int, 0, len(dist))
-	for _, v := range dist {
-		vals = append(vals, v)
-	}
-	sort.Sort(sort.Reverse(sort.IntSlice(vals)))
-	if len(vals) > 3 {
-		vals = vals[:3]
-	}
-	return vals
-}
-
-func rankIn(userCount int, dist map[string]int) leaderboardRank {
-	rank := 1
-	for _, cnt := range dist {
-		if cnt > userCount {
-			rank++
-		}
-	}
-	return leaderboardRank{Rank: rank, Total: len(dist)}
-}
-
-func (srv *Server) handleLeaderboard(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		FundedMonth     int `json:"funded_month"`
-		FundedAllTime   int `json:"funded_all_time"`
-		RedeemedMonth   int `json:"redeemed_month"`
-		RedeemedAllTime int `json:"redeemed_all_time"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
-		return
-	}
-	if req.FundedMonth < 0 || req.FundedAllTime < 0 || req.RedeemedMonth < 0 || req.RedeemedAllTime < 0 {
-		http.Error(w, "counts must be non-negative", http.StatusBadRequest)
-		return
-	}
-
-	now := time.Now().UTC()
-	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).Unix()
-
-	fundedMonth, err := srv.leaderboardFundedMonth(monthStart)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	fundedAll, err := srv.leaderboardFundedAllTime()
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	redeemedMonth, err := srv.leaderboardRedeemedMonth(monthStart)
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	redeemedAll, err := srv.leaderboardRedeemedAllTime()
-	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"funded_month":      rankIn(req.FundedMonth, fundedMonth),
-		"funded_all_time":   rankIn(req.FundedAllTime, fundedAll),
-		"redeemed_month":    rankIn(req.RedeemedMonth, redeemedMonth),
-		"redeemed_all_time": rankIn(req.RedeemedAllTime, redeemedAll),
-		"top_scores": map[string][]int{
-			"funded_month":      top3(fundedMonth),
-			"funded_all_time":   top3(fundedAll),
-			"redeemed_month":    top3(redeemedMonth),
-			"redeemed_all_time": top3(redeemedAll),
-		},
-	})
-}
-
 func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PubKeys []string `json:"pubkeys"`
@@ -861,18 +682,7 @@ func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, result)
 }
 
-func (srv *Server) handleVoucherStatus(w http.ResponseWriter, r *http.Request) {
-	pubKey := r.PathValue("pubKey")
-	s, err := srv.getVoucherStatusByPubKey(pubKey)
-	if err != nil {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	}
-
-	writeJSON(w, http.StatusOK, srv.voucherStatusBody(s))
-}
-
-func (srv *Server) getCallbackAmount(r *http.Request) (int64, error) {
+func (srv *Server) getCallbackAmount(r *http.Request, n int64) (int64, error) {
 	msatsStr := r.URL.Query().Get("amount")
 
 	if msatsStr == "" {
@@ -882,137 +692,16 @@ func (srv *Server) getCallbackAmount(r *http.Request) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("invalid amount")
 	}
-	if msats < srv.cfg.minFundAmountMsat || msats > srv.cfg.maxFundAmountMsat {
+	if msats < srv.cfg.minFundAmountMsat*n || msats > srv.cfg.maxFundAmountMsat*n {
 		return 0, fmt.Errorf("amount out of range")
 	}
 	return msats, nil
 }
 
-
-
 func (srv *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
-	donateLNURL, _ := lnurlEncode(srv.cfg.baseURL + "/f/donate")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"random_bytes_length":  srv.cfg.randomBytesLength,
 		"min_fund_amount_msat": srv.cfg.minFundAmountMsat,
-		"site_name":            srv.cfg.siteName,
-		"site_logo_inner":      srv.cfg.siteLogoInner,
 		"base_url":             srv.cfg.baseURL,
-		"github_url":           srv.cfg.githubURL,
-		"donate_lnurl":         donateLNURL,
-		"batch_enabled":        srv.cfg.batchEnabled,
-		"default_dial_code":    srv.cfg.defaultDialCode,
 	})
-}
-
-func (srv *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
-	if !srv.requireAdmin(w, r) {
-		return
-	}
-	stats, err := srv.getAuditStats()
-	if err != nil {
-		slog.Error("get audit stats", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	writeJSON(w, http.StatusOK, stats)
-}
-
-func (srv *Server) handleAdminRecent(w http.ResponseWriter, r *http.Request) {
-	if !srv.requireAdmin(w, r) {
-		return
-	}
-	redeems, err := srv.getRecentRedeemTxs(10)
-	if err != nil {
-		slog.Error("get recent redeem txs", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	refunds, err := srv.getRecentRefundTxs(10)
-	if err != nil {
-		slog.Error("get recent refund txs", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	if redeems == nil {
-		redeems = []RedeemTx{}
-	}
-	if refunds == nil {
-		refunds = []RefundTx{}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"redeems": redeems,
-		"refunds": refunds,
-	})
-}
-
-
-func (srv *Server) getAuditStats() (*AuditStats, error) {
-	s := &AuditStats{}
-
-	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM vouchers`).Scan(&s.TotalVouchers); err != nil {
-		return nil, err
-	}
-	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM vouchers WHERE active=1 AND balance_msat=0`).Scan(&s.ActiveUnfunded); err != nil {
-		return nil, err
-	}
-	if err := srv.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(balance_msat),0) FROM vouchers WHERE active=1 AND balance_msat>0`).Scan(&s.ActiveFunded, &s.ClaimableMsat); err != nil {
-		return nil, err
-	}
-	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM vouchers WHERE active=0 AND refunded=0`).Scan(&s.TotalRedeemed); err != nil {
-		return nil, err
-	}
-	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM vouchers WHERE active=0 AND refunded=1`).Scan(&s.TotalRefunded); err != nil {
-		return nil, err
-	}
-	if err := srv.db.QueryRow(`SELECT COUNT(*) FROM refund_txs WHERE refunded=0 AND error_msg != ''`).Scan(&s.FailedRefunds); err != nil {
-		return nil, err
-	}
-	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(msat),0) FROM redeem_txs WHERE status='confirmed'`).Scan(&s.RedeemedMsat); err != nil {
-		return nil, err
-	}
-	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(amount_msat),0) FROM refund_txs WHERE refunded=1`).Scan(&s.RefundedMsat); err != nil {
-		return nil, err
-	}
-	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(amount_msat),0) FROM refund_txs WHERE refunded=0 AND refund_code != ''`).Scan(&s.PendingRefundMsat); err != nil {
-		return nil, err
-	}
-	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(msat),0) FROM fund_txs WHERE status='confirmed'`).Scan(&s.TotalDepositedMsat); err != nil {
-		return nil, err
-	}
-	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(dust_msat),0) FROM fund_txs WHERE status='confirmed'`).Scan(&s.TotalDustMsat); err != nil {
-		return nil, err
-	}
-	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(amount_msat),0) FROM refund_txs WHERE refund_code=''`).Scan(&s.ExpiredNoRefundMsat); err != nil {
-		return nil, err
-	}
-
-	infoResp, err := srv.ln.GetInfo(spark.GetInfoRequest{})
-	if sdkErr(err) == nil {
-		s.BreezBalanceMsat = int64(infoResp.BalanceSats) * 1000
-	} else {
-		s.BreezBalanceMsat = -1
-	}
-
-	if s.BreezBalanceMsat >= 0 {
-		s.SurplusMsat = s.BreezBalanceMsat - s.ClaimableMsat - s.PendingRefundMsat
-	} else {
-		s.SurplusMsat = -1
-	}
-
-	var redeemFees, refundFees int64
-	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(db_tx_fee),0) FROM redeem_txs WHERE status='confirmed'`).Scan(&redeemFees); err != nil {
-		return nil, err
-	}
-	if err := srv.db.QueryRow(`SELECT COALESCE(SUM(db_tx_fee),0) FROM refund_txs WHERE refunded=1`).Scan(&refundFees); err != nil {
-		return nil, err
-	}
-	s.TotalDbFeeMsat = redeemFees + refundFees
-
-	s.TotalDonations, s.ConfirmedDonations, s.DonatedMsat, err = srv.getDonationStats()
-	if err != nil {
-		return nil, err
-	}
-
-	return s, nil
 }

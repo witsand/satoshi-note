@@ -40,7 +40,81 @@ func openDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+	if err := runMigrations(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("run migrations: %w", err)
+	}
 	return db, nil
+}
+
+func runMigrations(db *sql.DB) error {
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return err
+	}
+
+	if version < 1 {
+		// Migration 1: drop donations table; rebuild transfer_txs without to_donate.
+		if _, err := db.Exec(`DROP TABLE IF EXISTS donations`); err != nil {
+			return err
+		}
+		if _, err := db.Exec(`DROP INDEX IF EXISTS idx_donations_pr`); err != nil {
+			return err
+		}
+		// Rebuild transfer_txs only if to_donate column exists.
+		rows, err := db.Query(`PRAGMA table_info(transfer_txs)`)
+		if err != nil {
+			return err
+		}
+		hasDonate := false
+		for rows.Next() {
+			var cid int
+			var name, typ, notnull, dflt string
+			var pk int
+			_ = rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk)
+			if name == "to_donate" {
+				hasDonate = true
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if hasDonate {
+			if _, err := db.Exec(`
+				CREATE TABLE transfer_txs_new (
+					id           INTEGER PRIMARY KEY,
+					from_pub_key TEXT    NOT NULL,
+					to_pub_key   TEXT    NOT NULL DEFAULT "",
+					to_batch_id  TEXT    NOT NULL DEFAULT "",
+					amount_msat  INTEGER NOT NULL,
+					fee_msat     INTEGER NOT NULL,
+					net_msat     INTEGER NOT NULL,
+					dust_msat    INTEGER NOT NULL DEFAULT 0,
+					created_at   INTEGER NOT NULL
+				)`); err != nil {
+				return err
+			}
+			if _, err := db.Exec(`
+				INSERT INTO transfer_txs_new
+					(id, from_pub_key, to_pub_key, to_batch_id, amount_msat, fee_msat, net_msat, dust_msat, created_at)
+				SELECT id, from_pub_key, to_pub_key, to_batch_id, amount_msat, fee_msat, net_msat, dust_msat, created_at
+				FROM transfer_txs`); err != nil {
+				return err
+			}
+			if _, err := db.Exec(`DROP TABLE transfer_txs`); err != nil {
+				return err
+			}
+			if _, err := db.Exec(`ALTER TABLE transfer_txs_new RENAME TO transfer_txs`); err != nil {
+				return err
+			}
+		}
+		if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func initSchema(db *sql.DB) error {
@@ -129,28 +203,11 @@ func initSchema(db *sql.DB) error {
 		from_pub_key TEXT    NOT NULL,
 		to_pub_key   TEXT    NOT NULL DEFAULT "",
 		to_batch_id  TEXT    NOT NULL DEFAULT "",
-		to_donate    INTEGER NOT NULL DEFAULT 0,
 		amount_msat  INTEGER NOT NULL,
 		fee_msat     INTEGER NOT NULL,
 		net_msat     INTEGER NOT NULL,
 		dust_msat    INTEGER NOT NULL DEFAULT 0,
 		created_at   INTEGER NOT NULL
-	)`)
-	if err != nil {
-		return err
-	}
-
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS donations (
-		key              TEXT PRIMARY KEY,
-		amount_msat      INTEGER NOT NULL DEFAULT 0,
-		fee_msat         INTEGER NOT NULL DEFAULT 0,
-		pr               TEXT NOT NULL,
-		payment_hash     TEXT NOT NULL DEFAULT "",
-		payment_preimage TEXT NOT NULL DEFAULT "",
-		comment          TEXT NOT NULL DEFAULT "",
-		status           TEXT NOT NULL,
-		created_at       INTEGER NOT NULL,
-		updated_at       INTEGER NOT NULL DEFAULT 0
 	)`)
 	if err != nil {
 		return err
@@ -164,7 +221,6 @@ func initSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_redeem_sessions_k1      ON redeem_sessions(k1, pub_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_redeem_txs_voucher_id   ON redeem_txs(voucher_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_refund_txs_refunded     ON refund_txs(refunded)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_donations_pr     ON donations(pr)`,
 	}
 	for _, idx := range indexes {
 		if _, err := db.Exec(idx); err != nil {
@@ -329,25 +385,6 @@ type voucherStatus struct {
 	Active        bool
 	Refunded      bool
 	RefundPending bool // refund tx allocated but not yet paid
-}
-
-func (srv *Server) getVoucherStatusByPubKey(pubKey string) (*voucherStatus, error) {
-	row := srv.db.QueryRow(
-		`SELECT balance_msat, updated_at, refund_after_seconds, active, refunded, refund_tx_id
-		 FROM vouchers WHERE pub_key = ?`, pubKey)
-	var s voucherStatus
-	var updatedAt, refundAfterSeconds, refundTxID int64
-	var activeInt, refundedInt int
-	if err := row.Scan(&s.BalanceMsat, &updatedAt, &refundAfterSeconds, &activeInt, &refundedInt, &refundTxID); err != nil {
-		return nil, err
-	}
-	s.Active = activeInt == 1
-	s.Refunded = refundedInt == 1
-	s.RefundPending = refundTxID > 0 && !s.Refunded
-	if updatedAt != 0 {
-		s.ExpiresAt = updatedAt + refundAfterSeconds
-	}
-	return &s, nil
 }
 
 func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherStatus, error) {
@@ -550,50 +587,6 @@ func (srv *Server) markRefundTxPaid(id, netDbTxFee, actualFee int64) error {
 	return err
 }
 
-func (srv *Server) getRecentRedeemTxs(limit int) ([]RedeemTx, error) {
-	rows, err := srv.db.Query(
-		`SELECT id, voucher_id, msat, ln_fee, db_tx_fee, actual_ln_fee, status, error_msg, created_at
-		 FROM redeem_txs ORDER BY id DESC LIMIT ?`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var txs []RedeemTx
-	for rows.Next() {
-		var rt RedeemTx
-		var status string
-		if err := rows.Scan(&rt.ID, &rt.VoucherID, &rt.AmountMsat, &rt.LnFee, &rt.DbTxFee, &rt.ActualLnFee, &status, &rt.ErrorMsg, &rt.CreatedAt); err != nil {
-			return nil, err
-		}
-		rt.Status = TxStatus(status)
-		txs = append(txs, rt)
-	}
-	return txs, rows.Err()
-}
-
-func (srv *Server) getRecentRefundTxs(limit int) ([]RefundTx, error) {
-	rows, err := srv.db.Query(
-		`SELECT id, refund_code, amount_msat, db_tx_fee, actual_fee, refunded, error_msg, created_at
-		 FROM refund_txs ORDER BY id DESC LIMIT ?`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var txs []RefundTx
-	for rows.Next() {
-		var rt RefundTx
-		var refunded int
-		if err := rows.Scan(&rt.ID, &rt.RefundCode, &rt.AmountMsat, &rt.DbTxFee, &rt.ActualFee, &refunded, &rt.ErrorMsg, &rt.CreatedAt); err != nil {
-			return nil, err
-		}
-		rt.Refunded = refunded == 1
-		txs = append(txs, rt)
-	}
-	return txs, rows.Err()
-}
-
 func (srv *Server) markRefundTxFailed(id int64, errMsg string) error {
 	_, err := srv.db.Exec(
 		`UPDATE refund_txs SET error_msg = ?, updated_at = ? WHERE id = ?`,
@@ -609,138 +602,11 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-func (srv *Server) insertDonation(pr string, amountMsat, feeMsat int64, comment string) (string, error) {
-	keyBytes := make([]byte, srv.cfg.randomBytesLength)
-	if _, err := rand.Read(keyBytes); err != nil {
-		return "", err
-	}
-	key := hex.EncodeToString(keyBytes)
-	_, err := srv.db.Exec(
-		`INSERT INTO donations (key, pr, amount_msat, fee_msat, comment, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		key, pr, amountMsat, feeMsat, comment, TxPending, time.Now().Unix(),
-	)
-	return key, err
-}
-
-func (srv *Server) insertTransferTx(dbTx *sql.Tx, fromPubKey, toPubKey, toBatchID string, toDonate bool, amountMsat, feeMsat, netMsat, dustMsat int64) error {
+func (srv *Server) insertTransferTx(dbTx *sql.Tx, fromPubKey, toPubKey, toBatchID string, amountMsat, feeMsat, netMsat, dustMsat int64) error {
 	_, err := dbTx.Exec(
-		`INSERT INTO transfer_txs (from_pub_key, to_pub_key, to_batch_id, to_donate, amount_msat, fee_msat, net_msat, dust_msat, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		fromPubKey, toPubKey, toBatchID, boolToInt(toDonate), amountMsat, feeMsat, netMsat, dustMsat, time.Now().Unix(),
+		`INSERT INTO transfer_txs (from_pub_key, to_pub_key, to_batch_id, amount_msat, fee_msat, net_msat, dust_msat, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		fromPubKey, toPubKey, toBatchID, amountMsat, feeMsat, netMsat, dustMsat, time.Now().Unix(),
 	)
 	return err
-}
-
-func (srv *Server) getDonationByPR(pr string) (*Donation, error) {
-	row := srv.db.QueryRow(
-		`SELECT key, amount_msat, fee_msat, comment, status, created_at FROM donations WHERE pr = ? AND status = ?`,
-		pr, TxPending,
-	)
-	d := &Donation{PR: pr}
-	var status string
-	if err := row.Scan(&d.Key, &d.AmountMsat, &d.FeeMsat, &d.Comment, &status, &d.CreatedAt); err != nil {
-		return nil, err
-	}
-	d.Status = TxStatus(status)
-	return d, nil
-}
-
-func (srv *Server) markDonationConfirmed(key, paymentHash, preimage string, amountMsat, feeMsat int64) error {
-	_, err := srv.db.Exec(
-		`UPDATE donations SET status = ?, payment_hash = ?, payment_preimage = ?, amount_msat = ?, fee_msat = ?, updated_at = ? WHERE key = ?`,
-		TxConfirmed, paymentHash, preimage, amountMsat, feeMsat, time.Now().Unix(), key,
-	)
-	return err
-}
-
-func (srv *Server) getPendingDonations() ([]Donation, error) {
-	rows, err := srv.db.Query(
-		`SELECT key, amount_msat, fee_msat, pr, created_at FROM donations WHERE status = ?`, TxPending,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var ds []Donation
-	for rows.Next() {
-		var d Donation
-		if err := rows.Scan(&d.Key, &d.AmountMsat, &d.FeeMsat, &d.PR, &d.CreatedAt); err != nil {
-			return nil, err
-		}
-		ds = append(ds, d)
-	}
-	return ds, rows.Err()
-}
-
-func (srv *Server) getDonationByKey(key string) (*Donation, error) {
-	row := srv.db.QueryRow(
-		`SELECT payment_hash, payment_preimage, status, pr FROM donations WHERE key = ?`, key,
-	)
-	d := &Donation{Key: key}
-	var status string
-	if err := row.Scan(&d.PaymentHash, &d.PaymentPreimage, &status, &d.PR); err != nil {
-		return nil, err
-	}
-	d.Status = TxStatus(status)
-	return d, nil
-}
-
-func (srv *Server) getDonationStats() (total, confirmed int64, donatedMsat int64, err error) {
-	err = srv.db.QueryRow(`SELECT COUNT(*), COALESCE(SUM(CASE WHEN status='confirmed' THEN 1 ELSE 0 END), 0), COALESCE(SUM(CASE WHEN status='confirmed' THEN amount_msat ELSE 0 END), 0) FROM donations`).Scan(&total, &confirmed, &donatedMsat)
-	return
-}
-
-// queryLeaderboardDist runs a leaderboard SQL query and returns a map of refund_code → count.
-// The query must SELECT refund_code, count in that order.
-func queryLeaderboardDist(db dbQuerier, query string, args ...any) (map[string]int, error) {
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	dist := make(map[string]int)
-	for rows.Next() {
-		var code string
-		var cnt int
-		if err := rows.Scan(&code, &cnt); err != nil {
-			return nil, err
-		}
-		dist[code] = cnt
-	}
-	return dist, rows.Err()
-}
-
-func (srv *Server) leaderboardFundedMonth(monthStart int64) (map[string]int, error) {
-	return queryLeaderboardDist(srv.db,
-		`SELECT v.refund_code, COUNT(DISTINCT f.pub_key)
-		 FROM fund_txs f JOIN vouchers v ON v.pub_key = f.pub_key
-		 WHERE f.status = 'confirmed' AND f.updated_at >= ?
-		 GROUP BY v.refund_code`,
-		monthStart)
-}
-
-func (srv *Server) leaderboardFundedAllTime() (map[string]int, error) {
-	return queryLeaderboardDist(srv.db,
-		`SELECT v.refund_code, COUNT(DISTINCT f.pub_key)
-		 FROM fund_txs f JOIN vouchers v ON v.pub_key = f.pub_key
-		 WHERE f.status = 'confirmed'
-		 GROUP BY v.refund_code`)
-}
-
-func (srv *Server) leaderboardRedeemedMonth(monthStart int64) (map[string]int, error) {
-	return queryLeaderboardDist(srv.db,
-		`SELECT v.refund_code, COUNT(DISTINCT r.voucher_id)
-		 FROM redeem_txs r JOIN vouchers v ON v.id = r.voucher_id
-		 WHERE r.status = 'confirmed' AND r.created_at >= ?
-		 GROUP BY v.refund_code`,
-		monthStart)
-}
-
-func (srv *Server) leaderboardRedeemedAllTime() (map[string]int, error) {
-	return queryLeaderboardDist(srv.db,
-		`SELECT v.refund_code, COUNT(DISTINCT r.voucher_id)
-		 FROM redeem_txs r JOIN vouchers v ON v.id = r.voucher_id
-		 WHERE r.status = 'confirmed'
-		 GROUP BY v.refund_code`)
 }

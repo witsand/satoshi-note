@@ -122,7 +122,7 @@ func (srv *Server) payRefund(rt RefundTx) error {
 	}
 
 	amountSats := uint64(rt.AmountMsat / 1000)
-	comment := "Refund from " + srv.cfg.siteName
+	comment := "Voucher Refunds"
 
 	var commentPtr *string
 	if payRequest.CommentAllowed > 0 {

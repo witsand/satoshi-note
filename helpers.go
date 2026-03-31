@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/subtle"
 	"encoding/json"
-	"net/http"
 )
 
 // calculateRedeemFee returns the fee in msat for a redeem, rounded down to the
@@ -41,20 +39,6 @@ func (srv *Server) voucherStatusBody(s *voucherStatus) map[string]any {
 		"refunded":         s.Refunded,
 		"refund_pending":   s.RefundPending,
 	}
-}
-
-
-// requireAdmin returns true if the request carries a valid admin token.
-// It writes a 401 and returns false otherwise.
-func (srv *Server) requireAdmin(w http.ResponseWriter, r *http.Request) bool {
-	if srv.cfg.adminToken == "" || subtle.ConstantTimeCompare(
-		[]byte(r.Header.Get("Authorization")),
-		[]byte("Bearer "+srv.cfg.adminToken),
-	) != 1 {
-		w.WriteHeader(http.StatusUnauthorized)
-		return false
-	}
-	return true
 }
 
 // lnurlPayResponse builds a LNURL payRequest response map.

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
@@ -12,41 +11,30 @@ import (
 )
 
 type Config struct {
-	siteName          string
-	siteNameW1        string
-	siteNameW2        string
-	siteNameOrangeWord int
-	siteLogoInner     string
 	baseURL  string
 	mnemonic string
 	apiKey   string
 
-	port                    string
-	network                 spark.Network
-	storageDirectory        string
-	randomBytesLength       int
-	redeemFeeBPS            int64
-	internalFeeBPS          int64
-	minInternalFeeMsat      int64
-	minRedeemFeeMsat        int64
-	minFundAmountMsat       int64
-	maxFundAmountMsat       int64
-	minRedeemAmountMsat     int64
-	maxVoucherExpireSeconds int64
-	maxVouchersPerBatch     int64
-	createActive            bool
-	fundActive              bool
-	redeemActive            bool
+	port                        string
+	network                     spark.Network
+	storageDirectory            string
+	randomBytesLength           int
+	redeemFeeBPS                int64
+	internalFeeBPS              int64
+	minInternalFeeMsat          int64
+	minRedeemFeeMsat            int64
+	minFundAmountMsat           int64
+	maxFundAmountMsat           int64
+	minRedeemAmountMsat         int64
+	maxVoucherExpireSeconds     int64
+	maxVouchersPerBatch         int64
+	createActive                bool
+	fundActive                  bool
+	redeemActive                bool
 	refundActive                bool
 	refundWorkerIntervalSeconds int64
 	paymentCooldown             time.Duration
-	batchEnabled                bool
-	invoiceExpirySeconds    int64
-
-	// Optional features — silently disabled if empty
-	adminToken     string // Bearer token for /admin/stats
-	githubURL      string // Shown in About modal and footer
-	defaultDialCode string // Default dial code for phone number field, e.g. +27
+	invoiceExpirySeconds        int64
 }
 
 func errMissingEnv(name string) error {
@@ -60,31 +48,6 @@ func loadConfig() (*Server, error) {
 	}
 
 	cfg := &Config{}
-
-	cfg.siteName = os.Getenv("SITE_NAME")
-	if cfg.siteName == "" {
-		return nil, errMissingEnv("SITE_NAME")
-	}
-	words := strings.Fields(cfg.siteName)
-	if len(words) != 2 {
-		return nil, fmt.Errorf("SITE_NAME must be exactly two words, got %q", cfg.siteName)
-	}
-	cfg.siteNameW1 = words[0]
-	cfg.siteNameW2 = words[1]
-
-	orangeWordStr := os.Getenv("SITE_NAME_ORANGE_WORD")
-	if orangeWordStr == "" {
-		orangeWordStr = "1"
-	}
-	cfg.siteNameOrangeWord, err = strconv.Atoi(orangeWordStr)
-	if err != nil || (cfg.siteNameOrangeWord != 1 && cfg.siteNameOrangeWord != 2) {
-		return nil, fmt.Errorf("SITE_NAME_ORANGE_WORD must be 1 or 2")
-	}
-	if cfg.siteNameOrangeWord == 1 {
-		cfg.siteLogoInner = cfg.siteNameW1 + `<span>` + cfg.siteNameW2 + `</span>`
-	} else {
-		cfg.siteLogoInner = `<span>` + cfg.siteNameW1 + `</span>` + cfg.siteNameW2
-	}
 
 	cfg.baseURL = os.Getenv("BASE_URL")
 	if cfg.baseURL == "" {
@@ -221,7 +184,6 @@ func loadConfig() (*Server, error) {
 	cfg.fundActive, _ = strconv.ParseBool(os.Getenv("FUND_ACTIVE"))
 	cfg.redeemActive, _ = strconv.ParseBool(os.Getenv("REDEEM_ACTIVE"))
 	cfg.refundActive, _ = strconv.ParseBool(os.Getenv("REFUND_ACTIVE"))
-	cfg.batchEnabled, _ = strconv.ParseBool(os.Getenv("BATCH_ENABLED"))
 
 	cfg.refundWorkerIntervalSeconds = int64(86400)
 	if v := os.Getenv("REFUND_WORKER_INTERVAL_SECONDS"); v != "" {
@@ -248,13 +210,6 @@ func loadConfig() (*Server, error) {
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	cfg.adminToken = os.Getenv("ADMIN_TOKEN")
-	cfg.githubURL = os.Getenv("GITHUB_URL")
-	cfg.defaultDialCode = os.Getenv("DEFAULT_DIAL_CODE")
-	if cfg.defaultDialCode == "" {
-		cfg.defaultDialCode = "+27"
 	}
 
 	return &Server{cfg: cfg}, nil

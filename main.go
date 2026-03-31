@@ -41,12 +41,6 @@ func main() {
 	}
 	slog.Info("pending funding payments caught up")
 
-	if err = srv.checkPendingDonations(); err != nil {
-		slog.Error("check pending donations", "err", err)
-		os.Exit(1)
-	}
-	slog.Info("pending donations caught up")
-
 	if srv.cfg.refundActive {
 		go srv.runRefundWorker()
 	}

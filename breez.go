@@ -45,30 +45,6 @@ func (l *SparkListener) OnEvent(e spark.SdkEvent) {
 		if err := l.srv.updateFundTxConfirmed(tx); err != nil {
 			slog.Error("update fund tx confirmed", "err", err)
 		}
-		return
-	}
-
-	// Check if this is a donation payment
-	don, err := l.srv.getDonationByPR(details.Invoice)
-	if err != nil {
-		return // not a payment we know about
-	}
-
-	var amountMsat int64
-	if ev.Payment.Amount != nil {
-		amountMsat = ev.Payment.Amount.Int64() * 1000
-	}
-	var feeMsat int64
-	if ev.Payment.Fees != nil {
-		feeMsat = ev.Payment.Fees.Int64() * 1000
-	}
-	paymentHash := details.HtlcDetails.PaymentHash
-	var preimage string
-	if details.HtlcDetails.Preimage != nil {
-		preimage = *details.HtlcDetails.Preimage
-	}
-	if err := l.srv.markDonationConfirmed(don.Key, paymentHash, preimage, amountMsat, feeMsat); err != nil {
-		slog.Error("mark donation confirmed", "err", err)
 	}
 }
 
