@@ -326,11 +326,15 @@ func (srv *Server) addVoucherBalance(id int64, msats int64) error {
 }
 
 func (srv *Server) insertFundTX(tx *FundTx) error {
-	batchIDBytes := make([]byte, srv.cfg.randomBytesLength)
-	if _, err := rand.Read(batchIDBytes); err != nil {
+	keyLen := len(tx.PubKey) / 2
+	if keyLen == 0 {
+		keyLen = len(tx.BatchID) / 2
+	}
+	keyBytes := make([]byte, keyLen)
+	if _, err := rand.Read(keyBytes); err != nil {
 		return err
 	}
-	tx.Key = hex.EncodeToString(batchIDBytes)
+	tx.Key = hex.EncodeToString(keyBytes)
 
 	_, err := srv.db.Exec(
 		`INSERT INTO fund_txs (key, batch_id, pub_key, msat, fee_msat, pr, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,

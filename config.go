@@ -18,7 +18,6 @@ type Config struct {
 	port                        string
 	network                     spark.Network
 	storageDirectory            string
-	randomBytesLength           int
 	redeemFeeBPS                int64
 	internalFeeBPS              int64
 	minInternalFeeMsat          int64
@@ -80,18 +79,6 @@ func loadConfig() (*Server, error) {
 	cfg.storageDirectory = os.Getenv("STORAGE_DIRECTORY")
 	if cfg.storageDirectory == "" {
 		return nil, errMissingEnv("STORAGE_DIRECTORY")
-	}
-
-	if v := os.Getenv("RANDOM_BYTES_LENGTH"); v == "" {
-		return nil, errMissingEnv("RANDOM_BYTES_LENGTH")
-	} else {
-		var err error
-		if cfg.randomBytesLength, err = strconv.Atoi(v); err != nil {
-			return nil, err
-		}
-		if cfg.randomBytesLength < 1 || cfg.randomBytesLength > 32 {
-			return nil, fmt.Errorf("RANDOM_BYTES_LENGTH must be between 1 and 32")
-		}
 	}
 
 	if v := os.Getenv("REDEEM_FEE_BPS"); v == "" {

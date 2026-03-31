@@ -73,13 +73,14 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	batchIDBytes := make([]byte, srv.cfg.randomBytesLength)
+	pubKeyLen := len(req.PubKeys[0]) / 2
+	batchIDBytes := make([]byte, pubKeyLen)
 	if _, err := rand.Read(batchIDBytes); err != nil {
 		slog.Error("create batch id error", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	batchID := hex.EncodeToString(batchIDBytes[:srv.cfg.randomBytesLength])
+	batchID := hex.EncodeToString(batchIDBytes)
 
 	// Create all vouchers in a single DB transaction so a partial failure leaves no orphaned rows.
 	dbTx, err := srv.db.Begin()
@@ -419,7 +420,7 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	k1Bytes := make([]byte, srv.cfg.randomBytesLength)
+	k1Bytes := make([]byte, len(pubKey)/2)
 	if _, err := rand.Read(k1Bytes); err != nil {
 		lnurlError(w, "internal error")
 		return
@@ -700,7 +701,6 @@ func (srv *Server) getCallbackAmount(r *http.Request, n int64) (int64, error) {
 
 func (srv *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"random_bytes_length":  srv.cfg.randomBytesLength,
 		"min_fund_amount_msat": srv.cfg.minFundAmountMsat,
 		"base_url":             srv.cfg.baseURL,
 	})
