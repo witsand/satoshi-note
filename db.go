@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -20,127 +22,117 @@ type dbQuerier interface {
 }
 
 func openDB(path string) (*sql.DB, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return nil, fmt.Errorf("create db dir: %w", err)
+	}
+
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
-		return nil, fmt.Errorf("sql.Open: %w", err)
+		return nil, err
 	}
-	// SQLite requires a single writer connection to avoid "database is locked" errors.
+
+	// Single writer prevents SQLITE_BUSY under concurrent HTTP handlers.
 	db.SetMaxOpenConns(1)
 
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("enable WAL: %w", err)
+	pragmas := []string{
+		"PRAGMA journal_mode=WAL",
+		// "PRAGMA foreign_keys=ON",
+		"PRAGMA busy_timeout=5000",
 	}
-	if _, err := db.Exec("PRAGMA busy_timeout=5000"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("set busy_timeout: %w", err)
+	for _, p := range pragmas {
+		if _, err := db.Exec(p); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("pragma %q: %w", p, err)
+		}
 	}
 
 	if err := initSchema(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
+
 	return db, nil
 }
 
 func initSchema(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS vouchers (
-		id                    INTEGER PRIMARY KEY,
-		pub_key               TEXT NOT NULL,
-		batch_id              TEXT NOT NULL,
-		refund_code           TEXT NOT NULL,
-		refund_after_seconds  INTEGER NOT NULL,
-		balance_msat          INTEGER NOT NULL DEFAULT 0,
-		active                INTEGER NOT NULL DEFAULT 1,
-		single_use            INTEGER NOT NULL,
-		refunded              INTEGER NOT NULL DEFAULT 0,
-		refund_tx_id          INTEGER NOT NULL DEFAULT 0,
-		created_at            INTEGER NOT NULL,
-		updated_at            INTEGER NOT NULL DEFAULT 0
-	)`)
-	if err != nil {
-		return err
-	}
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS vouchers (
+			id                    INTEGER PRIMARY KEY,
+			pub_key               TEXT NOT NULL,
+			batch_id              TEXT NOT NULL,
+			refund_code           TEXT NOT NULL,
+			refund_after_seconds  INTEGER NOT NULL,
+			balance_msat          INTEGER NOT NULL DEFAULT 0,
+			active                INTEGER NOT NULL DEFAULT 1,
+			single_use            INTEGER NOT NULL,
+			refunded              INTEGER NOT NULL DEFAULT 0,
+			refund_tx_id          INTEGER NOT NULL DEFAULT 0,
+			created_at            INTEGER NOT NULL,
+			updated_at            INTEGER NOT NULL DEFAULT 0
+		)`,
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS fund_txs (
-		key              TEXT PRIMARY KEY,
-		batch_id         TEXT NOT NULL,
-		pub_key          TEXT NOT NULL,
-		msat             INTEGER NOT NULL,
-		fee_msat         INTEGER NOT NULL,
-		dust_msat        INTEGER NOT NULL DEFAULT 0,
-		pr               TEXT NOT NULL,
-		payment_hash     TEXT NOT NULL DEFAULT "",
-		payment_preimage TEXT NOT NULL DEFAULT "",
-		status           TEXT NOT NULL,
-		created_at       INTEGER NOT NULL,
-		updated_at       INTEGER NOT NULL DEFAULT 0
-	)`)
-	if err != nil {
-		return err
-	}
+		`CREATE TABLE IF NOT EXISTS fund_txs (
+			key              TEXT PRIMARY KEY,
+			pub_key          TEXT NOT NULL,
+			batch_id         TEXT NOT NULL,
+			msat             INTEGER NOT NULL,
+			fee_msat         INTEGER NOT NULL,
+			dust_msat        INTEGER NOT NULL DEFAULT 0,
+			pr               TEXT NOT NULL,
+			payment_hash     TEXT NOT NULL DEFAULT "",
+			payment_preimage TEXT NOT NULL DEFAULT "",
+			status           TEXT NOT NULL,
+			created_at       INTEGER NOT NULL,
+			updated_at       INTEGER NOT NULL DEFAULT 0
+		)`,
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS refund_txs (
-		id            INTEGER PRIMARY KEY,
-		refund_code   TEXT    NOT NULL,
-		amount_msat   INTEGER NOT NULL,
-		db_tx_fee     INTEGER NOT NULL DEFAULT 0,
-		actual_fee    INTEGER NOT NULL DEFAULT 0,
-		refunded      INTEGER NOT NULL DEFAULT 0,
-		error_msg     TEXT    NOT NULL DEFAULT "",
-		created_at    INTEGER NOT NULL,
-		updated_at    INTEGER NOT NULL DEFAULT 0
-	)`)
-	if err != nil {
-		return err
-	}
+		`CREATE TABLE IF NOT EXISTS refund_txs (
+			id            INTEGER PRIMARY KEY,
+			refund_code   TEXT    NOT NULL,
+			amount_msat   INTEGER NOT NULL,
+			db_tx_fee     INTEGER NOT NULL DEFAULT 0,
+			actual_fee    INTEGER NOT NULL DEFAULT 0,
+			refunded      INTEGER NOT NULL DEFAULT 0,
+			error_msg     TEXT    NOT NULL DEFAULT "",
+			created_at    INTEGER NOT NULL,
+			updated_at    INTEGER NOT NULL DEFAULT 0
+		)`,
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS redeem_sessions (
-		k1         TEXT PRIMARY KEY,
-		pub_key    TEXT NOT NULL,
-		used       INTEGER NOT NULL DEFAULT 0,
-		created_at INTEGER NOT NULL,
-		updated_at INTEGER NOT NULL DEFAULT 0
-	)`)
-	if err != nil {
-		return err
-	}
+		`CREATE TABLE IF NOT EXISTS redeem_sessions (
+			k1         TEXT PRIMARY KEY,
+			pub_key    TEXT NOT NULL,
+			used       INTEGER NOT NULL DEFAULT 0,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL DEFAULT 0
+		)`,
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS redeem_txs (
-		id            INTEGER PRIMARY KEY,
-		voucher_id    INTEGER NOT NULL,
-		secret        TEXT    NOT NULL DEFAULT "",
-		pr            TEXT NOT NULL,
-		msat          INTEGER NOT NULL,
-		ln_fee        INTEGER NOT NULL,
-		db_tx_fee     INTEGER NOT NULL DEFAULT 0,
-		status        TEXT NOT NULL,
-		actual_ln_fee INTEGER NOT NULL DEFAULT 0,
-		created_at    INTEGER NOT NULL,
-		updated_at    INTEGER NOT NULL DEFAULT 0,
-		error_msg     TEXT    NOT NULL DEFAULT ""
-	)`)
-	if err != nil {
-		return err
-	}
+		`CREATE TABLE IF NOT EXISTS redeem_txs (
+			id            INTEGER PRIMARY KEY,
+			voucher_id    INTEGER NOT NULL,
+			secret        TEXT    NOT NULL DEFAULT "",
+			pr            TEXT NOT NULL,
+			msat          INTEGER NOT NULL,
+			ln_fee        INTEGER NOT NULL,
+			db_tx_fee     INTEGER NOT NULL DEFAULT 0,
+			status        TEXT NOT NULL,
+			actual_ln_fee INTEGER NOT NULL DEFAULT 0,
+			created_at    INTEGER NOT NULL,
+			updated_at    INTEGER NOT NULL DEFAULT 0,
+			error_msg     TEXT    NOT NULL DEFAULT ""
+		)`,
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS transfer_txs (
-		id           INTEGER PRIMARY KEY,
-		from_pub_key TEXT    NOT NULL,
-		to_pub_key   TEXT    NOT NULL DEFAULT "",
-		to_batch_id  TEXT    NOT NULL DEFAULT "",
-		amount_msat  INTEGER NOT NULL,
-		fee_msat     INTEGER NOT NULL,
-		net_msat     INTEGER NOT NULL,
-		dust_msat    INTEGER NOT NULL DEFAULT 0,
-		created_at   INTEGER NOT NULL
-	)`)
-	if err != nil {
-		return err
-	}
+		`CREATE TABLE IF NOT EXISTS transfer_txs (
+			id           INTEGER PRIMARY KEY,
+			from_pub_key TEXT    NOT NULL,
+			to_pub_key   TEXT    NOT NULL DEFAULT "",
+			to_batch_id  TEXT    NOT NULL DEFAULT "",
+			amount_msat  INTEGER NOT NULL,
+			fee_msat     INTEGER NOT NULL,
+			net_msat     INTEGER NOT NULL,
+			dust_msat    INTEGER NOT NULL DEFAULT 0,
+			created_at   INTEGER NOT NULL
+		)`,
 
-	// Indexes for frequently queried columns.
-	indexes := []string{
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_pub_key ON vouchers(pub_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_vouchers_batch_id       ON vouchers(batch_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_fund_txs_status         ON fund_txs(status)`,
@@ -148,9 +140,10 @@ func initSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_redeem_txs_voucher_id   ON redeem_txs(voucher_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_refund_txs_refunded     ON refund_txs(refunded)`,
 	}
-	for _, idx := range indexes {
-		if _, err := db.Exec(idx); err != nil {
-			return err
+
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("exec schema: %w", err)
 		}
 	}
 
@@ -533,13 +526,13 @@ func boolToInt(b bool) int {
 }
 
 type LedgerStats struct {
-	VouchersBalanceMsat      int64 `json:"vouchers_balance_msat"`
-	FundTxsDustMsat          int64 `json:"fund_txs_dust_msat"`
-	RefundTxsDbTxFee         int64 `json:"refund_txs_db_tx_fee"`
-	RefundTxsPendingMsat     int64 `json:"refund_txs_pending_msat"`
-	RedeemTxsDbTxFee         int64 `json:"redeem_txs_db_tx_fee"`
-	TransferTxsFeeMsat       int64 `json:"transfer_txs_fee_msat"`
-	TransferTxsDustMsat      int64 `json:"transfer_txs_dust_msat"`
+	VouchersBalanceMsat  int64 `json:"vouchers_balance_msat"`
+	FundTxsDustMsat      int64 `json:"fund_txs_dust_msat"`
+	RefundTxsDbTxFee     int64 `json:"refund_txs_db_tx_fee"`
+	RefundTxsPendingMsat int64 `json:"refund_txs_pending_msat"`
+	RedeemTxsDbTxFee     int64 `json:"redeem_txs_db_tx_fee"`
+	TransferTxsFeeMsat   int64 `json:"transfer_txs_fee_msat"`
+	TransferTxsDustMsat  int64 `json:"transfer_txs_dust_msat"`
 }
 
 func (srv *Server) getLedgerStats() (LedgerStats, error) {
