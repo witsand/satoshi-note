@@ -34,6 +34,7 @@ func (srv *Server) ServeAPI() {
 	// API (2 req/s, burst 10)
 	mux.Handle("POST /status", api(http.HandlerFunc(srv.handleVoucherStatusBatch)))
 	mux.Handle("GET /config", api(http.HandlerFunc(srv.handleConfig)))
+	mux.Handle("GET /ledger", strict(http.HandlerFunc(srv.handleLedger)))
 
 	// LNURL (5 req/s, burst 20)
 	mux.Handle("GET /transfer/{secret}/{pubKey}", lnurl(http.HandlerFunc(srv.handleTransfer)))

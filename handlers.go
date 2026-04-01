@@ -699,6 +699,34 @@ func (srv *Server) getCallbackAmount(r *http.Request, n int64) (int64, error) {
 	return msats, nil
 }
 
+func (srv *Server) handleLedger(w http.ResponseWriter, r *http.Request) {
+	infoResp, err := srv.ln.GetInfo(spark.GetInfoRequest{})
+	if err := sdkErr(err); err != nil {
+		slog.Error("get sdk info", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	stats, err := srv.getLedgerStats()
+	if err != nil {
+		slog.Error("get ledger stats", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sdk_balance_msat":        int64(infoResp.BalanceSats) * 1000,
+		"vouchers_balance_msat":   stats.VouchersBalanceMsat,
+		"fund_txs_dust_msat":      stats.FundTxsDustMsat,
+		"refund_txs_db_tx_fee":    stats.RefundTxsDbTxFee,
+		"refund_txs_pending_msat": stats.RefundTxsPendingMsat,
+		"redeem_txs_db_tx_fee":    stats.RedeemTxsDbTxFee,
+		"transfer_txs_fee_msat":   stats.TransferTxsFeeMsat,
+		"transfer_txs_dust_msat":  stats.TransferTxsDustMsat,
+		"health":                  int64(infoResp.BalanceSats)*1000 - stats.VouchersBalanceMsat - stats.RefundTxsPendingMsat,
+	})
+}
+
 func (srv *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"min_fund_amount_msat": srv.cfg.minFundAmountMsat,

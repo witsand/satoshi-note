@@ -40,81 +40,7 @@ func openDB(path string) (*sql.DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
-	if err := runMigrations(db); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("run migrations: %w", err)
-	}
 	return db, nil
-}
-
-func runMigrations(db *sql.DB) error {
-	var version int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
-		return err
-	}
-
-	if version < 1 {
-		// Migration 1: drop donations table; rebuild transfer_txs without to_donate.
-		if _, err := db.Exec(`DROP TABLE IF EXISTS donations`); err != nil {
-			return err
-		}
-		if _, err := db.Exec(`DROP INDEX IF EXISTS idx_donations_pr`); err != nil {
-			return err
-		}
-		// Rebuild transfer_txs only if to_donate column exists.
-		rows, err := db.Query(`PRAGMA table_info(transfer_txs)`)
-		if err != nil {
-			return err
-		}
-		hasDonate := false
-		for rows.Next() {
-			var cid int
-			var name, typ, notnull, dflt string
-			var pk int
-			_ = rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk)
-			if name == "to_donate" {
-				hasDonate = true
-			}
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		if hasDonate {
-			if _, err := db.Exec(`
-				CREATE TABLE transfer_txs_new (
-					id           INTEGER PRIMARY KEY,
-					from_pub_key TEXT    NOT NULL,
-					to_pub_key   TEXT    NOT NULL DEFAULT "",
-					to_batch_id  TEXT    NOT NULL DEFAULT "",
-					amount_msat  INTEGER NOT NULL,
-					fee_msat     INTEGER NOT NULL,
-					net_msat     INTEGER NOT NULL,
-					dust_msat    INTEGER NOT NULL DEFAULT 0,
-					created_at   INTEGER NOT NULL
-				)`); err != nil {
-				return err
-			}
-			if _, err := db.Exec(`
-				INSERT INTO transfer_txs_new
-					(id, from_pub_key, to_pub_key, to_batch_id, amount_msat, fee_msat, net_msat, dust_msat, created_at)
-				SELECT id, from_pub_key, to_pub_key, to_batch_id, amount_msat, fee_msat, net_msat, dust_msat, created_at
-				FROM transfer_txs`); err != nil {
-				return err
-			}
-			if _, err := db.Exec(`DROP TABLE transfer_txs`); err != nil {
-				return err
-			}
-			if _, err := db.Exec(`ALTER TABLE transfer_txs_new RENAME TO transfer_txs`); err != nil {
-				return err
-			}
-		}
-		if _, err := db.Exec(`PRAGMA user_version = 1`); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 func initSchema(db *sql.DB) error {
@@ -604,6 +530,40 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+type LedgerStats struct {
+	VouchersBalanceMsat      int64 `json:"vouchers_balance_msat"`
+	FundTxsDustMsat          int64 `json:"fund_txs_dust_msat"`
+	RefundTxsDbTxFee         int64 `json:"refund_txs_db_tx_fee"`
+	RefundTxsPendingMsat     int64 `json:"refund_txs_pending_msat"`
+	RedeemTxsDbTxFee         int64 `json:"redeem_txs_db_tx_fee"`
+	TransferTxsFeeMsat       int64 `json:"transfer_txs_fee_msat"`
+	TransferTxsDustMsat      int64 `json:"transfer_txs_dust_msat"`
+}
+
+func (srv *Server) getLedgerStats() (LedgerStats, error) {
+	row := srv.db.QueryRow(`
+		SELECT
+			(SELECT COALESCE(SUM(balance_msat), 0) FROM vouchers),
+			(SELECT COALESCE(SUM(dust_msat),    0) FROM fund_txs),
+			(SELECT COALESCE(SUM(db_tx_fee),    0) FROM refund_txs),
+			(SELECT COALESCE(SUM(amount_msat),  0) FROM refund_txs WHERE refunded = 0),
+			(SELECT COALESCE(SUM(db_tx_fee),    0) FROM redeem_txs),
+			(SELECT COALESCE(SUM(fee_msat),     0) FROM transfer_txs),
+			(SELECT COALESCE(SUM(dust_msat),    0) FROM transfer_txs)
+	`)
+	var s LedgerStats
+	err := row.Scan(
+		&s.VouchersBalanceMsat,
+		&s.FundTxsDustMsat,
+		&s.RefundTxsDbTxFee,
+		&s.RefundTxsPendingMsat,
+		&s.RedeemTxsDbTxFee,
+		&s.TransferTxsFeeMsat,
+		&s.TransferTxsDustMsat,
+	)
+	return s, err
 }
 
 func (srv *Server) insertTransferTx(dbTx *sql.Tx, fromPubKey, toPubKey, toBatchID string, amountMsat, feeMsat, netMsat, dustMsat int64) error {
