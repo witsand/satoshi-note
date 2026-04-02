@@ -16,17 +16,7 @@ func secretToPubKey(secret string) (string, error) {
 	return hex.EncodeToString(h[:len(b)]), nil
 }
 
-func (srv *Server) createVoucher(refundCode, batchID string, expiresAfterSeconds int64, singleUse, transfersOnly bool, maxRedeemMsat int64, uniqueRedemptions bool) (*Voucher, error) {
-	v := srv.newVoucher("", refundCode, batchID, expiresAfterSeconds, singleUse, transfersOnly, maxRedeemMsat, uniqueRedemptions)
-
-	if err := srv.insertVoucher(v); err != nil {
-		return nil, err
-	}
-
-	return v, nil
-}
-
-func (srv *Server) newVoucher(pubKey, refundCode, batchID string, refundAfterSeconds int64, singleUse, transfersOnly bool, maxRedeemMsat int64, uniqueRedemptions bool) *Voucher {
+func (srv *Server) newVoucher(pubKey, refundCode, batchID string, refundAfterSeconds int64, singleUse, transfersOnly bool, maxRedeemMsat int64, uniqueRedemptions bool, absoluteExpiry bool) *Voucher {
 	return &Voucher{
 		PubKey:             pubKey,
 		FundURLPrefix:      srv.cfg.baseURL + "/f/",
@@ -38,6 +28,7 @@ func (srv *Server) newVoucher(pubKey, refundCode, batchID string, refundAfterSec
 		TransfersOnly:      transfersOnly,
 		MaxRedeemMsat:      maxRedeemMsat,
 		UniqueRedemptions:  uniqueRedemptions,
+		AbsoluteExpiry:     absoluteExpiry,
 		Active:             true,
 	}
 }

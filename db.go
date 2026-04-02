@@ -64,6 +64,7 @@ func migrateSchema(db *sql.DB) error {
 		`ALTER TABLE vouchers ADD COLUMN transfers_only     INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE vouchers ADD COLUMN max_redeem_msat    INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE vouchers ADD COLUMN unique_redemptions INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE vouchers ADD COLUMN absolute_expiry    INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil {
@@ -83,16 +84,17 @@ func initSchema(db *sql.DB) error {
 			batch_id              TEXT NOT NULL,
 			refund_code           TEXT NOT NULL,
 			refund_after_seconds  INTEGER NOT NULL,
+			absolute_expiry       INTEGER NOT NULL DEFAULT 0,
 			balance_msat          INTEGER NOT NULL DEFAULT 0,
-			active                INTEGER NOT NULL DEFAULT 1,
 			single_use            INTEGER NOT NULL,
 			transfers_only        INTEGER NOT NULL DEFAULT 0,
 			max_redeem_msat       INTEGER NOT NULL DEFAULT 0,
 			unique_redemptions    INTEGER NOT NULL DEFAULT 0,
+			active                INTEGER NOT NULL DEFAULT 1,
 			refunded              INTEGER NOT NULL DEFAULT 0,
 			refund_tx_id          INTEGER NOT NULL DEFAULT 0,
 			created_at            INTEGER NOT NULL,
-			updated_at            INTEGER NOT NULL DEFAULT 0
+			updated_at            INTEGER NOT NULL DEFAULT 0,
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS fund_txs (
@@ -183,11 +185,11 @@ func initSchema(db *sql.DB) error {
 
 func (srv *Server) insertVoucher(v *Voucher) error {
 	_, err := srv.db.Exec(
-		`INSERT INTO vouchers (pub_key, batch_id, refund_code, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO vouchers (pub_key, batch_id, refund_code, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, absolute_expiry, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		v.PubKey, v.BatchID, v.RefundCode, v.RefundAfterSeconds,
 		boolToInt(v.SingleUse), boolToInt(v.TransfersOnly), v.MaxRedeemMsat, boolToInt(v.UniqueRedemptions),
-		time.Now().Unix(),
+		boolToInt(v.AbsoluteExpiry), time.Now().Unix(),
 	)
 	return err
 }
@@ -367,20 +369,27 @@ func updateFundTxDust(dbTx *sql.Tx, key string, dustMsat int64) error {
 }
 
 func (srv *Server) getVoucherByPubKey(db dbQuerier, pubkey string) (*Voucher, error) {
-	row := db.QueryRow(`SELECT id, refund_after_seconds, balance_msat, single_use, transfers_only, max_redeem_msat, unique_redemptions, updated_at
+	row := db.QueryRow(`SELECT id, refund_after_seconds, balance_msat, single_use, transfers_only, max_redeem_msat, unique_redemptions, updated_at, created_at, absolute_expiry
 		FROM vouchers WHERE pub_key = ? AND active = 1`, pubkey)
 
 	v := &Voucher{PubKey: pubkey}
-	var updatedAt int64
-	var singleUseInt, transfersOnlyInt, uniqueRedemptionsInt int
-	if err := row.Scan(&v.ID, &v.RefundAfterSeconds, &v.BalanceMsat, &singleUseInt, &transfersOnlyInt, &v.MaxRedeemMsat, &uniqueRedemptionsInt, &updatedAt); err != nil {
+	var updatedAt, createdAt int64
+	var singleUseInt, transfersOnlyInt, uniqueRedemptionsInt, absoluteExpiryInt int
+	if err := row.Scan(&v.ID, &v.RefundAfterSeconds, &v.BalanceMsat, &singleUseInt, &transfersOnlyInt, &v.MaxRedeemMsat, &uniqueRedemptionsInt, &updatedAt, &createdAt, &absoluteExpiryInt); err != nil {
 		return nil, err
 	}
 	v.SingleUse = singleUseInt == 1
 	v.TransfersOnly = transfersOnlyInt == 1
 	v.UniqueRedemptions = uniqueRedemptionsInt == 1
+	v.AbsoluteExpiry = absoluteExpiryInt == 1
 
-	if time.Unix(updatedAt, 0).Add(time.Duration(v.RefundAfterSeconds)*time.Second).Before(time.Now()) && updatedAt != 0 {
+	var expired bool
+	if v.AbsoluteExpiry {
+		expired = time.Unix(createdAt, 0).Add(time.Duration(v.RefundAfterSeconds) * time.Second).Before(time.Now())
+	} else {
+		expired = updatedAt != 0 && time.Unix(updatedAt, 0).Add(time.Duration(v.RefundAfterSeconds)*time.Second).Before(time.Now())
+	}
+	if expired {
 		return nil, fmt.Errorf("voucher expired")
 	}
 
@@ -390,13 +399,15 @@ func (srv *Server) getVoucherByPubKey(db dbQuerier, pubkey string) (*Voucher, er
 type voucherStatus struct {
 	ID                int64
 	BalanceMsat       int64
-	ExpiresAt         int64 // updated_at + refund_after_seconds; 0 means no expiry clock started yet
+	ExpiresAt         int64 // expiry epoch; 0 means no expiry clock started yet (relative-expiry only)
 	Active            bool
 	Refunded          bool
 	RefundPending     bool // refund tx allocated but not yet paid
 	TransfersOnly     bool
 	MaxRedeemMsat     int64
 	UniqueRedemptions bool
+	AbsoluteExpiry    bool
+	CreatedAt         int64
 }
 
 func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherStatus, error) {
@@ -411,7 +422,7 @@ func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherS
 	}
 	rows, err := srv.db.Query(
 		`SELECT id, pub_key, balance_msat, updated_at, refund_after_seconds, active, refunded, refund_tx_id,
-		        transfers_only, max_redeem_msat, unique_redemptions
+		        transfers_only, max_redeem_msat, unique_redemptions, created_at, absolute_expiry
 		 FROM vouchers WHERE pub_key IN (`+strings.Join(placeholders, ",")+`)`,
 		args...)
 	if err != nil {
@@ -423,9 +434,9 @@ func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherS
 		var pubKey string
 		var s voucherStatus
 		var updatedAt, refundAfterSeconds, refundTxID int64
-		var activeInt, refundedInt, transfersOnlyInt, uniqueRedemptionsInt int
+		var activeInt, refundedInt, transfersOnlyInt, uniqueRedemptionsInt, absoluteExpiryInt int
 		if err := rows.Scan(&s.ID, &pubKey, &s.BalanceMsat, &updatedAt, &refundAfterSeconds, &activeInt, &refundedInt, &refundTxID,
-			&transfersOnlyInt, &s.MaxRedeemMsat, &uniqueRedemptionsInt); err != nil {
+			&transfersOnlyInt, &s.MaxRedeemMsat, &uniqueRedemptionsInt, &s.CreatedAt, &absoluteExpiryInt); err != nil {
 			return nil, err
 		}
 		s.Active = activeInt == 1
@@ -433,7 +444,10 @@ func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherS
 		s.RefundPending = refundTxID > 0 && !s.Refunded
 		s.TransfersOnly = transfersOnlyInt == 1
 		s.UniqueRedemptions = uniqueRedemptionsInt == 1
-		if updatedAt != 0 {
+		s.AbsoluteExpiry = absoluteExpiryInt == 1
+		if s.AbsoluteExpiry {
+			s.ExpiresAt = s.CreatedAt + refundAfterSeconds
+		} else if updatedAt != 0 {
 			s.ExpiresAt = updatedAt + refundAfterSeconds
 		}
 		result[pubKey] = &s
@@ -442,7 +456,7 @@ func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherS
 }
 
 func (srv *Server) getVouchersByBatchID(db dbQuerier, batchID string) ([]Voucher, error) {
-	rows, err := db.Query(`SELECT id, refund_after_seconds, balance_msat, updated_at
+	rows, err := db.Query(`SELECT id, refund_after_seconds, balance_msat, updated_at, created_at, absolute_expiry
 		FROM vouchers WHERE batch_id = ? AND active = 1`, batchID)
 	if err != nil {
 		return nil, err
@@ -450,17 +464,21 @@ func (srv *Server) getVouchersByBatchID(db dbQuerier, batchID string) ([]Voucher
 	defer rows.Close()
 
 	type voucherRow struct {
-		v         Voucher
-		updatedAt int64
+		v              Voucher
+		updatedAt      int64
+		createdAt      int64
+		absoluteExpiry bool
 	}
 
 	var items []voucherRow
 	for rows.Next() {
 		var item voucherRow
+		var absoluteExpiryInt int
 		item.v.BatchID = batchID
-		if err := rows.Scan(&item.v.ID, &item.v.RefundAfterSeconds, &item.v.BalanceMsat, &item.updatedAt); err != nil {
+		if err := rows.Scan(&item.v.ID, &item.v.RefundAfterSeconds, &item.v.BalanceMsat, &item.updatedAt, &item.createdAt, &absoluteExpiryInt); err != nil {
 			return nil, err
 		}
+		item.absoluteExpiry = absoluteExpiryInt == 1
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -469,7 +487,13 @@ func (srv *Server) getVouchersByBatchID(db dbQuerier, batchID string) ([]Voucher
 
 	var vs []Voucher
 	for _, item := range items {
-		if time.Unix(item.updatedAt, 0).Add(time.Duration(item.v.RefundAfterSeconds)*time.Second).Before(time.Now()) && item.updatedAt != 0 {
+		var expired bool
+		if item.absoluteExpiry {
+			expired = time.Unix(item.createdAt, 0).Add(time.Duration(item.v.RefundAfterSeconds) * time.Second).Before(time.Now())
+		} else {
+			expired = item.updatedAt != 0 && time.Unix(item.updatedAt, 0).Add(time.Duration(item.v.RefundAfterSeconds)*time.Second).Before(time.Now())
+		}
+		if expired {
 			continue
 		}
 		vs = append(vs, item.v)
@@ -524,15 +548,19 @@ func (srv *Server) getFundTxByPR(pr string) (*FundTx, error) {
 }
 
 func (srv *Server) getExpiredVouchersWithBalance() ([]Voucher, error) {
+	now := time.Now().Unix()
 	rows, err := srv.db.Query(`
 		SELECT id, refund_code, balance_msat
 		FROM vouchers
 		WHERE active = 1
 		  AND balance_msat > 0
 		  AND refunded = 0
-		  AND updated_at > 0
-		  AND (updated_at + refund_after_seconds) <= ?`,
-		time.Now().Unix(),
+		  AND (
+		    (absolute_expiry = 1 AND (created_at + refund_after_seconds) <= ?)
+		    OR
+		    (absolute_expiry = 0 AND updated_at > 0 AND (updated_at + refund_after_seconds) <= ?)
+		  )`,
+		now, now,
 	)
 	if err != nil {
 		return nil, err

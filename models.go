@@ -39,6 +39,7 @@ type Voucher struct {
 	UniqueRedemptions  bool   `json:"unique_redemptions,omitempty"`
 	Refunded           bool   `json:"refunded,omitempty"`
 	UpdatedAt          int64  `json:"updated_at,omitempty"`
+	AbsoluteExpiry     bool   `json:"absolute_expiry,omitempty"`
 }
 
 type RefundTx struct {

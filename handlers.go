@@ -44,6 +44,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 		TransfersOnly      bool     `json:"transfers_only"`
 		MaxRedeemMsat      int64    `json:"max_redeem_msat"`
 		UniqueRedemptions  bool     `json:"unique_redemptions"`
+		AbsoluteExpiry     bool     `json:"absolute_expiry"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		slog.Error("decode request body", "err", err)
@@ -104,15 +105,15 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 
 	var vs []Voucher
 	for _, pubKey := range req.PubKeys {
-		voucher := srv.newVoucher(pubKey, req.RefundCode, batchID, req.RefundAfterSeconds, req.SingleUse, req.TransfersOnly, req.MaxRedeemMsat, req.UniqueRedemptions)
+		voucher := srv.newVoucher(pubKey, req.RefundCode, batchID, req.RefundAfterSeconds, req.SingleUse, req.TransfersOnly, req.MaxRedeemMsat, req.UniqueRedemptions, req.AbsoluteExpiry)
 
 		if _, err := dbTx.Exec(
-			`INSERT INTO vouchers (pub_key, batch_id, refund_code, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO vouchers (pub_key, batch_id, refund_code, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, absolute_expiry, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			voucher.PubKey, voucher.BatchID,
 			voucher.RefundCode, voucher.RefundAfterSeconds, boolToInt(voucher.SingleUse),
 			boolToInt(voucher.TransfersOnly), voucher.MaxRedeemMsat, boolToInt(voucher.UniqueRedemptions),
-			time.Now().Unix(),
+			boolToInt(voucher.AbsoluteExpiry), time.Now().Unix(),
 		); err != nil {
 			slog.Error("insert voucher", "err", err)
 			lnurlError(w, http.StatusInternalServerError, "internal error")
