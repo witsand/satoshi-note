@@ -94,7 +94,7 @@ func initSchema(db *sql.DB) error {
 			refunded              INTEGER NOT NULL DEFAULT 0,
 			refund_tx_id          INTEGER NOT NULL DEFAULT 0,
 			created_at            INTEGER NOT NULL,
-			updated_at            INTEGER NOT NULL DEFAULT 0,
+			updated_at            INTEGER NOT NULL DEFAULT 0
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS fund_txs (
@@ -400,6 +400,7 @@ type voucherStatus struct {
 	ID                int64
 	BalanceMsat       int64
 	ExpiresAt         int64 // expiry epoch; 0 means no expiry clock started yet (relative-expiry only)
+	Expired           bool  // true when ExpiresAt is in the past; may lead Active in the DB
 	Active            bool
 	Refunded          bool
 	RefundPending     bool // refund tx allocated but not yet paid
@@ -450,6 +451,7 @@ func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherS
 		} else if updatedAt != 0 {
 			s.ExpiresAt = updatedAt + refundAfterSeconds
 		}
+		s.Expired = s.ExpiresAt > 0 && s.ExpiresAt <= time.Now().Unix()
 		result[pubKey] = &s
 	}
 	return result, rows.Err()

@@ -80,8 +80,12 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 		lnurlError(w, http.StatusUnprocessableEntity, "max_redeem_msat cannot be set on a single_use voucher")
 		return
 	}
+	if req.UniqueRedemptions && req.SingleUse {
+		lnurlError(w, http.StatusUnprocessableEntity, "single_use cannot be set on a unique_redemptions voucher")
+		return
+	}
 	if req.UniqueRedemptions && !req.TransfersOnly {
-		lnurlError(w, http.StatusUnprocessableEntity, "unique_redemptions requires transfers_only to be set")
+		lnurlError(w, http.StatusUnprocessableEntity, "unique_redemptions vouchers must be transfers_only")
 		return
 	}
 
@@ -265,15 +269,23 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret := r.PathValue("secret")
-	pubKey := r.PathValue("pubKey")
-	if secret == "" || pubKey == "" {
-		lnurlError(w, http.StatusBadRequest, "secret and pubKey are required")
+	var req struct {
+		Secret      string `json:"secret"`
+		PubKey      string `json:"pub_key"`
+		AmountMsat  int64  `json:"amount_msat"`
+		Fingerprint string `json:"fingerprint"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		lnurlError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Secret == "" || req.PubKey == "" {
+		lnurlError(w, http.StatusBadRequest, "secret and pub_key are required")
 		return
 	}
 
 	// Resolve source voucher
-	srcPubKey, err := secretToPubKey(secret)
+	srcPubKey, err := secretToPubKey(req.Secret)
 	if err != nil {
 		lnurlError(w, http.StatusBadRequest, "invalid secret")
 		return
@@ -288,13 +300,12 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fingerprint := r.URL.Query().Get("fingerprint")
-	if src.UniqueRedemptions && fingerprint == "" {
+	if src.UniqueRedemptions && req.Fingerprint == "" {
 		lnurlError(w, http.StatusBadRequest, "fingerprint required for this voucher")
 		return
 	}
-	if src.UniqueRedemptions && fingerprint != "" {
-		used, err := srv.usedFingerprints([]int64{src.ID}, fingerprint)
+	if src.UniqueRedemptions && req.Fingerprint != "" {
+		used, err := srv.usedFingerprints([]int64{src.ID}, req.Fingerprint)
 		if err != nil {
 			slog.Error("check fingerprint", "err", err)
 			lnurlError(w, http.StatusInternalServerError, "internal error")
@@ -311,21 +322,21 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	var dstVouchers []Voucher
 	var dstPubKey, dstBatchID string
 
-	if v, err := srv.getVoucherByPubKey(srv.db, pubKey); err == nil {
-		if pubKey == srcPubKey {
+	if v, err := srv.getVoucherByPubKey(srv.db, req.PubKey); err == nil {
+		if req.PubKey == srcPubKey {
 			lnurlError(w, http.StatusBadRequest, "source and destination cannot be the same voucher")
 			return
 		}
 		dstVoucher = v
-		dstPubKey = pubKey
+		dstPubKey = req.PubKey
 	} else {
-		vs, err := srv.getVouchersByBatchID(srv.db, pubKey)
+		vs, err := srv.getVouchersByBatchID(srv.db, req.PubKey)
 		if err != nil {
 			lnurlError(w, http.StatusNotFound, "destination not found")
 			return
 		}
 		dstVouchers = vs
-		dstBatchID = pubKey
+		dstBatchID = req.PubKey
 	}
 
 	dstCount := int64(1)
@@ -333,9 +344,9 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		dstCount = int64(len(dstVouchers))
 	}
 
-	amountMsat, err := srv.getCallbackAmount(r, dstCount)
-	if err != nil {
-		lnurlError(w, http.StatusBadRequest, err.Error())
+	amountMsat := req.AmountMsat
+	if amountMsat < srv.cfg.minFundAmountMsat*dstCount || amountMsat > srv.cfg.maxFundAmountMsat*dstCount {
+		lnurlError(w, http.StatusBadRequest, "amount_msat out of range")
 		return
 	}
 
@@ -398,7 +409,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if src.UniqueRedemptions {
-		inserted, err := insertRedemptionFingerprint(dbTx, src.ID, fingerprint)
+		inserted, err := insertRedemptionFingerprint(dbTx, src.ID, req.Fingerprint)
 		if err != nil {
 			slog.Error("insert redemption fingerprint", "err", err)
 			lnurlError(w, http.StatusInternalServerError, "internal error")

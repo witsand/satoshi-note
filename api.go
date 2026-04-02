@@ -37,7 +37,7 @@ func (srv *Server) ServeAPI() {
 	mux.Handle("GET /ledger", strict(http.HandlerFunc(srv.handleLedger)))
 
 	// LNURL (5 req/s, burst 20)
-	mux.Handle("GET /transfer/{secret}/{pubKey}", lnurl(http.HandlerFunc(srv.handleTransfer)))
+	mux.Handle("POST /transfer", lnurl(http.HandlerFunc(srv.handleTransfer)))
 
 	mux.Handle("GET /f/{pubKey}", lnurl(http.HandlerFunc(srv.handleLNURLPayVoucher)))
 	mux.Handle("GET /w/{secret}", lnurl(http.HandlerFunc(srv.handleLNURLWithdraw)))

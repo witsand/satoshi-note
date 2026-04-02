@@ -34,7 +34,8 @@ func (srv *Server) voucherStatusBody(s *voucherStatus) map[string]any {
 	body := map[string]any{
 		"raw_balance_msat": rawBalance,
 		"expires_at":       s.ExpiresAt,
-		"active":           s.Active,
+		"active":           s.Active && !s.Expired,
+		"expired":          s.Expired,
 		"refunded":         s.Refunded,
 		"refund_pending":   s.RefundPending,
 	}
