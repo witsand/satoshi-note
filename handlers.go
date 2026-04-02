@@ -47,13 +47,13 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		slog.Error("decode request body", "err", err)
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+		lnurlError(w, "invalid request body")
 		return
 	}
 	req.RefundCode = strings.ToLower(req.RefundCode)
 
 	if req.RefundAfterSeconds <= 0 {
-		http.Error(w, "refund_after_seconds must be greater than 0", http.StatusBadRequest)
+		lnurlError(w, "refund_after_seconds must be greater than 0")
 		return
 	}
 	if req.RefundAfterSeconds > srv.cfg.maxVoucherExpireSeconds {
@@ -61,26 +61,26 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if len(req.PubKeys) == 0 {
-		http.Error(w, "pub_keys must not be empty", http.StatusBadRequest)
+		lnurlError(w, "pub_keys must not be empty")
 		return
 	}
 	if int64(len(req.PubKeys)) > srv.cfg.maxVouchersPerBatch {
-		http.Error(w, "too many vouchers", http.StatusBadRequest)
+		lnurlError(w, "too many vouchers")
 		return
 	}
 	for _, pk := range req.PubKeys {
 		b, err := hex.DecodeString(pk)
 		if err != nil || len(b) < 16 || len(b) > 32 {
-			http.Error(w, "invalid pub_key: must be hex, 16–32 bytes", http.StatusBadRequest)
+			lnurlError(w, "invalid pub_key: must be hex, 16–32 bytes")
 			return
 		}
 	}
 	if req.MaxRedeemMsat > 0 && req.SingleUse {
-		http.Error(w, "max_redeem_msat cannot be set on a single_use voucher", http.StatusBadRequest)
+		lnurlError(w, "max_redeem_msat cannot be set on a single_use voucher")
 		return
 	}
 	if req.UniqueRedemptions && !req.TransfersOnly {
-		http.Error(w, "unique_redemptions requires transfers_only to be set", http.StatusBadRequest)
+		lnurlError(w, "unique_redemptions requires transfers_only to be set")
 		return
 	}
 
@@ -88,7 +88,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	batchIDBytes := make([]byte, pubKeyLen)
 	if _, err := rand.Read(batchIDBytes); err != nil {
 		slog.Error("create batch id error", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		lnurlError(w, "internal error")
 		return
 	}
 	batchID := hex.EncodeToString(batchIDBytes)
@@ -97,7 +97,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	dbTx, err := srv.db.Begin()
 	if err != nil {
 		slog.Error("begin transaction", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		lnurlError(w, "internal error")
 		return
 	}
 	defer dbTx.Rollback()
@@ -115,7 +115,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 			time.Now().Unix(),
 		); err != nil {
 			slog.Error("insert voucher", "err", err)
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			lnurlError(w, "internal error")
 			return
 		}
 
@@ -124,7 +124,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 
 	if err := dbTx.Commit(); err != nil {
 		slog.Error("commit vouchers", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		lnurlError(w, "internal error")
 		return
 	}
 
@@ -260,47 +260,47 @@ func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.
 // POST /transfer — move funds from a non-single-use voucher to any destination (pubKey or batchID)
 func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	if !srv.cfg.fundActive || !srv.cfg.redeemActive {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "transfers are currently disabled"})
+		lnurlError(w, "transfers are currently disabled")
 		return
 	}
 
 	secret := r.PathValue("secret")
 	pubKey := r.PathValue("pubKey")
 	if secret == "" || pubKey == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "secret and pubKey are required"})
+		lnurlError(w, "secret and pubKey are required")
 		return
 	}
 
 	// Resolve source voucher
 	srcPubKey, err := secretToPubKey(secret)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid secret"})
+		lnurlError(w, "invalid secret")
 		return
 	}
 	src, err := srv.getVoucherByPubKey(srv.db, srcPubKey)
 	if err != nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"error": "source voucher not found"})
+		lnurlError(w, "source voucher not found")
 		return
 	}
 	if src.SingleUse {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "single-use vouchers cannot transfer funds"})
+		lnurlError(w, "single-use vouchers cannot transfer funds")
 		return
 	}
 
 	fingerprint := r.URL.Query().Get("fingerprint")
 	if src.UniqueRedemptions && fingerprint == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "fingerprint required for this voucher"})
+		lnurlError(w, "fingerprint required for this voucher")
 		return
 	}
 	if src.UniqueRedemptions && fingerprint != "" {
 		used, err := srv.usedFingerprints([]int64{src.ID}, fingerprint)
 		if err != nil {
 			slog.Error("check fingerprint", "err", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			lnurlError(w, "internal error")
 			return
 		}
 		if used[src.ID] {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this fingerprint has already redeemed this voucher"})
+			lnurlError(w, "this fingerprint has already redeemed this voucher")
 			return
 		}
 	}
@@ -312,7 +312,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 
 	if v, err := srv.getVoucherByPubKey(srv.db, pubKey); err == nil {
 		if pubKey == srcPubKey {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "source and destination cannot be the same voucher"})
+			lnurlError(w, "source and destination cannot be the same voucher")
 			return
 		}
 		dstVoucher = v
@@ -320,7 +320,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	} else {
 		vs, err := srv.getVouchersByBatchID(srv.db, pubKey)
 		if err != nil {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "destination not found"})
+			lnurlError(w, "destination not found")
 			return
 		}
 		dstVouchers = vs
@@ -334,17 +334,17 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 
 	amountMsat, err := srv.getCallbackAmount(r, dstCount)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		lnurlError(w, err.Error())
 		return
 	}
 
 	if amountMsat > src.BalanceMsat {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "insufficient balance"})
+		lnurlError(w, "insufficient balance")
 		return
 	}
 
 	if src.MaxRedeemMsat > 0 && amountMsat > src.MaxRedeemMsat {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "amount exceeds per-transfer limit"})
+		lnurlError(w, "amount exceeds per-transfer limit")
 		return
 	}
 
@@ -359,14 +359,14 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	dbTx, err := srv.db.Begin()
 	if err != nil {
 		slog.Error("transfer begin tx", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		lnurlError(w, "internal error")
 		return
 	}
 	defer dbTx.Rollback()
 
 	// Deduct from source
 	if err := srv.updateVoucherBalance(dbTx, src.ID, -amountMsat); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "insufficient balance"})
+		lnurlError(w, "insufficient balance")
 		return
 	}
 
@@ -375,7 +375,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	if dstVoucher != nil {
 		if err := srv.updateVoucherBalance(dbTx, dstVoucher.ID, netMsat); err != nil {
 			slog.Error("transfer credit voucher", "err", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to credit destination"})
+			lnurlError(w, "failed to credit destination")
 			return
 		}
 	} else {
@@ -384,7 +384,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		for _, v := range dstVouchers {
 			if err := srv.updateVoucherBalance(dbTx, v.ID, share); err != nil {
 				slog.Error("transfer credit batch voucher", "err", err)
-				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to credit destination"})
+				lnurlError(w, "failed to credit destination")
 				return
 			}
 		}
@@ -392,7 +392,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 
 	if err := srv.insertTransferTx(dbTx, srcPubKey, dstPubKey, dstBatchID, amountMsat, feeMsat, netMsat, dustMsat); err != nil {
 		slog.Error("insert transfer tx", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record transfer"})
+		lnurlError(w, "failed to record transfer")
 		return
 	}
 
@@ -400,18 +400,18 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		inserted, err := insertRedemptionFingerprint(dbTx, src.ID, fingerprint)
 		if err != nil {
 			slog.Error("insert redemption fingerprint", "err", err)
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			lnurlError(w, "internal error")
 			return
 		}
 		if !inserted {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this fingerprint has already redeemed this voucher"})
+			lnurlError(w, "this fingerprint has already redeemed this voucher")
 			return
 		}
 	}
 
 	if err := dbTx.Commit(); err != nil {
 		slog.Error("transfer commit", "err", err)
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+		lnurlError(w, "internal error")
 		return
 	}
 
@@ -724,17 +724,17 @@ func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Reque
 		Fingerprint string   `json:"fingerprint"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid json", http.StatusBadRequest)
+		lnurlError(w, "invalid json")
 		return
 	}
 	if len(req.PubKeys) > 500 {
-		http.Error(w, "too many pubkeys", http.StatusBadRequest)
+		lnurlError(w, "too many pubkeys")
 		return
 	}
 
 	statuses, err := srv.getVoucherStatusBatch(req.PubKeys)
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		lnurlError(w, "internal error")
 		return
 	}
 
@@ -749,7 +749,7 @@ func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Reque
 	if len(uniqueIDs) > 0 && req.Fingerprint != "" {
 		usedIDs, err = srv.usedFingerprints(uniqueIDs, req.Fingerprint)
 		if err != nil {
-			http.Error(w, "internal error", http.StatusInternalServerError)
+			lnurlError(w, "internal error")
 			return
 		}
 	}
@@ -793,14 +793,14 @@ func (srv *Server) handleLedger(w http.ResponseWriter, r *http.Request) {
 	infoResp, err := srv.ln.GetInfo(spark.GetInfoRequest{})
 	if err := sdkErr(err); err != nil {
 		slog.Error("get sdk info", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		lnurlError(w, "internal error")
 		return
 	}
 
 	stats, err := srv.getLedgerStats()
 	if err != nil {
 		slog.Error("get ledger stats", "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		lnurlError(w, "internal error")
 		return
 	}
 
