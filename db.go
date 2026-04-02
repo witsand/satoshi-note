@@ -526,25 +526,33 @@ func boolToInt(b bool) int {
 }
 
 type LedgerStats struct {
-	VouchersBalanceMsat  int64 `json:"vouchers_balance_msat"`
-	FundTxsDustMsat      int64 `json:"fund_txs_dust_msat"`
-	RefundTxsDbTxFee     int64 `json:"refund_txs_db_tx_fee"`
-	RefundTxsPendingMsat int64 `json:"refund_txs_pending_msat"`
-	RedeemTxsDbTxFee     int64 `json:"redeem_txs_db_tx_fee"`
-	TransferTxsFeeMsat   int64 `json:"transfer_txs_fee_msat"`
-	TransferTxsDustMsat  int64 `json:"transfer_txs_dust_msat"`
+	VouchersBalanceMsat      int64   `json:"vouchers_balance_msat"`
+	FundTxsDustMsat          int64   `json:"fund_txs_dust_msat"`
+	RefundTxsDbTxFee         int64   `json:"refund_txs_db_tx_fee"`
+	RefundTxsPendingMsat     int64   `json:"refund_txs_pending_msat"`
+	RedeemTxsDbTxFee         int64   `json:"redeem_txs_db_tx_fee"`
+	TransferTxsFeeMsat       int64   `json:"transfer_txs_fee_msat"`
+	TransferTxsDustMsat      int64   `json:"transfer_txs_dust_msat"`
+	VouchersAvgSecsToExpiry  float64 `json:"vouchers_avg_secs_to_expiry"`
+	VouchersWithBalanceCount int64   `json:"vouchers_with_balance_count"`
 }
 
 func (srv *Server) getLedgerStats() (LedgerStats, error) {
 	row := srv.db.QueryRow(`
 		SELECT
-			(SELECT COALESCE(SUM(balance_msat), 0) FROM vouchers),
+			(SELECT COALESCE(SUM(balance_msat), 0) FROM vouchers WHERE balance_msat > 0),
 			(SELECT COALESCE(SUM(dust_msat),    0) FROM fund_txs),
 			(SELECT COALESCE(SUM(db_tx_fee),    0) FROM refund_txs),
 			(SELECT COALESCE(SUM(amount_msat),  0) FROM refund_txs WHERE refunded = 0),
 			(SELECT COALESCE(SUM(db_tx_fee),    0) FROM redeem_txs),
 			(SELECT COALESCE(SUM(fee_msat),     0) FROM transfer_txs),
-			(SELECT COALESCE(SUM(dust_msat),    0) FROM transfer_txs)
+			(SELECT COALESCE(SUM(dust_msat),    0) FROM transfer_txs),
+			(SELECT COALESCE(
+				CAST(SUM(balance_msat * (created_at + refund_after_seconds - CAST(strftime('%s', 'now') AS INTEGER))) AS REAL)
+				/ NULLIF(SUM(balance_msat), 0),
+				0
+			) FROM vouchers WHERE balance_msat > 0),
+			(SELECT COUNT(*) FROM vouchers WHERE balance_msat > 0)
 	`)
 	var s LedgerStats
 	err := row.Scan(
@@ -555,6 +563,8 @@ func (srv *Server) getLedgerStats() (LedgerStats, error) {
 		&s.RedeemTxsDbTxFee,
 		&s.TransferTxsFeeMsat,
 		&s.TransferTxsDustMsat,
+		&s.VouchersAvgSecsToExpiry,
+		&s.VouchersWithBalanceCount,
 	)
 	return s, err
 }

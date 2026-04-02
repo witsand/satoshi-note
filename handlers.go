@@ -715,15 +715,17 @@ func (srv *Server) handleLedger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"sdk_balance_msat":        int64(infoResp.BalanceSats) * 1000,
-		"vouchers_balance_msat":   stats.VouchersBalanceMsat,
-		"fund_txs_dust_msat":      stats.FundTxsDustMsat,
-		"refund_txs_db_tx_fee":    stats.RefundTxsDbTxFee,
-		"refund_txs_pending_msat": stats.RefundTxsPendingMsat,
-		"redeem_txs_db_tx_fee":    stats.RedeemTxsDbTxFee,
-		"transfer_txs_fee_msat":   stats.TransferTxsFeeMsat,
-		"transfer_txs_dust_msat":  stats.TransferTxsDustMsat,
-		"health":                  int64(infoResp.BalanceSats)*1000 - stats.VouchersBalanceMsat - stats.RefundTxsPendingMsat,
+		"sdk_balance_msat":             int64(infoResp.BalanceSats) * 1000,
+		"vouchers_balance_msat":        stats.VouchersBalanceMsat,
+		"fund_txs_dust_msat":           stats.FundTxsDustMsat,
+		"refund_txs_db_tx_fee":         stats.RefundTxsDbTxFee,
+		"refund_txs_pending_msat":      stats.RefundTxsPendingMsat,
+		"redeem_txs_db_tx_fee":         stats.RedeemTxsDbTxFee,
+		"transfer_txs_fee_msat":        stats.TransferTxsFeeMsat,
+		"transfer_txs_dust_msat":       stats.TransferTxsDustMsat,
+		"health":                       int64(infoResp.BalanceSats)*1000 - stats.VouchersBalanceMsat - stats.RefundTxsPendingMsat,
+		"vouchers_avg_hours_to_expiry": stats.VouchersAvgSecsToExpiry / 60 / 60,
+		"vouchers_with_balance_count":  stats.VouchersWithBalanceCount,
 	})
 }
 
