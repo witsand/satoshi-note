@@ -548,12 +548,12 @@ func (srv *Server) getLedgerStats() (LedgerStats, error) {
 			(SELECT COALESCE(SUM(fee_msat),     0) FROM transfer_txs),
 			(SELECT COALESCE(SUM(dust_msat),    0) FROM transfer_txs),
 			(SELECT COALESCE(
-				CAST(SUM(balance_msat * (created_at + refund_after_seconds - CAST(strftime('%s', 'now') AS INTEGER))) AS REAL)
+				CAST(SUM(balance_msat * (created_at + refund_after_seconds - ?)) AS REAL)
 				/ NULLIF(SUM(balance_msat), 0),
 				0
 			) FROM vouchers WHERE balance_msat > 0),
 			(SELECT COUNT(*) FROM vouchers WHERE balance_msat > 0)
-	`)
+	`, time.Now().Unix())
 	var s LedgerStats
 	err := row.Scan(
 		&s.VouchersBalanceMsat,
