@@ -726,6 +726,22 @@ func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Collect IDs of unique_redemptions vouchers so we can check fingerprint usage in one query.
+	var uniqueIDs []int64
+	for _, s := range statuses {
+		if s.UniqueRedemptions {
+			uniqueIDs = append(uniqueIDs, s.ID)
+		}
+	}
+	var usedIDs map[int64]bool
+	if len(uniqueIDs) > 0 && req.Fingerprint != "" {
+		usedIDs, err = srv.usedFingerprints(uniqueIDs, req.Fingerprint)
+		if err != nil {
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+	}
+
 	result := make(map[string]any, len(req.PubKeys))
 	for _, pubKey := range req.PubKeys {
 		s, ok := statuses[pubKey]
@@ -734,6 +750,10 @@ func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Reque
 		}
 		if s.UniqueRedemptions && req.Fingerprint == "" {
 			continue
+		}
+		if s.UniqueRedemptions && usedIDs[s.ID] {
+			s.BalanceMsat = 0
+			s.Active = false
 		}
 		result[pubKey] = srv.voucherStatusBody(s)
 	}

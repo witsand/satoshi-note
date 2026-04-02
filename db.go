@@ -257,6 +257,37 @@ func insertRedemptionFingerprint(db dbQuerier, voucherID int64, fingerprint stri
 	return rows > 0, nil
 }
 
+// usedFingerprints returns a set of voucher IDs for which the given fingerprint
+// already exists in redemption_fingerprints.
+func (srv *Server) usedFingerprints(voucherIDs []int64, fingerprint string) (map[int64]bool, error) {
+	if len(voucherIDs) == 0 {
+		return map[int64]bool{}, nil
+	}
+	placeholders := make([]string, len(voucherIDs))
+	args := make([]any, len(voucherIDs)+1)
+	args[0] = fingerprint
+	for i, id := range voucherIDs {
+		placeholders[i] = "?"
+		args[i+1] = id
+	}
+	rows, err := srv.db.Query(
+		`SELECT voucher_id FROM redemption_fingerprints WHERE fingerprint = ? AND voucher_id IN (`+strings.Join(placeholders, ",")+`)`,
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[int64]bool)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		result[id] = true
+	}
+	return result, rows.Err()
+}
+
 func (srv *Server) updateVoucherBalance(dbTx *sql.Tx, id int64, msats int64) error {
 	res, err := dbTx.Exec(`
 		UPDATE vouchers
@@ -357,6 +388,7 @@ func (srv *Server) getVoucherByPubKey(db dbQuerier, pubkey string) (*Voucher, er
 }
 
 type voucherStatus struct {
+	ID                int64
 	BalanceMsat       int64
 	ExpiresAt         int64 // updated_at + refund_after_seconds; 0 means no expiry clock started yet
 	Active            bool
@@ -378,7 +410,7 @@ func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherS
 		args[i] = pk
 	}
 	rows, err := srv.db.Query(
-		`SELECT pub_key, balance_msat, updated_at, refund_after_seconds, active, refunded, refund_tx_id,
+		`SELECT id, pub_key, balance_msat, updated_at, refund_after_seconds, active, refunded, refund_tx_id,
 		        transfers_only, max_redeem_msat, unique_redemptions
 		 FROM vouchers WHERE pub_key IN (`+strings.Join(placeholders, ",")+`)`,
 		args...)
@@ -392,7 +424,7 @@ func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherS
 		var s voucherStatus
 		var updatedAt, refundAfterSeconds, refundTxID int64
 		var activeInt, refundedInt, transfersOnlyInt, uniqueRedemptionsInt int
-		if err := rows.Scan(&pubKey, &s.BalanceMsat, &updatedAt, &refundAfterSeconds, &activeInt, &refundedInt, &refundTxID,
+		if err := rows.Scan(&s.ID, &pubKey, &s.BalanceMsat, &updatedAt, &refundAfterSeconds, &activeInt, &refundedInt, &refundTxID,
 			&transfersOnlyInt, &s.MaxRedeemMsat, &uniqueRedemptionsInt); err != nil {
 			return nil, err
 		}
