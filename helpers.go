@@ -26,19 +26,29 @@ func (srv *Server) calculateInternalFee(amountMsat int64) int64 {
 
 // voucherStatusBody builds the JSON body for a voucher status response.
 func (srv *Server) voucherStatusBody(s *voucherStatus) map[string]any {
-	redeemFee := srv.calculateRedeemFee(s.BalanceMsat)
-	var maxRedeemable int64
-	if s.BalanceMsat > redeemFee {
-		maxRedeemable = s.BalanceMsat - redeemFee
+	rawBalance := s.BalanceMsat
+	if s.MaxRedeemMsat > 0 && s.MaxRedeemMsat < rawBalance {
+		rawBalance = s.MaxRedeemMsat
 	}
-	return map[string]any{
-		"balance_msat":     maxRedeemable,
-		"raw_balance_msat": s.BalanceMsat,
+
+	body := map[string]any{
+		"raw_balance_msat": rawBalance,
 		"expires_at":       s.ExpiresAt,
 		"active":           s.Active,
 		"refunded":         s.Refunded,
 		"refund_pending":   s.RefundPending,
 	}
+
+	if !s.TransfersOnly {
+		redeemFee := srv.calculateRedeemFee(rawBalance)
+		var maxRedeemable int64
+		if rawBalance > redeemFee {
+			maxRedeemable = rawBalance - redeemFee
+		}
+		body["balance_msat"] = maxRedeemable
+	}
+
+	return body
 }
 
 // lnurlPayResponse builds a LNURL payRequest response map.

@@ -51,7 +51,28 @@ func openDB(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 
+	if err := migrateSchema(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate schema: %w", err)
+	}
+
 	return db, nil
+}
+
+func migrateSchema(db *sql.DB) error {
+	migrations := []string{
+		`ALTER TABLE vouchers ADD COLUMN transfers_only     INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE vouchers ADD COLUMN max_redeem_msat    INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE vouchers ADD COLUMN unique_redemptions INTEGER NOT NULL DEFAULT 0`,
+	}
+	for _, m := range migrations {
+		if _, err := db.Exec(m); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				return fmt.Errorf("%s: %w", m, err)
+			}
+		}
+	}
+	return nil
 }
 
 func initSchema(db *sql.DB) error {
@@ -65,6 +86,9 @@ func initSchema(db *sql.DB) error {
 			balance_msat          INTEGER NOT NULL DEFAULT 0,
 			active                INTEGER NOT NULL DEFAULT 1,
 			single_use            INTEGER NOT NULL,
+			transfers_only        INTEGER NOT NULL DEFAULT 0,
+			max_redeem_msat       INTEGER NOT NULL DEFAULT 0,
+			unique_redemptions    INTEGER NOT NULL DEFAULT 0,
 			refunded              INTEGER NOT NULL DEFAULT 0,
 			refund_tx_id          INTEGER NOT NULL DEFAULT 0,
 			created_at            INTEGER NOT NULL,
@@ -133,6 +157,13 @@ func initSchema(db *sql.DB) error {
 			created_at   INTEGER NOT NULL
 		)`,
 
+		`CREATE TABLE IF NOT EXISTS redemption_fingerprints (
+			voucher_id  INTEGER NOT NULL,
+			fingerprint TEXT    NOT NULL,
+			created_at  INTEGER NOT NULL,
+			PRIMARY KEY (voucher_id, fingerprint)
+		)`,
+
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_pub_key ON vouchers(pub_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_vouchers_batch_id       ON vouchers(batch_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_fund_txs_status         ON fund_txs(status)`,
@@ -152,9 +183,11 @@ func initSchema(db *sql.DB) error {
 
 func (srv *Server) insertVoucher(v *Voucher) error {
 	_, err := srv.db.Exec(
-		`INSERT INTO vouchers (pub_key, batch_id, refund_code, refund_after_seconds, single_use, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		v.PubKey, v.BatchID, v.RefundCode, v.RefundAfterSeconds, boolToInt(v.SingleUse), time.Now().Unix(),
+		`INSERT INTO vouchers (pub_key, batch_id, refund_code, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		v.PubKey, v.BatchID, v.RefundCode, v.RefundAfterSeconds,
+		boolToInt(v.SingleUse), boolToInt(v.TransfersOnly), v.MaxRedeemMsat, boolToInt(v.UniqueRedemptions),
+		time.Now().Unix(),
 	)
 	return err
 }
@@ -205,6 +238,23 @@ func (srv *Server) markRedeemSessionUsed(k1, pubKey string) error {
 	}
 
 	return nil
+}
+
+// insertRedemptionFingerprint records a fingerprint for a voucher inside an existing transaction.
+// Returns (true, nil) when the fingerprint is new, (false, nil) when it already existed (duplicate).
+func insertRedemptionFingerprint(db dbQuerier, voucherID int64, fingerprint string) (bool, error) {
+	res, err := db.Exec(
+		`INSERT OR IGNORE INTO redemption_fingerprints (voucher_id, fingerprint, created_at) VALUES (?, ?, ?)`,
+		voucherID, fingerprint, time.Now().Unix(),
+	)
+	if err != nil {
+		return false, err
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
 }
 
 func (srv *Server) updateVoucherBalance(dbTx *sql.Tx, id int64, msats int64) error {
@@ -286,14 +336,18 @@ func updateFundTxDust(dbTx *sql.Tx, key string, dustMsat int64) error {
 }
 
 func (srv *Server) getVoucherByPubKey(db dbQuerier, pubkey string) (*Voucher, error) {
-	row := db.QueryRow(`SELECT id, refund_after_seconds, balance_msat, single_use, updated_at
+	row := db.QueryRow(`SELECT id, refund_after_seconds, balance_msat, single_use, transfers_only, max_redeem_msat, unique_redemptions, updated_at
 		FROM vouchers WHERE pub_key = ? AND active = 1`, pubkey)
 
 	v := &Voucher{PubKey: pubkey}
 	var updatedAt int64
-	if err := row.Scan(&v.ID, &v.RefundAfterSeconds, &v.BalanceMsat, &v.SingleUse, &updatedAt); err != nil {
+	var singleUseInt, transfersOnlyInt, uniqueRedemptionsInt int
+	if err := row.Scan(&v.ID, &v.RefundAfterSeconds, &v.BalanceMsat, &singleUseInt, &transfersOnlyInt, &v.MaxRedeemMsat, &uniqueRedemptionsInt, &updatedAt); err != nil {
 		return nil, err
 	}
+	v.SingleUse = singleUseInt == 1
+	v.TransfersOnly = transfersOnlyInt == 1
+	v.UniqueRedemptions = uniqueRedemptionsInt == 1
 
 	if time.Unix(updatedAt, 0).Add(time.Duration(v.RefundAfterSeconds)*time.Second).Before(time.Now()) && updatedAt != 0 {
 		return nil, fmt.Errorf("voucher expired")
@@ -303,11 +357,14 @@ func (srv *Server) getVoucherByPubKey(db dbQuerier, pubkey string) (*Voucher, er
 }
 
 type voucherStatus struct {
-	BalanceMsat   int64
-	ExpiresAt     int64 // updated_at + refund_after_seconds; 0 means no expiry clock started yet
-	Active        bool
-	Refunded      bool
-	RefundPending bool // refund tx allocated but not yet paid
+	BalanceMsat       int64
+	ExpiresAt         int64 // updated_at + refund_after_seconds; 0 means no expiry clock started yet
+	Active            bool
+	Refunded          bool
+	RefundPending     bool // refund tx allocated but not yet paid
+	TransfersOnly     bool
+	MaxRedeemMsat     int64
+	UniqueRedemptions bool
 }
 
 func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherStatus, error) {
@@ -321,7 +378,8 @@ func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherS
 		args[i] = pk
 	}
 	rows, err := srv.db.Query(
-		`SELECT pub_key, balance_msat, updated_at, refund_after_seconds, active, refunded, refund_tx_id
+		`SELECT pub_key, balance_msat, updated_at, refund_after_seconds, active, refunded, refund_tx_id,
+		        transfers_only, max_redeem_msat, unique_redemptions
 		 FROM vouchers WHERE pub_key IN (`+strings.Join(placeholders, ",")+`)`,
 		args...)
 	if err != nil {
@@ -333,13 +391,16 @@ func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherS
 		var pubKey string
 		var s voucherStatus
 		var updatedAt, refundAfterSeconds, refundTxID int64
-		var activeInt, refundedInt int
-		if err := rows.Scan(&pubKey, &s.BalanceMsat, &updatedAt, &refundAfterSeconds, &activeInt, &refundedInt, &refundTxID); err != nil {
+		var activeInt, refundedInt, transfersOnlyInt, uniqueRedemptionsInt int
+		if err := rows.Scan(&pubKey, &s.BalanceMsat, &updatedAt, &refundAfterSeconds, &activeInt, &refundedInt, &refundTxID,
+			&transfersOnlyInt, &s.MaxRedeemMsat, &uniqueRedemptionsInt); err != nil {
 			return nil, err
 		}
 		s.Active = activeInt == 1
 		s.Refunded = refundedInt == 1
 		s.RefundPending = refundTxID > 0 && !s.Refunded
+		s.TransfersOnly = transfersOnlyInt == 1
+		s.UniqueRedemptions = uniqueRedemptionsInt == 1
 		if updatedAt != 0 {
 			s.ExpiresAt = updatedAt + refundAfterSeconds
 		}

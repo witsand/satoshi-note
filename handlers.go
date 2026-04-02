@@ -41,6 +41,9 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 		RefundCode         string   `json:"refund_code"`
 		RefundAfterSeconds int64    `json:"refund_after_seconds"`
 		SingleUse          bool     `json:"single_use"`
+		TransfersOnly      bool     `json:"transfers_only"`
+		MaxRedeemMsat      int64    `json:"max_redeem_msat"`
+		UniqueRedemptions  bool     `json:"unique_redemptions"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		slog.Error("decode request body", "err", err)
@@ -72,6 +75,14 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+	if req.MaxRedeemMsat > 0 && req.SingleUse {
+		http.Error(w, "max_redeem_msat cannot be set on a single_use voucher", http.StatusBadRequest)
+		return
+	}
+	if req.UniqueRedemptions && !req.TransfersOnly {
+		http.Error(w, "unique_redemptions requires transfers_only to be set", http.StatusBadRequest)
+		return
+	}
 
 	pubKeyLen := len(req.PubKeys[0]) / 2
 	batchIDBytes := make([]byte, pubKeyLen)
@@ -93,13 +104,14 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 
 	var vs []Voucher
 	for _, pubKey := range req.PubKeys {
-		voucher := srv.newVoucher(pubKey, req.RefundCode, batchID, req.RefundAfterSeconds, req.SingleUse)
+		voucher := srv.newVoucher(pubKey, req.RefundCode, batchID, req.RefundAfterSeconds, req.SingleUse, req.TransfersOnly, req.MaxRedeemMsat, req.UniqueRedemptions)
 
 		if _, err := dbTx.Exec(
-			`INSERT INTO vouchers (pub_key, batch_id, refund_code, refund_after_seconds, single_use, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO vouchers (pub_key, batch_id, refund_code, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			voucher.PubKey, voucher.BatchID,
 			voucher.RefundCode, voucher.RefundAfterSeconds, boolToInt(voucher.SingleUse),
+			boolToInt(voucher.TransfersOnly), voucher.MaxRedeemMsat, boolToInt(voucher.UniqueRedemptions),
 			time.Now().Unix(),
 		); err != nil {
 			slog.Error("insert voucher", "err", err)
@@ -275,6 +287,12 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	fingerprint := r.URL.Query().Get("fingerprint")
+	if src.UniqueRedemptions && fingerprint == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "fingerprint required for this voucher"})
+		return
+	}
+
 	// Resolve destination
 	var dstVoucher *Voucher
 	var dstVouchers []Voucher
@@ -310,6 +328,11 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 
 	if amountMsat > src.BalanceMsat {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "insufficient balance"})
+		return
+	}
+
+	if src.MaxRedeemMsat > 0 && amountMsat > src.MaxRedeemMsat {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "amount exceeds per-transfer limit"})
 		return
 	}
 
@@ -359,6 +382,19 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		slog.Error("insert transfer tx", "err", err)
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to record transfer"})
 		return
+	}
+
+	if src.UniqueRedemptions {
+		inserted, err := insertRedemptionFingerprint(dbTx, src.ID, fingerprint)
+		if err != nil {
+			slog.Error("insert redemption fingerprint", "err", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		if !inserted {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this fingerprint has already redeemed this voucher"})
+			return
+		}
 	}
 
 	if err := dbTx.Commit(); err != nil {
@@ -415,6 +451,11 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if v.TransfersOnly {
+		lnurlError(w, "this voucher can only be transferred, not redeemed")
+		return
+	}
+
 	if v.BalanceMsat < int64(srv.cfg.minRedeemAmountMsat) {
 		lnurlError(w, "voucher balance too low")
 		return
@@ -437,6 +478,9 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 	dbTxFee := srv.calculateRedeemFee(v.BalanceMsat)
 
 	maxRedeemable := v.BalanceMsat - dbTxFee
+	if v.MaxRedeemMsat > 0 && v.MaxRedeemMsat < maxRedeemable {
+		maxRedeemable = v.MaxRedeemMsat
+	}
 	minRedeemable := int64(srv.cfg.minRedeemAmountMsat) / 1000 * 1000
 
 	if minRedeemable > maxRedeemable {
@@ -524,6 +568,16 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 	v, err := srv.getVoucherByPubKey(srv.db, pubKey)
 	if err != nil {
 		lnurlError(w, "voucher not found")
+		return
+	}
+
+	if v.TransfersOnly {
+		lnurlError(w, "this voucher can only be transferred, not redeemed")
+		return
+	}
+
+	if v.MaxRedeemMsat > 0 && amountMsat > v.MaxRedeemMsat {
+		lnurlError(w, "redeem amount exceeds per-redeem limit")
 		return
 	}
 
@@ -654,7 +708,8 @@ func (srv *Server) updateFundBalance(dbTx *sql.Tx, tx *FundTx) (int64, error) {
 
 func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PubKeys []string `json:"pubkeys"`
+		PubKeys     []string `json:"pubkeys"`
+		Fingerprint string   `json:"fingerprint"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid json", http.StatusBadRequest)
@@ -675,6 +730,9 @@ func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Reque
 	for _, pubKey := range req.PubKeys {
 		s, ok := statuses[pubKey]
 		if !ok {
+			continue
+		}
+		if s.UniqueRedemptions && req.Fingerprint == "" {
 			continue
 		}
 		result[pubKey] = srv.voucherStatusBody(s)

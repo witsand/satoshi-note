@@ -34,6 +34,9 @@ type Voucher struct {
 	BalanceMsat        int64  `json:"balance_msat,omitempty"`
 	Active             bool   `json:"active,omitempty"`
 	SingleUse          bool   `json:"single_use,omitempty"`
+	TransfersOnly      bool   `json:"transfers_only,omitempty"`
+	MaxRedeemMsat      int64  `json:"max_redeem_msat,omitempty"`
+	UniqueRedemptions  bool   `json:"unique_redemptions,omitempty"`
 	Refunded           bool   `json:"refunded,omitempty"`
 	UpdatedAt          int64  `json:"updated_at,omitempty"`
 }
