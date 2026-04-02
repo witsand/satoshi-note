@@ -740,17 +740,19 @@ func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Reque
 
 	// Collect IDs of unique_redemptions vouchers so we can check fingerprint usage in one query.
 	var uniqueIDs []int64
-	for _, s := range statuses {
-		if s.UniqueRedemptions {
-			uniqueIDs = append(uniqueIDs, s.ID)
-		}
-	}
 	var usedIDs map[int64]bool
-	if len(uniqueIDs) > 0 && req.Fingerprint != "" {
-		usedIDs, err = srv.usedFingerprints(uniqueIDs, req.Fingerprint)
-		if err != nil {
-			lnurlError(w, http.StatusInternalServerError, "internal error")
-			return
+	if req.Fingerprint != "" {
+		for _, s := range statuses {
+			if s.UniqueRedemptions {
+				uniqueIDs = append(uniqueIDs, s.ID)
+			}
+		}
+		if len(uniqueIDs) > 0 && req.Fingerprint != "" {
+			usedIDs, err = srv.usedFingerprints(uniqueIDs, req.Fingerprint)
+			if err != nil {
+				lnurlError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
 		}
 	}
 
