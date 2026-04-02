@@ -17,8 +17,8 @@ import (
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
 )
 
-func lnurlError(w http.ResponseWriter, reason string) {
-	writeJSON(w, http.StatusOK, map[string]string{
+func lnurlError(w http.ResponseWriter, status int, reason string) {
+	writeJSON(w, status, map[string]string{
 		"status": "ERROR",
 		"reason": reason,
 	})
@@ -32,7 +32,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) {
 	if !srv.cfg.createActive {
-		lnurlError(w, "creating is currently disabled")
+		lnurlError(w, http.StatusServiceUnavailable, "creating is currently disabled")
 		return
 	}
 
@@ -47,13 +47,13 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		slog.Error("decode request body", "err", err)
-		lnurlError(w, "invalid request body")
+		lnurlError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	req.RefundCode = strings.ToLower(req.RefundCode)
 
 	if req.RefundAfterSeconds <= 0 {
-		lnurlError(w, "refund_after_seconds must be greater than 0")
+		lnurlError(w, http.StatusBadRequest, "refund_after_seconds must be greater than 0")
 		return
 	}
 	if req.RefundAfterSeconds > srv.cfg.maxVoucherExpireSeconds {
@@ -61,26 +61,26 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if len(req.PubKeys) == 0 {
-		lnurlError(w, "pub_keys must not be empty")
+		lnurlError(w, http.StatusBadRequest, "pub_keys must not be empty")
 		return
 	}
 	if int64(len(req.PubKeys)) > srv.cfg.maxVouchersPerBatch {
-		lnurlError(w, "too many vouchers")
+		lnurlError(w, http.StatusBadRequest, "too many vouchers")
 		return
 	}
 	for _, pk := range req.PubKeys {
 		b, err := hex.DecodeString(pk)
 		if err != nil || len(b) < 16 || len(b) > 32 {
-			lnurlError(w, "invalid pub_key: must be hex, 16–32 bytes")
+			lnurlError(w, http.StatusBadRequest, "invalid pub_key: must be hex, 16–32 bytes")
 			return
 		}
 	}
 	if req.MaxRedeemMsat > 0 && req.SingleUse {
-		lnurlError(w, "max_redeem_msat cannot be set on a single_use voucher")
+		lnurlError(w, http.StatusUnprocessableEntity, "max_redeem_msat cannot be set on a single_use voucher")
 		return
 	}
 	if req.UniqueRedemptions && !req.TransfersOnly {
-		lnurlError(w, "unique_redemptions requires transfers_only to be set")
+		lnurlError(w, http.StatusUnprocessableEntity, "unique_redemptions requires transfers_only to be set")
 		return
 	}
 
@@ -88,7 +88,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	batchIDBytes := make([]byte, pubKeyLen)
 	if _, err := rand.Read(batchIDBytes); err != nil {
 		slog.Error("create batch id error", "err", err)
-		lnurlError(w, "internal error")
+		lnurlError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	batchID := hex.EncodeToString(batchIDBytes)
@@ -97,7 +97,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	dbTx, err := srv.db.Begin()
 	if err != nil {
 		slog.Error("begin transaction", "err", err)
-		lnurlError(w, "internal error")
+		lnurlError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	defer dbTx.Rollback()
@@ -115,7 +115,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 			time.Now().Unix(),
 		); err != nil {
 			slog.Error("insert voucher", "err", err)
-			lnurlError(w, "internal error")
+			lnurlError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 
@@ -124,7 +124,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 
 	if err := dbTx.Commit(); err != nil {
 		slog.Error("commit vouchers", "err", err)
-		lnurlError(w, "internal error")
+		lnurlError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -138,7 +138,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 // GET /f/{pubKey} — LNURL-pay step 1
 func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request) {
 	if !srv.cfg.fundActive {
-		lnurlError(w, "funding is currently disabled")
+		lnurlError(w, http.StatusOK, "funding is currently disabled")
 		return
 	}
 
@@ -147,7 +147,7 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 	if v, err := srv.getVoucherByPubKey(srv.db, key); err == nil {
 		remaining := srv.cfg.maxFundAmountMsat - v.BalanceMsat
 		if remaining < srv.cfg.minFundAmountMsat {
-			lnurlError(w, "voucher is fully funded")
+			lnurlError(w, http.StatusOK, "voucher is fully funded")
 			return
 		}
 		writeJSON(w, http.StatusOK, lnurlPayResponse(
@@ -161,7 +161,7 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 
 	vs, err := srv.getVouchersByBatchID(srv.db, key)
 	if err != nil {
-		lnurlError(w, "voucher or batch not found")
+		lnurlError(w, http.StatusOK, "voucher or batch not found")
 		return
 	}
 
@@ -174,7 +174,7 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 	}
 	batchMax := minRemaining * n
 	if batchMax < srv.cfg.minFundAmountMsat*n {
-		lnurlError(w, "batch vouchers are fully funded")
+		lnurlError(w, http.StatusOK, "batch vouchers are fully funded")
 		return
 	}
 	writeJSON(w, http.StatusOK, lnurlPayResponse(
@@ -188,7 +188,7 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 // GET /fund/{pubKey}/callback?amount=MSATS — LNURL-pay step 2
 func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.Request) {
 	if !srv.cfg.fundActive {
-		lnurlError(w, "funding is currently disabled")
+		lnurlError(w, http.StatusOK, "funding is currently disabled")
 		return
 	}
 
@@ -201,29 +201,29 @@ func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.
 		var err error
 		tx.Msat, err = srv.getCallbackAmount(r, 1)
 		if err != nil {
-			lnurlError(w, "invalid amount")
+			lnurlError(w, http.StatusOK, "invalid amount")
 			return
 		}
 		if tx.Msat+v.BalanceMsat > srv.cfg.maxFundAmountMsat {
-			lnurlError(w, "amount would exceed maximum voucher balance")
+			lnurlError(w, http.StatusOK, "amount would exceed maximum voucher balance")
 			return
 		}
 		if err = srv.getCallbackBolt11(tx, "Fund a Voucher"); err != nil {
 			slog.Error("create invoice", "err", err)
-			lnurlError(w, "failed to create invoice")
+			lnurlError(w, http.StatusOK, "failed to create invoice")
 			return
 		}
 	} else {
 		vs, err := srv.getVouchersByBatchID(srv.db, key)
 		if err != nil {
-			lnurlError(w, "voucher or batch not found")
+			lnurlError(w, http.StatusOK, "voucher or batch not found")
 			return
 		}
 		tx.BatchID = key
 		n := int64(len(vs))
 		tx.Msat, err = srv.getCallbackAmount(r, n)
 		if err != nil {
-			lnurlError(w, err.Error())
+			lnurlError(w, http.StatusOK, err.Error())
 			return
 		}
 		minRemaining := srv.cfg.maxFundAmountMsat
@@ -233,19 +233,19 @@ func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.
 			}
 		}
 		if tx.Msat > minRemaining*n {
-			lnurlError(w, "amount would exceed maximum voucher balance")
+			lnurlError(w, http.StatusOK, "amount would exceed maximum voucher balance")
 			return
 		}
 		if err = srv.getCallbackBolt11(tx, "Fund a Batch Vouchers"); err != nil {
 			slog.Error("create invoice", "err", err)
-			lnurlError(w, "failed to create invoice")
+			lnurlError(w, http.StatusOK, "failed to create invoice")
 			return
 		}
 	}
 
 	if err := srv.insertFundTX(tx); err != nil {
 		slog.Error("insert fund tx", "err", err)
-		lnurlError(w, "failed to write fund tx")
+		lnurlError(w, http.StatusOK, "failed to write fund tx")
 		return
 	}
 
@@ -260,47 +260,47 @@ func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.
 // POST /transfer — move funds from a non-single-use voucher to any destination (pubKey or batchID)
 func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	if !srv.cfg.fundActive || !srv.cfg.redeemActive {
-		lnurlError(w, "transfers are currently disabled")
+		lnurlError(w, http.StatusServiceUnavailable, "transfers are currently disabled")
 		return
 	}
 
 	secret := r.PathValue("secret")
 	pubKey := r.PathValue("pubKey")
 	if secret == "" || pubKey == "" {
-		lnurlError(w, "secret and pubKey are required")
+		lnurlError(w, http.StatusBadRequest, "secret and pubKey are required")
 		return
 	}
 
 	// Resolve source voucher
 	srcPubKey, err := secretToPubKey(secret)
 	if err != nil {
-		lnurlError(w, "invalid secret")
+		lnurlError(w, http.StatusBadRequest, "invalid secret")
 		return
 	}
 	src, err := srv.getVoucherByPubKey(srv.db, srcPubKey)
 	if err != nil {
-		lnurlError(w, "source voucher not found")
+		lnurlError(w, http.StatusNotFound, "source voucher not found")
 		return
 	}
 	if src.SingleUse {
-		lnurlError(w, "single-use vouchers cannot transfer funds")
+		lnurlError(w, http.StatusUnprocessableEntity, "single-use vouchers cannot transfer funds")
 		return
 	}
 
 	fingerprint := r.URL.Query().Get("fingerprint")
 	if src.UniqueRedemptions && fingerprint == "" {
-		lnurlError(w, "fingerprint required for this voucher")
+		lnurlError(w, http.StatusBadRequest, "fingerprint required for this voucher")
 		return
 	}
 	if src.UniqueRedemptions && fingerprint != "" {
 		used, err := srv.usedFingerprints([]int64{src.ID}, fingerprint)
 		if err != nil {
 			slog.Error("check fingerprint", "err", err)
-			lnurlError(w, "internal error")
+			lnurlError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 		if used[src.ID] {
-			lnurlError(w, "this fingerprint has already redeemed this voucher")
+			lnurlError(w, http.StatusConflict, "this fingerprint has already redeemed this voucher")
 			return
 		}
 	}
@@ -312,7 +312,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 
 	if v, err := srv.getVoucherByPubKey(srv.db, pubKey); err == nil {
 		if pubKey == srcPubKey {
-			lnurlError(w, "source and destination cannot be the same voucher")
+			lnurlError(w, http.StatusBadRequest, "source and destination cannot be the same voucher")
 			return
 		}
 		dstVoucher = v
@@ -320,7 +320,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	} else {
 		vs, err := srv.getVouchersByBatchID(srv.db, pubKey)
 		if err != nil {
-			lnurlError(w, "destination not found")
+			lnurlError(w, http.StatusNotFound, "destination not found")
 			return
 		}
 		dstVouchers = vs
@@ -334,17 +334,17 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 
 	amountMsat, err := srv.getCallbackAmount(r, dstCount)
 	if err != nil {
-		lnurlError(w, err.Error())
+		lnurlError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	if amountMsat > src.BalanceMsat {
-		lnurlError(w, "insufficient balance")
+		lnurlError(w, http.StatusUnprocessableEntity, "insufficient balance")
 		return
 	}
 
 	if src.MaxRedeemMsat > 0 && amountMsat > src.MaxRedeemMsat {
-		lnurlError(w, "amount exceeds per-transfer limit")
+		lnurlError(w, http.StatusUnprocessableEntity, "amount exceeds per-transfer limit")
 		return
 	}
 
@@ -359,14 +359,14 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	dbTx, err := srv.db.Begin()
 	if err != nil {
 		slog.Error("transfer begin tx", "err", err)
-		lnurlError(w, "internal error")
+		lnurlError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	defer dbTx.Rollback()
 
 	// Deduct from source
 	if err := srv.updateVoucherBalance(dbTx, src.ID, -amountMsat); err != nil {
-		lnurlError(w, "insufficient balance")
+		lnurlError(w, http.StatusUnprocessableEntity, "insufficient balance")
 		return
 	}
 
@@ -375,7 +375,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	if dstVoucher != nil {
 		if err := srv.updateVoucherBalance(dbTx, dstVoucher.ID, netMsat); err != nil {
 			slog.Error("transfer credit voucher", "err", err)
-			lnurlError(w, "failed to credit destination")
+			lnurlError(w, http.StatusInternalServerError, "failed to credit destination")
 			return
 		}
 	} else {
@@ -384,7 +384,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		for _, v := range dstVouchers {
 			if err := srv.updateVoucherBalance(dbTx, v.ID, share); err != nil {
 				slog.Error("transfer credit batch voucher", "err", err)
-				lnurlError(w, "failed to credit destination")
+				lnurlError(w, http.StatusInternalServerError, "failed to credit destination")
 				return
 			}
 		}
@@ -392,7 +392,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 
 	if err := srv.insertTransferTx(dbTx, srcPubKey, dstPubKey, dstBatchID, amountMsat, feeMsat, netMsat, dustMsat); err != nil {
 		slog.Error("insert transfer tx", "err", err)
-		lnurlError(w, "failed to record transfer")
+		lnurlError(w, http.StatusInternalServerError, "failed to record transfer")
 		return
 	}
 
@@ -400,18 +400,18 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		inserted, err := insertRedemptionFingerprint(dbTx, src.ID, fingerprint)
 		if err != nil {
 			slog.Error("insert redemption fingerprint", "err", err)
-			lnurlError(w, "internal error")
+			lnurlError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 		if !inserted {
-			lnurlError(w, "this fingerprint has already redeemed this voucher")
+			lnurlError(w, http.StatusConflict, "this fingerprint has already redeemed this voucher")
 			return
 		}
 	}
 
 	if err := dbTx.Commit(); err != nil {
 		slog.Error("transfer commit", "err", err)
-		lnurlError(w, "internal error")
+		lnurlError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -424,7 +424,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 
 func (srv *Server) handleLNURLVerify(w http.ResponseWriter, r *http.Request) {
 	if !srv.cfg.fundActive {
-		lnurlError(w, "funding is currently disabled")
+		lnurlError(w, http.StatusOK, "funding is currently disabled")
 		return
 	}
 
@@ -432,7 +432,7 @@ func (srv *Server) handleLNURLVerify(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := srv.getFundTxByKey(key)
 	if err != nil {
-		lnurlError(w, "not found")
+		lnurlError(w, http.StatusOK, "not found")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -445,7 +445,7 @@ func (srv *Server) handleLNURLVerify(w http.ResponseWriter, r *http.Request) {
 
 func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 	if !srv.cfg.redeemActive {
-		lnurlError(w, "redeem is currently disabled")
+		lnurlError(w, http.StatusOK, "redeem is currently disabled")
 		return
 	}
 
@@ -453,29 +453,29 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 
 	pubKey, err := secretToPubKey(secret)
 	if err != nil {
-		lnurlError(w, "invalid secret")
+		lnurlError(w, http.StatusOK, "invalid secret")
 		return
 	}
 
 	v, err := srv.getVoucherByPubKey(srv.db, pubKey)
 	if err != nil {
-		lnurlError(w, "voucher not found")
+		lnurlError(w, http.StatusOK, "voucher not found")
 		return
 	}
 
 	if v.TransfersOnly {
-		lnurlError(w, "this voucher can only be transferred, not redeemed")
+		lnurlError(w, http.StatusOK, "this voucher can only be transferred, not redeemed")
 		return
 	}
 
 	if v.BalanceMsat < int64(srv.cfg.minRedeemAmountMsat) {
-		lnurlError(w, "voucher balance too low")
+		lnurlError(w, http.StatusOK, "voucher balance too low")
 		return
 	}
 
 	k1Bytes := make([]byte, len(pubKey)/2)
 	if _, err := rand.Read(k1Bytes); err != nil {
-		lnurlError(w, "internal error")
+		lnurlError(w, http.StatusOK, "internal error")
 		return
 	}
 	k1 := hex.EncodeToString(k1Bytes)
@@ -483,7 +483,7 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 	err = srv.insertRedeemSession(k1, pubKey)
 	if err != nil {
 		slog.Error("insert redeem session", "err", err)
-		lnurlError(w, "internal error")
+		lnurlError(w, http.StatusOK, "internal error")
 		return
 	}
 
@@ -496,7 +496,7 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 	minRedeemable := int64(srv.cfg.minRedeemAmountMsat) / 1000 * 1000
 
 	if minRedeemable > maxRedeemable {
-		lnurlError(w, "voucher balance too low")
+		lnurlError(w, http.StatusOK, "voucher balance too low")
 		return
 	}
 
@@ -516,7 +516,7 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 
 func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Request) {
 	if !srv.cfg.redeemActive {
-		lnurlError(w, "redeem is currently disabled")
+		lnurlError(w, http.StatusOK, "redeem is currently disabled")
 		return
 	}
 
@@ -524,31 +524,31 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 
 	pubKey, err := secretToPubKey(secret)
 	if err != nil {
-		lnurlError(w, "invalid secret")
+		lnurlError(w, http.StatusOK, "invalid secret")
 		return
 	}
 
 	k1 := r.URL.Query().Get("k1")
 	if k1 == "" {
-		lnurlError(w, "missing k1")
+		lnurlError(w, http.StatusOK, "missing k1")
 		return
 	}
 
 	pr := r.URL.Query().Get("pr")
 	if pr == "" {
-		lnurlError(w, "missing pr")
+		lnurlError(w, http.StatusOK, "missing pr")
 		return
 	}
 
 	if !srv.paymentSema.acquireForWithdrawal() {
-		lnurlError(w, "server busy, please retry")
+		lnurlError(w, http.StatusOK, "server busy, please retry")
 		return
 	}
 	defer srv.paymentSema.releaseAfter(srv.cfg.paymentCooldown)
 
 	err = srv.markRedeemSessionUsed(k1, pubKey)
 	if err != nil {
-		lnurlError(w, "invalid or expired k1")
+		lnurlError(w, http.StatusOK, "invalid or expired k1")
 		return
 	}
 
@@ -557,7 +557,7 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 	})
 	if err := sdkErr(rawPrepErr); err != nil {
 		slog.Error("prepare send payment", "err", err)
-		lnurlError(w, "prepare payment failed")
+		lnurlError(w, http.StatusOK, "prepare payment failed")
 		return
 	}
 
@@ -566,49 +566,49 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 	switch pm := prepResp.PaymentMethod.(type) {
 	case spark.SendPaymentMethodBolt11Invoice:
 		if pm.InvoiceDetails.AmountMsat == nil {
-			lnurlError(w, "zero-amount invoices are not supported")
+			lnurlError(w, http.StatusOK, "zero-amount invoices are not supported")
 			return
 		}
 		estimateFeeMsat = int64(pm.LightningFeeSats) * 1000
 		amountMsat = int64(*pm.InvoiceDetails.AmountMsat)
 	default:
 		slog.Error("unsupported payment method", "type", fmt.Sprintf("%T", prepResp.PaymentMethod))
-		lnurlError(w, "unsupported payment method")
+		lnurlError(w, http.StatusOK, "unsupported payment method")
 		return
 	}
 
 	v, err := srv.getVoucherByPubKey(srv.db, pubKey)
 	if err != nil {
-		lnurlError(w, "voucher not found")
+		lnurlError(w, http.StatusOK, "voucher not found")
 		return
 	}
 
 	if v.TransfersOnly {
-		lnurlError(w, "this voucher can only be transferred, not redeemed")
+		lnurlError(w, http.StatusOK, "this voucher can only be transferred, not redeemed")
 		return
 	}
 
 	if v.MaxRedeemMsat > 0 && amountMsat > v.MaxRedeemMsat {
-		lnurlError(w, "redeem amount exceeds per-redeem limit")
+		lnurlError(w, http.StatusOK, "redeem amount exceeds per-redeem limit")
 		return
 	}
 
 	dbTxFee := srv.calculateRedeemFee(v.BalanceMsat)
 
 	if estimateFeeMsat > dbTxFee {
-		lnurlError(w, "routing fee too high")
+		lnurlError(w, http.StatusOK, "routing fee too high")
 		return
 	}
 
 	if amountMsat+dbTxFee > v.BalanceMsat {
-		lnurlError(w, "redeem amount exceeds voucher balance after fees")
+		lnurlError(w, http.StatusOK, "redeem amount exceeds voucher balance after fees")
 		return
 	}
 
 	redeemID, err := srv.insertRedeemAndBalance(v, secret, pr, amountMsat, dbTxFee)
 	if err != nil {
 		slog.Error("insert redeem and balance", "err", err)
-		lnurlError(w, "internal db error")
+		lnurlError(w, http.StatusOK, "internal db error")
 		return
 	}
 
@@ -624,7 +624,7 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		if err := srv.addVoucherBalance(v.ID, amountMsat+dbTxFee); err != nil {
 			slog.Error("restore voucher balance after failed payment", "err", err)
 		}
-		lnurlError(w, "payment failed")
+		lnurlError(w, http.StatusOK, "payment failed")
 		return
 	}
 
@@ -724,17 +724,17 @@ func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Reque
 		Fingerprint string   `json:"fingerprint"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		lnurlError(w, "invalid json")
+		lnurlError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 	if len(req.PubKeys) > 500 {
-		lnurlError(w, "too many pubkeys")
+		lnurlError(w, http.StatusBadRequest, "too many pubkeys")
 		return
 	}
 
 	statuses, err := srv.getVoucherStatusBatch(req.PubKeys)
 	if err != nil {
-		lnurlError(w, "internal error")
+		lnurlError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
@@ -749,7 +749,7 @@ func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Reque
 	if len(uniqueIDs) > 0 && req.Fingerprint != "" {
 		usedIDs, err = srv.usedFingerprints(uniqueIDs, req.Fingerprint)
 		if err != nil {
-			lnurlError(w, "internal error")
+			lnurlError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 	}
@@ -793,14 +793,14 @@ func (srv *Server) handleLedger(w http.ResponseWriter, r *http.Request) {
 	infoResp, err := srv.ln.GetInfo(spark.GetInfoRequest{})
 	if err := sdkErr(err); err != nil {
 		slog.Error("get sdk info", "err", err)
-		lnurlError(w, "internal error")
+		lnurlError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
 	stats, err := srv.getLedgerStats()
 	if err != nil {
 		slog.Error("get ledger stats", "err", err)
-		lnurlError(w, "internal error")
+		lnurlError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
