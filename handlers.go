@@ -292,6 +292,18 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "fingerprint required for this voucher"})
 		return
 	}
+	if src.UniqueRedemptions && fingerprint != "" {
+		used, err := srv.usedFingerprints([]int64{src.ID}, fingerprint)
+		if err != nil {
+			slog.Error("check fingerprint", "err", err)
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
+			return
+		}
+		if used[src.ID] {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "this fingerprint has already redeemed this voucher"})
+			return
+		}
+	}
 
 	// Resolve destination
 	var dstVoucher *Voucher
