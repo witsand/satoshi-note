@@ -9,11 +9,35 @@ import (
 )
 
 func (srv *Server) runRefundWorker() {
-	srv.processRefunds() // run once on startup to catch missed refunds
-	ticker := time.NewTicker(time.Duration(srv.cfg.refundWorkerIntervalSeconds) * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		srv.processRefunds()
+	// Run once on startup to catch any missed refunds.
+	srv.processExpiredRefunds()
+	srv.processRegularRefunds()
+
+	const maxSleep = time.Hour
+	for {
+		nextAt, err := srv.nextRefundAt()
+		var wait time.Duration
+		if err != nil || nextAt == nil {
+			wait = maxSleep
+		} else {
+			wait = time.Until(*nextAt)
+			if wait <= 0 {
+				srv.processExpiredRefunds()
+				srv.processRegularRefunds()
+				continue
+			}
+			if wait > maxSleep {
+				wait = maxSleep
+			}
+		}
+
+		select {
+		case <-time.After(wait):
+		case <-srv.refundWake:
+		}
+
+		srv.processExpiredRefunds()
+		srv.processRegularRefunds()
 	}
 }
 
@@ -39,7 +63,21 @@ func splitBalance(balanceMsat int64, codes []VoucherRefundCode) map[string]int64
 	return out
 }
 
-func (srv *Server) processRefunds() {
+// nextRegularRefundAnchor returns the last past-due scheduled anchor time,
+// advancing by intervalSecs until the next occurrence would be in the future.
+// This pins the refund schedule to firstAt regardless of processing delays.
+func nextRegularRefundAnchor(firstAt, lastAt, intervalSecs, now int64) int64 {
+	anchor := firstAt
+	if lastAt > 0 {
+		anchor = lastAt
+	}
+	for anchor <= now {
+		anchor += intervalSecs
+	}
+	return anchor - intervalSecs
+}
+
+func (srv *Server) processExpiredRefunds() {
 	slog.Info("refund worker: checking for expired vouchers")
 	defer srv.doPendingRefunds()
 
@@ -117,6 +155,110 @@ func (srv *Server) processRefunds() {
 
 		if err := dbTx.Commit(); err != nil {
 			slog.Error("refund worker: commit", "refund_code", refundCode, "err", err)
+			continue
+		}
+	}
+}
+
+func (srv *Server) processRegularRefunds() {
+	slog.Info("refund worker: checking for regular refunds")
+	defer srv.doPendingRefunds()
+
+	now := time.Now().Unix()
+
+	vouchers, err := srv.getRegularRefundDueVouchers()
+	if err != nil {
+		slog.Error("refund worker: get regular refund vouchers", "err", err)
+		return
+	}
+
+	if len(vouchers) == 0 {
+		slog.Info("refund worker: no regular refunds due")
+		return
+	}
+
+	// Compute the drift-free anchor for each voucher and partition by balance.
+	type regularGroup struct {
+		entries    []regularRefundEntry
+		totalMsat  int64
+		refundCode string
+	}
+	groups := make(map[string]*regularGroup)
+	var noBalanceEntries []regularRefundEntry
+
+	ids := make([]int64, len(vouchers))
+	for i, v := range vouchers {
+		ids[i] = v.ID
+	}
+	refundCodesMap, err := srv.getRefundCodesForVouchers(ids)
+	if err != nil {
+		slog.Error("refund worker: get refund codes for regular", "err", err)
+		return
+	}
+
+	for _, v := range vouchers {
+		newLastAt := nextRegularRefundAnchor(v.FirstAt, v.LastAt, v.IntervalSecs, now)
+		entry := regularRefundEntry{ID: v.ID, NewLastAt: newLastAt}
+
+		if v.BalanceMsat == 0 {
+			noBalanceEntries = append(noBalanceEntries, entry)
+			continue
+		}
+
+		codes := refundCodesMap[v.ID]
+		splits := splitBalance(v.BalanceMsat, codes)
+		for refundCode, amount := range splits {
+			g, ok := groups[refundCode]
+			if !ok {
+				g = &regularGroup{refundCode: refundCode}
+				groups[refundCode] = g
+			}
+			g.entries = append(g.entries, entry)
+			g.totalMsat += amount
+		}
+	}
+
+	// Advance schedule for zero-balance vouchers without creating a payment.
+	if len(noBalanceEntries) > 0 {
+		if err := advanceRegularRefundTime(srv.db, noBalanceEntries); err != nil {
+			slog.Error("refund worker: advance regular refund time", "err", err)
+		}
+	}
+
+	cfg := srv.cfg
+
+	for refundCode, g := range groups {
+		dbTxFee := srv.calculateRedeemFee(g.totalMsat)
+		netMsat := g.totalMsat - dbTxFee
+
+		if netMsat < cfg.minRedeemAmountMsat {
+			// Still advance the schedule even if amount is too small to send.
+			if err := advanceRegularRefundTime(srv.db, g.entries); err != nil {
+				slog.Error("refund worker: advance regular refund time (below min)", "err", err)
+			}
+			continue
+		}
+
+		dbTx, err := srv.db.Begin()
+		if err != nil {
+			slog.Error("refund worker: begin regular tx", "refund_code", refundCode, "err", err)
+			continue
+		}
+
+		if _, err := srv.insertRefundTx(dbTx, refundCode, netMsat, dbTxFee); err != nil {
+			slog.Error("refund worker: insert regular refund tx", "refund_code", refundCode, "err", err)
+			dbTx.Rollback()
+			continue
+		}
+
+		if err := markVouchersRegularRefunded(dbTx, g.entries); err != nil {
+			slog.Error("refund worker: mark vouchers regular refunded", "refund_code", refundCode, "err", err)
+			dbTx.Rollback()
+			continue
+		}
+
+		if err := dbTx.Commit(); err != nil {
+			slog.Error("refund worker: commit regular", "refund_code", refundCode, "err", err)
 			continue
 		}
 	}

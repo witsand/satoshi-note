@@ -16,18 +16,20 @@ func secretToPubKey(secret string) (string, error) {
 	return hex.EncodeToString(h[:len(b)]), nil
 }
 
-func (srv *Server) newVoucher(pubKey, batchID string, refundAfterSeconds int64, singleUse, transfersOnly bool, maxRedeemMsat int64, uniqueRedemptions bool, absoluteExpiry bool) *Voucher {
+func (srv *Server) newVoucher(pubKey, batchID string, refundAfterSeconds int64, singleUse, transfersOnly bool, maxRedeemMsat int64, uniqueRedemptions bool, absoluteExpiry bool, regularRefundFirstAt, regularRefundIntervalSecs int64) *Voucher {
 	return &Voucher{
-		PubKey:             pubKey,
-		FundURLPrefix:      srv.cfg.baseURL + "/f/",
-		BatchID:            batchID,
-		WithdrawURLPrefix:  srv.cfg.baseURL + "/w/",
-		RefundAfterSeconds: refundAfterSeconds,
-		SingleUse:          singleUse,
-		TransfersOnly:      transfersOnly,
-		MaxRedeemMsat:      maxRedeemMsat,
-		UniqueRedemptions:  uniqueRedemptions,
-		AbsoluteExpiry:     absoluteExpiry,
-		Active:             true,
+		PubKey:                    pubKey,
+		FundURLPrefix:             srv.cfg.baseURL + "/f/",
+		BatchID:                   batchID,
+		WithdrawURLPrefix:         srv.cfg.baseURL + "/w/",
+		RefundAfterSeconds:        refundAfterSeconds,
+		SingleUse:                 singleUse,
+		TransfersOnly:             transfersOnly,
+		MaxRedeemMsat:             maxRedeemMsat,
+		UniqueRedemptions:         uniqueRedemptions,
+		AbsoluteExpiry:            absoluteExpiry,
+		RegularRefundFirstAt:      regularRefundFirstAt,
+		RegularRefundIntervalSecs: regularRefundIntervalSecs,
+		Active:                    true,
 	}
 }

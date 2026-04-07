@@ -16,6 +16,7 @@ func main() {
 		os.Exit(1)
 	}
 	srv.paymentSema = newPaymentSemaphore()
+	srv.refundWake = make(chan struct{}, 1)
 	slog.Info("config loaded")
 
 	srv.ln, err = NewBreezClient(srv.cfg.mnemonic, srv.cfg.apiKey, srv.cfg.storageDirectory, srv.cfg.network)

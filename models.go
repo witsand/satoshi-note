@@ -13,6 +13,7 @@ type Server struct {
 	db          *sql.DB
 	cfg         *Config
 	paymentSema *paymentSemaphore
+	refundWake  chan struct{} // buffered(1); signals refund worker to re-evaluate sleep
 }
 
 const (
@@ -41,9 +42,11 @@ type Voucher struct {
 	TransfersOnly      bool   `json:"transfers_only,omitempty"`
 	MaxRedeemMsat      int64  `json:"max_redeem_msat,omitempty"`
 	UniqueRedemptions  bool   `json:"unique_redemptions,omitempty"`
-	Refunded           bool   `json:"refunded,omitempty"`
-	UpdatedAt          int64  `json:"updated_at,omitempty"`
-	AbsoluteExpiry     bool   `json:"absolute_expiry,omitempty"`
+	Refunded                 bool  `json:"refunded,omitempty"`
+	UpdatedAt                int64 `json:"updated_at,omitempty"`
+	AbsoluteExpiry           bool  `json:"absolute_expiry,omitempty"`
+	RegularRefundFirstAt     int64 `json:"regular_refund_first_at,omitempty"`
+	RegularRefundIntervalSecs int64 `json:"regular_refund_interval_seconds,omitempty"`
 }
 
 type RefundTx struct {

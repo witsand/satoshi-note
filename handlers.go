@@ -49,6 +49,10 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 		MaxRedeemMsat      int64 `json:"max_redeem_msat"`
 		UniqueRedemptions  bool  `json:"unique_redemptions"`
 		AbsoluteExpiry     bool  `json:"absolute_expiry"`
+		RegularRefund      *struct {
+			FirstRefundAt   int64 `json:"first_refund_at"`
+			IntervalSeconds int64 `json:"interval_seconds"`
+		} `json:"regular_refund"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		slog.Error("decode request body", "err", err)
@@ -116,6 +120,20 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	var regularFirstAt, regularIntervalSecs int64
+	if req.RegularRefund != nil {
+		if req.RegularRefund.FirstRefundAt <= 0 {
+			lnurlError(w, http.StatusBadRequest, "regular_refund.first_refund_at must be a valid unix timestamp")
+			return
+		}
+		if req.RegularRefund.IntervalSeconds <= 0 {
+			lnurlError(w, http.StatusBadRequest, "regular_refund.interval_seconds must be greater than 0")
+			return
+		}
+		regularFirstAt = req.RegularRefund.FirstRefundAt
+		regularIntervalSecs = req.RegularRefund.IntervalSeconds
+	}
+
 	pubKeyLen := len(req.PubKeys[0]) / 2
 	batchIDBytes := make([]byte, pubKeyLen)
 	if _, err := rand.Read(batchIDBytes); err != nil {
@@ -136,15 +154,16 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 
 	var vs []Voucher
 	for _, pubKey := range req.PubKeys {
-		voucher := srv.newVoucher(pubKey, batchID, req.RefundAfterSeconds, req.SingleUse, req.TransfersOnly, req.MaxRedeemMsat, req.UniqueRedemptions, req.AbsoluteExpiry)
+		voucher := srv.newVoucher(pubKey, batchID, req.RefundAfterSeconds, req.SingleUse, req.TransfersOnly, req.MaxRedeemMsat, req.UniqueRedemptions, req.AbsoluteExpiry, regularFirstAt, regularIntervalSecs)
 
 		result, err := dbTx.Exec(
-			`INSERT INTO vouchers (pub_key, batch_id, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, absolute_expiry, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO vouchers (pub_key, batch_id, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, absolute_expiry, regular_refund_first_at, regular_refund_interval_secs, regular_refund_last_at, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
 			voucher.PubKey, voucher.BatchID,
 			voucher.RefundAfterSeconds, boolToInt(voucher.SingleUse),
 			boolToInt(voucher.TransfersOnly), voucher.MaxRedeemMsat, boolToInt(voucher.UniqueRedemptions),
-			boolToInt(voucher.AbsoluteExpiry), time.Now().Unix(),
+			boolToInt(voucher.AbsoluteExpiry), voucher.RegularRefundFirstAt, voucher.RegularRefundIntervalSecs,
+			time.Now().Unix(),
 		)
 		if err != nil {
 			slog.Error("insert voucher", "err", err)
@@ -172,6 +191,13 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 		slog.Error("commit vouchers", "err", err)
 		lnurlError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+
+	// Signal the refund worker to re-evaluate its sleep in case these vouchers
+	// have a sooner regular_refund or expiry than the current scheduled wake.
+	select {
+	case srv.refundWake <- struct{}{}:
+	default:
 	}
 
 	w.Header().Set("Content-Type", "application/json")

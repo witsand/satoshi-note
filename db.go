@@ -65,6 +65,9 @@ func migrateSchema(db *sql.DB) error {
 		`ALTER TABLE vouchers ADD COLUMN max_redeem_msat    INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE vouchers ADD COLUMN unique_redemptions INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE vouchers ADD COLUMN absolute_expiry    INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE vouchers ADD COLUMN regular_refund_first_at      INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE vouchers ADD COLUMN regular_refund_interval_secs INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE vouchers ADD COLUMN regular_refund_last_at       INTEGER NOT NULL DEFAULT 0`,
 		// Migrate legacy single refund_code into the new voucher_refund_codes table.
 		// The NOT EXISTS guard makes this idempotent across restarts.
 		// If refund_code column is already dropped, SQLite returns "no such column" — ignored below.
@@ -589,6 +592,112 @@ func (srv *Server) getExpiredVouchersWithBalance() ([]Voucher, error) {
 		vs = append(vs, v)
 	}
 	return vs, rows.Err()
+}
+
+type regularVoucher struct {
+	ID           int64
+	BalanceMsat  int64
+	FirstAt      int64
+	IntervalSecs int64
+	LastAt       int64
+}
+
+func (srv *Server) getRegularRefundDueVouchers() ([]regularVoucher, error) {
+	now := time.Now().Unix()
+	rows, err := srv.db.Query(`
+		SELECT id, balance_msat, regular_refund_first_at, regular_refund_interval_secs, regular_refund_last_at
+		FROM vouchers
+		WHERE active = 1
+		  AND refunded = 0
+		  AND regular_refund_first_at > 0
+		  AND (
+		    (absolute_expiry = 1 AND (created_at + refund_after_seconds) > ?)
+		    OR (absolute_expiry = 0 AND (updated_at = 0 OR (updated_at + refund_after_seconds) > ?))
+		  )
+		  AND (
+		    (regular_refund_last_at > 0 AND (regular_refund_last_at + regular_refund_interval_secs) <= ?)
+		    OR (regular_refund_last_at = 0 AND regular_refund_first_at <= ?)
+		  )`,
+		now, now, now, now,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var vs []regularVoucher
+	for rows.Next() {
+		var v regularVoucher
+		if err := rows.Scan(&v.ID, &v.BalanceMsat, &v.FirstAt, &v.IntervalSecs, &v.LastAt); err != nil {
+			return nil, err
+		}
+		vs = append(vs, v)
+	}
+	return vs, rows.Err()
+}
+
+type regularRefundEntry struct {
+	ID        int64
+	NewLastAt int64
+}
+
+func advanceRegularRefundTime(db dbQuerier, entries []regularRefundEntry) error {
+	for _, e := range entries {
+		if _, err := db.Exec(
+			`UPDATE vouchers SET regular_refund_last_at = ? WHERE id = ?`,
+			e.NewLastAt, e.ID,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func markVouchersRegularRefunded(dbTx *sql.Tx, entries []regularRefundEntry) error {
+	for _, e := range entries {
+		if _, err := dbTx.Exec(
+			`UPDATE vouchers SET balance_msat = 0, regular_refund_last_at = ? WHERE id = ?`,
+			e.NewLastAt, e.ID,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (srv *Server) nextRefundAt() (*time.Time, error) {
+	now := time.Now().Unix()
+	row := srv.db.QueryRow(`
+		SELECT MIN(next_at) FROM (
+		  SELECT CASE WHEN absolute_expiry = 1
+		    THEN created_at + refund_after_seconds
+		    ELSE updated_at + refund_after_seconds
+		  END as next_at
+		  FROM vouchers
+		  WHERE active = 1 AND balance_msat > 0 AND refunded = 0
+		    AND (absolute_expiry = 1 OR updated_at > 0)
+
+		  UNION ALL
+
+		  SELECT CASE WHEN regular_refund_last_at > 0
+		    THEN regular_refund_last_at + regular_refund_interval_secs
+		    ELSE regular_refund_first_at
+		  END as next_at
+		  FROM vouchers
+		  WHERE active = 1 AND refunded = 0 AND regular_refund_first_at > 0
+		) sub
+		WHERE next_at > ?`,
+		now,
+	)
+	var ts sql.NullInt64
+	if err := row.Scan(&ts); err != nil {
+		return nil, err
+	}
+	if !ts.Valid {
+		return nil, nil
+	}
+	t := time.Unix(ts.Int64, 0)
+	return &t, nil
 }
 
 func (srv *Server) insertRefundTx(dbTx *sql.Tx, refundCode string, amountMsat, dbTxFee int64) (int64, error) {
