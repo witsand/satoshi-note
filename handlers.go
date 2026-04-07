@@ -155,11 +155,13 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	var vs []Voucher
 	for _, pubKey := range req.PubKeys {
 		voucher := srv.newVoucher(pubKey, batchID, req.RefundAfterSeconds, req.SingleUse, req.TransfersOnly, req.MaxRedeemMsat, req.UniqueRedemptions, req.AbsoluteExpiry, regularFirstAt, regularIntervalSecs)
+		// fund_key is a one-way SHA256 derivation from pub_key; safe to ignore error since pub_key is already validated hex.
+		voucher.FundKey, _ = secretToPubKey(pubKey)
 
 		result, err := dbTx.Exec(
-			`INSERT INTO vouchers (pub_key, batch_id, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, absolute_expiry, regular_refund_first_at, regular_refund_interval_secs, regular_refund_last_at, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-			voucher.PubKey, voucher.BatchID,
+			`INSERT INTO vouchers (pub_key, fund_key, batch_id, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, absolute_expiry, regular_refund_first_at, regular_refund_interval_secs, regular_refund_last_at, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+			voucher.PubKey, voucher.FundKey, voucher.BatchID,
 			voucher.RefundAfterSeconds, boolToInt(voucher.SingleUse),
 			boolToInt(voucher.TransfersOnly), voucher.MaxRedeemMsat, boolToInt(voucher.UniqueRedemptions),
 			boolToInt(voucher.AbsoluteExpiry), voucher.RegularRefundFirstAt, voucher.RegularRefundIntervalSecs,
@@ -216,7 +218,17 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 
 	key := r.PathValue("pubKey")
 
-	if v, err := srv.getVoucherByPubKey(srv.db, key); err == nil {
+	lookupSingle := func() (*Voucher, bool) {
+		if v, err := srv.getVoucherByFundKey(srv.db, key); err == nil {
+			return v, true
+		}
+		if v, err := srv.getVoucherByPubKey(srv.db, key); err == nil {
+			return v, true
+		}
+		return nil, false
+	}
+
+	if v, ok := lookupSingle(); ok {
 		remaining := srv.cfg.maxFundAmountMsat - v.BalanceMsat
 		if remaining < srv.cfg.minFundAmountMsat {
 			lnurlError(w, http.StatusOK, "voucher is fully funded")
@@ -268,8 +280,13 @@ func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.
 
 	tx := &FundTx{}
 
-	if v, err := srv.getVoucherByPubKey(srv.db, key); err == nil {
-		tx.PubKey = key
+	if v, err := func() (*Voucher, error) {
+		if v, err := srv.getVoucherByFundKey(srv.db, key); err == nil {
+			return v, nil
+		}
+		return srv.getVoucherByPubKey(srv.db, key)
+	}(); err == nil {
+		tx.PubKey = v.PubKey // always the real pub_key, not the path key
 		var err error
 		tx.Msat, err = srv.getCallbackAmount(r, 1)
 		if err != nil {
@@ -389,7 +406,14 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	var dstVouchers []Voucher
 	var dstPubKey, dstBatchID string
 
-	if v, err := srv.getVoucherByPubKey(srv.db, req.PubKey); err == nil {
+	if v, err := srv.getVoucherByFundKey(srv.db, req.PubKey); err == nil {
+		if v.PubKey == srcPubKey {
+			lnurlError(w, http.StatusBadRequest, "source and destination cannot be the same voucher")
+			return
+		}
+		dstVoucher = v
+		dstPubKey = v.PubKey // real pub_key for the transfer record
+	} else if v, err := srv.getVoucherByPubKey(srv.db, req.PubKey); err == nil {
 		if req.PubKey == srcPubKey {
 			lnurlError(w, http.StatusBadRequest, "source and destination cannot be the same voucher")
 			return

@@ -56,6 +56,11 @@ func openDB(path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
 
+	if err := migrateFundKeys(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate fund keys: %w", err)
+	}
+
 	return db, nil
 }
 
@@ -68,6 +73,7 @@ func migrateSchema(db *sql.DB) error {
 		`ALTER TABLE vouchers ADD COLUMN regular_refund_first_at      INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE vouchers ADD COLUMN regular_refund_interval_secs INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE vouchers ADD COLUMN regular_refund_last_at       INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE vouchers ADD COLUMN fund_key TEXT NOT NULL DEFAULT ""`,
 		// Migrate legacy single refund_code into the new voucher_refund_codes table.
 		// The NOT EXISTS guard makes this idempotent across restarts.
 		// If refund_code column is already dropped, SQLite returns "no such column" — ignored below.
@@ -92,11 +98,51 @@ func migrateSchema(db *sql.DB) error {
 	return nil
 }
 
+func migrateFundKeys(db *sql.DB) error {
+	// Populate fund_key for any existing vouchers that predate this column.
+	rows, err := db.Query(`SELECT id, pub_key FROM vouchers WHERE fund_key = ""`)
+	if err != nil {
+		return fmt.Errorf("query vouchers for fund_key migration: %w", err)
+	}
+	type row struct {
+		id     int64
+		pubKey string
+	}
+	var todo []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.pubKey); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan voucher row: %w", err)
+		}
+		todo = append(todo, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, r := range todo {
+		fundKey, err := secretToPubKey(r.pubKey)
+		if err != nil {
+			return fmt.Errorf("derive fund_key for voucher %d: %w", r.id, err)
+		}
+		if _, err := db.Exec(`UPDATE vouchers SET fund_key = ? WHERE id = ?`, fundKey, r.id); err != nil {
+			return fmt.Errorf("update fund_key for voucher %d: %w", r.id, err)
+		}
+	}
+	// Create unique index (idempotent).
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_fund_key ON vouchers(fund_key)`); err != nil {
+		return fmt.Errorf("create fund_key index: %w", err)
+	}
+	return nil
+}
+
 func initSchema(db *sql.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS vouchers (
 			id                    INTEGER PRIMARY KEY,
 			pub_key               TEXT NOT NULL,
+			fund_key              TEXT NOT NULL DEFAULT "",
 			batch_id              TEXT NOT NULL,
 			refund_code           TEXT NOT NULL,
 			refund_after_seconds  INTEGER NOT NULL,
@@ -390,6 +436,34 @@ func (srv *Server) getVoucherByPubKey(db dbQuerier, pubkey string) (*Voucher, er
 	var updatedAt, createdAt int64
 	var singleUseInt, transfersOnlyInt, uniqueRedemptionsInt, absoluteExpiryInt int
 	if err := row.Scan(&v.ID, &v.RefundAfterSeconds, &v.BalanceMsat, &singleUseInt, &transfersOnlyInt, &v.MaxRedeemMsat, &uniqueRedemptionsInt, &updatedAt, &createdAt, &absoluteExpiryInt); err != nil {
+		return nil, err
+	}
+	v.SingleUse = singleUseInt == 1
+	v.TransfersOnly = transfersOnlyInt == 1
+	v.UniqueRedemptions = uniqueRedemptionsInt == 1
+	v.AbsoluteExpiry = absoluteExpiryInt == 1
+
+	var expired bool
+	if v.AbsoluteExpiry {
+		expired = time.Unix(createdAt, 0).Add(time.Duration(v.RefundAfterSeconds) * time.Second).Before(time.Now())
+	} else {
+		expired = updatedAt != 0 && time.Unix(updatedAt, 0).Add(time.Duration(v.RefundAfterSeconds)*time.Second).Before(time.Now())
+	}
+	if expired {
+		return nil, fmt.Errorf("voucher expired")
+	}
+
+	return v, nil
+}
+
+func (srv *Server) getVoucherByFundKey(db dbQuerier, fundKey string) (*Voucher, error) {
+	row := db.QueryRow(`SELECT id, pub_key, refund_after_seconds, balance_msat, single_use, transfers_only, max_redeem_msat, unique_redemptions, updated_at, created_at, absolute_expiry
+		FROM vouchers WHERE fund_key = ? AND active = 1`, fundKey)
+
+	v := &Voucher{FundKey: fundKey}
+	var updatedAt, createdAt int64
+	var singleUseInt, transfersOnlyInt, uniqueRedemptionsInt, absoluteExpiryInt int
+	if err := row.Scan(&v.ID, &v.PubKey, &v.RefundAfterSeconds, &v.BalanceMsat, &singleUseInt, &transfersOnlyInt, &v.MaxRedeemMsat, &uniqueRedemptionsInt, &updatedAt, &createdAt, &absoluteExpiryInt); err != nil {
 		return nil, err
 	}
 	v.SingleUse = singleUseInt == 1
