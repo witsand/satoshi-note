@@ -22,9 +22,9 @@ func corsMiddleware(next http.Handler) http.Handler {
 }
 
 func (srv *Server) ServeAPI() {
-	strict := newRateLimiter(rate.Every(60*time.Second), 2).Middleware
-	api := newRateLimiter(rate.Every(time.Second), 200).Middleware
-	lnurl := newRateLimiter(rate.Every(time.Second), 5).Middleware
+	strict := newRateLimiter(rate.Every(20*time.Second), 2).Middleware
+	api := newRateLimiter(rate.Every(5*time.Second), 4).Middleware
+	lnurl := newRateLimiter(rate.Every(5*time.Second), 8).Middleware
 
 	mux := http.NewServeMux()
 
