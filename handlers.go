@@ -37,21 +37,48 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req struct {
-		PubKeys            []string `json:"pub_keys"`
-		RefundCode         string   `json:"refund_code"`
-		RefundAfterSeconds int64    `json:"refund_after_seconds"`
-		SingleUse          bool     `json:"single_use"`
-		TransfersOnly      bool     `json:"transfers_only"`
-		MaxRedeemMsat      int64    `json:"max_redeem_msat"`
-		UniqueRedemptions  bool     `json:"unique_redemptions"`
-		AbsoluteExpiry     bool     `json:"absolute_expiry"`
+		PubKeys     []string `json:"pub_keys"`
+		RefundCode  string   `json:"refund_code"`
+		RefundCodes []struct {
+			Code  string `json:"code"`
+			Share int64  `json:"share"`
+		} `json:"refund_codes"`
+		RefundAfterSeconds int64 `json:"refund_after_seconds"`
+		SingleUse          bool  `json:"single_use"`
+		TransfersOnly      bool  `json:"transfers_only"`
+		MaxRedeemMsat      int64 `json:"max_redeem_msat"`
+		UniqueRedemptions  bool  `json:"unique_redemptions"`
+		AbsoluteExpiry     bool  `json:"absolute_expiry"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		slog.Error("decode request body", "err", err)
 		lnurlError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	req.RefundCode = strings.ToLower(req.RefundCode)
+
+	// Normalize refund code(s) into a canonical []VoucherRefundCode.
+	var normalizedCodes []VoucherRefundCode
+	if req.RefundCode != "" && len(req.RefundCodes) > 0 {
+		lnurlError(w, http.StatusUnprocessableEntity, "provide refund_code or refund_codes, not both")
+		return
+	} else if req.RefundCode != "" {
+		normalizedCodes = []VoucherRefundCode{{RefundCode: strings.ToLower(req.RefundCode), Share: 1}}
+	} else if len(req.RefundCodes) > 0 {
+		for _, rc := range req.RefundCodes {
+			if rc.Code == "" {
+				lnurlError(w, http.StatusBadRequest, "each refund_codes entry must have a non-empty code")
+				return
+			}
+			if rc.Share <= 0 {
+				lnurlError(w, http.StatusBadRequest, "each refund_codes entry must have a share greater than 0")
+				return
+			}
+			normalizedCodes = append(normalizedCodes, VoucherRefundCode{RefundCode: strings.ToLower(rc.Code), Share: rc.Share})
+		}
+	} else {
+		lnurlError(w, http.StatusBadRequest, "refund_code or refund_codes is required")
+		return
+	}
 
 	if req.RefundAfterSeconds <= 0 {
 		lnurlError(w, http.StatusBadRequest, "refund_after_seconds must be greater than 0")
@@ -109,17 +136,31 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 
 	var vs []Voucher
 	for _, pubKey := range req.PubKeys {
-		voucher := srv.newVoucher(pubKey, req.RefundCode, batchID, req.RefundAfterSeconds, req.SingleUse, req.TransfersOnly, req.MaxRedeemMsat, req.UniqueRedemptions, req.AbsoluteExpiry)
+		voucher := srv.newVoucher(pubKey, batchID, req.RefundAfterSeconds, req.SingleUse, req.TransfersOnly, req.MaxRedeemMsat, req.UniqueRedemptions, req.AbsoluteExpiry)
 
-		if _, err := dbTx.Exec(
-			`INSERT INTO vouchers (pub_key, batch_id, refund_code, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, absolute_expiry, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		result, err := dbTx.Exec(
+			`INSERT INTO vouchers (pub_key, batch_id, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, absolute_expiry, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			voucher.PubKey, voucher.BatchID,
-			voucher.RefundCode, voucher.RefundAfterSeconds, boolToInt(voucher.SingleUse),
+			voucher.RefundAfterSeconds, boolToInt(voucher.SingleUse),
 			boolToInt(voucher.TransfersOnly), voucher.MaxRedeemMsat, boolToInt(voucher.UniqueRedemptions),
 			boolToInt(voucher.AbsoluteExpiry), time.Now().Unix(),
-		); err != nil {
+		)
+		if err != nil {
 			slog.Error("insert voucher", "err", err)
+			lnurlError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+
+		voucherID, err := result.LastInsertId()
+		if err != nil {
+			slog.Error("get voucher id", "err", err)
+			lnurlError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+
+		if err := insertVoucherRefundCodes(dbTx, voucherID, normalizedCodes); err != nil {
+			slog.Error("insert voucher refund codes", "err", err)
 			lnurlError(w, http.StatusInternalServerError, "internal error")
 			return
 		}

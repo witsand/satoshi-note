@@ -65,10 +65,23 @@ func migrateSchema(db *sql.DB) error {
 		`ALTER TABLE vouchers ADD COLUMN max_redeem_msat    INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE vouchers ADD COLUMN unique_redemptions INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE vouchers ADD COLUMN absolute_expiry    INTEGER NOT NULL DEFAULT 0`,
+		// Migrate legacy single refund_code into the new voucher_refund_codes table.
+		// The NOT EXISTS guard makes this idempotent across restarts.
+		// If refund_code column is already dropped, SQLite returns "no such column" — ignored below.
+		`INSERT INTO voucher_refund_codes (voucher_id, refund_code, share)
+		 SELECT id, refund_code, 1 FROM vouchers
+		 WHERE refund_code != ''
+		   AND NOT EXISTS (
+		     SELECT 1 FROM voucher_refund_codes vrc WHERE vrc.voucher_id = vouchers.id
+		   )`,
+		// Drop the now-redundant column. "no such column" means already dropped — ignored below.
+		`ALTER TABLE vouchers DROP COLUMN refund_code`,
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil {
-			if !strings.Contains(err.Error(), "duplicate column name") {
+			errStr := err.Error()
+			if !strings.Contains(errStr, "duplicate column name") &&
+				!strings.Contains(errStr, "no such column") {
 				return fmt.Errorf("%s: %w", m, err)
 			}
 		}
@@ -166,12 +179,20 @@ func initSchema(db *sql.DB) error {
 			PRIMARY KEY (voucher_id, fingerprint)
 		)`,
 
+		`CREATE TABLE IF NOT EXISTS voucher_refund_codes (
+			id          INTEGER PRIMARY KEY,
+			voucher_id  INTEGER NOT NULL,
+			refund_code TEXT    NOT NULL,
+			share       INTEGER NOT NULL DEFAULT 1
+		)`,
+
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_pub_key ON vouchers(pub_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_vouchers_batch_id       ON vouchers(batch_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_fund_txs_status         ON fund_txs(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_redeem_sessions_k1      ON redeem_sessions(k1, pub_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_redeem_txs_voucher_id   ON redeem_txs(voucher_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_refund_txs_refunded     ON refund_txs(refunded)`,
+		`CREATE INDEX IF NOT EXISTS idx_vrc_voucher_id          ON voucher_refund_codes(voucher_id)`,
 	}
 
 	for _, stmt := range stmts {
@@ -183,16 +204,6 @@ func initSchema(db *sql.DB) error {
 	return nil
 }
 
-func (srv *Server) insertVoucher(v *Voucher) error {
-	_, err := srv.db.Exec(
-		`INSERT INTO vouchers (pub_key, batch_id, refund_code, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, absolute_expiry, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		v.PubKey, v.BatchID, v.RefundCode, v.RefundAfterSeconds,
-		boolToInt(v.SingleUse), boolToInt(v.TransfersOnly), v.MaxRedeemMsat, boolToInt(v.UniqueRedemptions),
-		boolToInt(v.AbsoluteExpiry), time.Now().Unix(),
-	)
-	return err
-}
 
 func (srv *Server) insertRedeemSession(k1, pubKey string) error {
 	_, err := srv.db.Exec(
@@ -552,7 +563,7 @@ func (srv *Server) getFundTxByPR(pr string) (*FundTx, error) {
 func (srv *Server) getExpiredVouchersWithBalance() ([]Voucher, error) {
 	now := time.Now().Unix()
 	rows, err := srv.db.Query(`
-		SELECT id, refund_code, balance_msat
+		SELECT id, balance_msat
 		FROM vouchers
 		WHERE active = 1
 		  AND balance_msat > 0
@@ -572,7 +583,7 @@ func (srv *Server) getExpiredVouchersWithBalance() ([]Voucher, error) {
 	var vs []Voucher
 	for rows.Next() {
 		var v Voucher
-		if err := rows.Scan(&v.ID, &v.RefundCode, &v.BalanceMsat); err != nil {
+		if err := rows.Scan(&v.ID, &v.BalanceMsat); err != nil {
 			return nil, err
 		}
 		vs = append(vs, v)
@@ -639,6 +650,48 @@ func (srv *Server) markRefundTxFailed(id int64, errMsg string) error {
 		errMsg, time.Now().Unix(), id,
 	)
 	return err
+}
+
+func insertVoucherRefundCodes(db dbQuerier, voucherID int64, codes []VoucherRefundCode) error {
+	for _, c := range codes {
+		if _, err := db.Exec(
+			`INSERT INTO voucher_refund_codes (voucher_id, refund_code, share) VALUES (?, ?, ?)`,
+			voucherID, c.RefundCode, c.Share,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (srv *Server) getRefundCodesForVouchers(ids []int64) (map[int64][]VoucherRefundCode, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	query := `SELECT voucher_id, refund_code, share FROM voucher_refund_codes WHERE voucher_id IN (` +
+		strings.Join(placeholders, ",") + `)`
+	rows, err := srv.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make(map[int64][]VoucherRefundCode)
+	for rows.Next() {
+		var voucherID int64
+		var rc VoucherRefundCode
+		if err := rows.Scan(&voucherID, &rc.RefundCode, &rc.Share); err != nil {
+			return nil, err
+		}
+		out[voucherID] = append(out[voucherID], rc)
+	}
+	return out, rows.Err()
 }
 
 func boolToInt(b bool) int {

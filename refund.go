@@ -17,6 +17,28 @@ func (srv *Server) runRefundWorker() {
 	}
 }
 
+// splitBalance distributes balanceMsat across codes proportional to their shares.
+// Any remainder (dust from integer division) is added to the last code.
+func splitBalance(balanceMsat int64, codes []VoucherRefundCode) map[string]int64 {
+	var totalShares int64
+	for _, c := range codes {
+		totalShares += c.Share
+	}
+	out := make(map[string]int64, len(codes))
+	var allocated int64
+	for i, c := range codes {
+		var alloc int64
+		if i == len(codes)-1 {
+			alloc = balanceMsat - allocated
+		} else {
+			alloc = balanceMsat * c.Share / totalShares
+		}
+		out[c.RefundCode] += alloc
+		allocated += alloc
+	}
+	return out
+}
+
 func (srv *Server) processRefunds() {
 	slog.Info("refund worker: checking for expired vouchers")
 	defer srv.doPendingRefunds()
@@ -32,7 +54,18 @@ func (srv *Server) processRefunds() {
 		return
 	}
 
-	// Group by refund_code.
+	// Batch-fetch refund code splits for all expired vouchers.
+	ids := make([]int64, len(vouchers))
+	for i, v := range vouchers {
+		ids[i] = v.ID
+	}
+	refundCodesMap, err := srv.getRefundCodesForVouchers(ids)
+	if err != nil {
+		slog.Error("refund worker: get refund codes", "err", err)
+		return
+	}
+
+	// Group by refund_code, splitting each voucher's balance proportionally.
 	type group struct {
 		ids        []int64
 		totalMsat  int64
@@ -40,13 +73,17 @@ func (srv *Server) processRefunds() {
 	}
 	groups := make(map[string]*group)
 	for _, v := range vouchers {
-		g, ok := groups[v.RefundCode]
-		if !ok {
-			g = &group{refundCode: v.RefundCode}
-			groups[v.RefundCode] = g
+		codes := refundCodesMap[v.ID]
+		splits := splitBalance(v.BalanceMsat, codes)
+		for refundCode, amount := range splits {
+			g, ok := groups[refundCode]
+			if !ok {
+				g = &group{refundCode: refundCode}
+				groups[refundCode] = g
+			}
+			g.ids = append(g.ids, v.ID)
+			g.totalMsat += amount
 		}
-		g.ids = append(g.ids, v.ID)
-		g.totalMsat += v.BalanceMsat
 	}
 
 	cfg := srv.cfg

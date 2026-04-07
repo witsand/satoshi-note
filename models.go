@@ -21,6 +21,11 @@ const (
 	TxFailed    TxStatus = "failed"
 )
 
+type VoucherRefundCode struct {
+	RefundCode string
+	Share      int64
+}
+
 type Voucher struct {
 	ID                 int64  `json:"-"`
 	Secret             string `json:"secret,omitempty"`
@@ -29,7 +34,6 @@ type Voucher struct {
 	FundURLPrefix      string `json:"fund_url_prefix,omitempty"`
 	BatchID            string `json:"batch_id,omitempty"`
 	WithdrawURLPrefix  string `json:"withdraw_url_prefix,omitempty"`
-	RefundCode         string `json:"refund_code,omitempty"`
 	RefundAfterSeconds int64  `json:"refund_after_seconds"`
 	BalanceMsat        int64  `json:"balance_msat,omitempty"`
 	Active             bool   `json:"active,omitempty"`
