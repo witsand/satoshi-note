@@ -30,6 +30,7 @@ func (srv *Server) ServeAPI() {
 
 	// Strict (1 req/2s, burst 5)
 	mux.Handle("POST /create", strict(http.HandlerFunc(srv.handleCreateVouchers)))
+	mux.Handle("POST /edit", strict(http.HandlerFunc(srv.handleEditVoucher)))
 
 	// API (2 req/s, burst 10)
 	mux.Handle("POST /status", api(http.HandlerFunc(srv.handleVoucherStatusBatch)))

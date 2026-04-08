@@ -92,7 +92,6 @@ func (srv *Server) processExpiredRefunds() {
 		return
 	}
 
-	// Batch-fetch refund code splits for all expired vouchers.
 	ids := make([]int64, len(vouchers))
 	for i, v := range vouchers {
 		ids[i] = v.ID
@@ -103,59 +102,48 @@ func (srv *Server) processExpiredRefunds() {
 		return
 	}
 
-	// Group by refund_code, splitting each voucher's balance proportionally.
-	type group struct {
-		ids        []int64
-		totalMsat  int64
-		refundCode string
-	}
-	groups := make(map[string]*group)
+	cfg := srv.cfg
+
+	// Process each voucher independently: one refund_tx per voucher per refund code split.
 	for _, v := range vouchers {
 		codes := refundCodesMap[v.ID]
 		splits := splitBalance(v.BalanceMsat, codes)
-		for refundCode, amount := range splits {
-			g, ok := groups[refundCode]
-			if !ok {
-				g = &group{refundCode: refundCode}
-				groups[refundCode] = g
-			}
-			g.ids = append(g.ids, v.ID)
-			g.totalMsat += amount
-		}
-	}
-
-	cfg := srv.cfg
-
-	for refundCode, g := range groups {
-		dbTxFee := srv.calculateRedeemFee(g.totalMsat)
-		netMsat := g.totalMsat - dbTxFee
-
-		if netMsat < cfg.minRedeemAmountMsat {
-			continue
-		}
 
 		dbTx, err := srv.db.Begin()
 		if err != nil {
-			slog.Error("refund worker: begin tx", "refund_code", refundCode, "err", err)
+			slog.Error("refund worker: begin tx", "voucher_id", v.ID, "err", err)
 			continue
 		}
 
-		refundTxID, err := srv.insertRefundTx(dbTx, refundCode, netMsat, dbTxFee)
-		if err != nil {
-			slog.Error("refund worker: insert refund tx", "refund_code", refundCode, "err", err)
+		anyInserted := false
+		for refundCode, amount := range splits {
+			dbTxFee := srv.calculateRedeemFee(amount)
+			netMsat := amount - dbTxFee
+			if netMsat < cfg.minRedeemAmountMsat {
+				continue
+			}
+			if _, err := srv.insertRefundTx(dbTx, v.ID, refundCode, netMsat, dbTxFee); err != nil {
+				slog.Error("refund worker: insert refund tx", "voucher_id", v.ID, "refund_code", refundCode, "err", err)
+				dbTx.Rollback()
+				anyInserted = false
+				break
+			}
+			anyInserted = true
+		}
+
+		if !anyInserted {
 			dbTx.Rollback()
 			continue
 		}
 
-		if err := srv.markVouchersRefunded(dbTx, g.ids, refundTxID); err != nil {
-			slog.Error("refund worker: mark vouchers refunded", "refund_code", refundCode, "err", err)
+		if err := srv.markVouchersRefunded(dbTx, []int64{v.ID}); err != nil {
+			slog.Error("refund worker: mark vouchers refunded", "voucher_id", v.ID, "err", err)
 			dbTx.Rollback()
 			continue
 		}
 
 		if err := dbTx.Commit(); err != nil {
-			slog.Error("refund worker: commit", "refund_code", refundCode, "err", err)
-			continue
+			slog.Error("refund worker: commit", "voucher_id", v.ID, "err", err)
 		}
 	}
 }
@@ -177,15 +165,6 @@ func (srv *Server) processRegularRefunds() {
 		return
 	}
 
-	// Compute the drift-free anchor for each voucher and partition by balance.
-	type regularGroup struct {
-		entries    []regularRefundEntry
-		totalMsat  int64
-		refundCode string
-	}
-	groups := make(map[string]*regularGroup)
-	var noBalanceEntries []regularRefundEntry
-
 	ids := make([]int64, len(vouchers))
 	for i, v := range vouchers {
 		ids[i] = v.ID
@@ -196,71 +175,69 @@ func (srv *Server) processRegularRefunds() {
 		return
 	}
 
+	cfg := srv.cfg
+
+	// Process each voucher independently: one refund_tx per voucher per refund code split.
 	for _, v := range vouchers {
 		newLastAt := nextRegularRefundAnchor(v.FirstAt, v.LastAt, v.IntervalSecs, now)
 		entry := regularRefundEntry{ID: v.ID, NewLastAt: newLastAt}
 
 		if v.BalanceMsat == 0 {
-			noBalanceEntries = append(noBalanceEntries, entry)
+			if err := advanceRegularRefundTime(srv.db, []regularRefundEntry{entry}); err != nil {
+				slog.Error("refund worker: advance regular refund time", "voucher_id", v.ID, "err", err)
+			}
 			continue
 		}
 
 		codes := refundCodesMap[v.ID]
 		splits := splitBalance(v.BalanceMsat, codes)
-		for refundCode, amount := range splits {
-			g, ok := groups[refundCode]
-			if !ok {
-				g = &regularGroup{refundCode: refundCode}
-				groups[refundCode] = g
+
+		anyAboveMin := false
+		for _, amount := range splits {
+			netMsat := amount - srv.calculateRedeemFee(amount)
+			if netMsat >= cfg.minRedeemAmountMsat {
+				anyAboveMin = true
+				break
 			}
-			g.entries = append(g.entries, entry)
-			g.totalMsat += amount
 		}
-	}
-
-	// Advance schedule for zero-balance vouchers without creating a payment.
-	if len(noBalanceEntries) > 0 {
-		if err := advanceRegularRefundTime(srv.db, noBalanceEntries); err != nil {
-			slog.Error("refund worker: advance regular refund time", "err", err)
-		}
-	}
-
-	cfg := srv.cfg
-
-	for refundCode, g := range groups {
-		dbTxFee := srv.calculateRedeemFee(g.totalMsat)
-		netMsat := g.totalMsat - dbTxFee
-
-		if netMsat < cfg.minRedeemAmountMsat {
-			// Still advance the schedule even if amount is too small to send.
-			if err := advanceRegularRefundTime(srv.db, g.entries); err != nil {
-				slog.Error("refund worker: advance regular refund time (below min)", "err", err)
+		if !anyAboveMin {
+			if err := advanceRegularRefundTime(srv.db, []regularRefundEntry{entry}); err != nil {
+				slog.Error("refund worker: advance regular refund time (below min)", "voucher_id", v.ID, "err", err)
 			}
 			continue
 		}
 
 		dbTx, err := srv.db.Begin()
 		if err != nil {
-			slog.Error("refund worker: begin regular tx", "refund_code", refundCode, "err", err)
+			slog.Error("refund worker: begin regular tx", "voucher_id", v.ID, "err", err)
 			continue
 		}
 
-		if _, err := srv.insertRefundTx(dbTx, refundCode, netMsat, dbTxFee); err != nil {
-			slog.Error("refund worker: insert regular refund tx", "refund_code", refundCode, "err", err)
-			dbTx.Rollback()
-			continue
+		for refundCode, amount := range splits {
+			dbTxFee := srv.calculateRedeemFee(amount)
+			netMsat := amount - dbTxFee
+			if netMsat < cfg.minRedeemAmountMsat {
+				continue
+			}
+			if _, err := srv.insertRefundTx(dbTx, v.ID, refundCode, netMsat, dbTxFee); err != nil {
+				slog.Error("refund worker: insert regular refund tx", "voucher_id", v.ID, "refund_code", refundCode, "err", err)
+				dbTx.Rollback()
+				goto nextVoucher
+			}
 		}
 
-		if err := markVouchersRegularRefunded(dbTx, g.entries); err != nil {
-			slog.Error("refund worker: mark vouchers regular refunded", "refund_code", refundCode, "err", err)
+		if err := markVouchersRegularRefunded(dbTx, []regularRefundEntry{entry}); err != nil {
+			slog.Error("refund worker: mark vouchers regular refunded", "voucher_id", v.ID, "err", err)
 			dbTx.Rollback()
 			continue
 		}
 
 		if err := dbTx.Commit(); err != nil {
-			slog.Error("refund worker: commit regular", "refund_code", refundCode, "err", err)
-			continue
+			slog.Error("refund worker: commit regular", "voucher_id", v.ID, "err", err)
 		}
+		continue
+
+	nextVoucher:
 	}
 }
 

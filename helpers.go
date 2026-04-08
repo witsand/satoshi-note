@@ -38,6 +38,7 @@ func (srv *Server) voucherStatusBody(s *voucherStatus) map[string]any {
 		"expired":          s.Expired,
 		"refunded":         s.Refunded,
 		"refund_pending":   s.RefundPending,
+		"last_refund_at":   s.LastRefundAt,
 	}
 
 	if !s.TransfersOnly {

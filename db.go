@@ -85,6 +85,12 @@ func migrateSchema(db *sql.DB) error {
 		   )`,
 		// Drop the now-redundant column. "no such column" means already dropped — ignored below.
 		`ALTER TABLE vouchers DROP COLUMN refund_code`,
+		// Invert refund relationship: track voucher_id on refund_txs instead of
+		// refunded/refund_tx_id on vouchers.
+		`ALTER TABLE refund_txs ADD COLUMN voucher_id INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE vouchers DROP COLUMN refunded`,
+		`ALTER TABLE vouchers DROP COLUMN refund_tx_id`,
+		`CREATE INDEX IF NOT EXISTS idx_refund_txs_voucher_id ON refund_txs(voucher_id)`,
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil {
@@ -153,8 +159,6 @@ func initSchema(db *sql.DB) error {
 			max_redeem_msat       INTEGER NOT NULL DEFAULT 0,
 			unique_redemptions    INTEGER NOT NULL DEFAULT 0,
 			active                INTEGER NOT NULL DEFAULT 1,
-			refunded              INTEGER NOT NULL DEFAULT 0,
-			refund_tx_id          INTEGER NOT NULL DEFAULT 0,
 			created_at            INTEGER NOT NULL,
 			updated_at            INTEGER NOT NULL DEFAULT 0
 		)`,
@@ -176,6 +180,7 @@ func initSchema(db *sql.DB) error {
 
 		`CREATE TABLE IF NOT EXISTS refund_txs (
 			id            INTEGER PRIMARY KEY,
+			voucher_id    INTEGER NOT NULL DEFAULT 0,
 			refund_code   TEXT    NOT NULL,
 			amount_msat   INTEGER NOT NULL,
 			db_tx_fee     INTEGER NOT NULL DEFAULT 0,
@@ -241,6 +246,7 @@ func initSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_redeem_sessions_k1      ON redeem_sessions(k1, pub_key)`,
 		`CREATE INDEX IF NOT EXISTS idx_redeem_txs_voucher_id   ON redeem_txs(voucher_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_refund_txs_refunded     ON refund_txs(refunded)`,
+		`CREATE INDEX IF NOT EXISTS idx_refund_txs_voucher_id   ON refund_txs(voucher_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_vrc_voucher_id          ON voucher_refund_codes(voucher_id)`,
 	}
 
@@ -491,7 +497,8 @@ type voucherStatus struct {
 	Expired           bool  // true when ExpiresAt is in the past; may lead Active in the DB
 	Active            bool
 	Refunded          bool
-	RefundPending     bool // refund tx allocated but not yet paid
+	RefundPending     bool  // refund tx allocated but not yet paid
+	LastRefundAt      int64 // unix timestamp of last successful refund payment; 0 if none
 	TransfersOnly     bool
 	MaxRedeemMsat     int64
 	UniqueRedemptions bool
@@ -510,9 +517,15 @@ func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherS
 		args[i] = pk
 	}
 	rows, err := srv.db.Query(
-		`SELECT id, pub_key, balance_msat, updated_at, refund_after_seconds, active, refunded, refund_tx_id,
-		        transfers_only, max_redeem_msat, unique_redemptions, created_at, absolute_expiry
-		 FROM vouchers WHERE pub_key IN (`+strings.Join(placeholders, ",")+`)`,
+		`SELECT v.id, v.pub_key, v.balance_msat, v.updated_at, v.refund_after_seconds, v.active,
+		        v.transfers_only, v.max_redeem_msat, v.unique_redemptions, v.created_at, v.absolute_expiry,
+		        MAX(CASE WHEN rt.refunded = 1 THEN 1 ELSE 0 END)                              AS is_refunded,
+		        MAX(CASE WHEN rt.refunded = 0 AND rt.error_msg = '' THEN 1 ELSE 0 END)        AS refund_pending,
+		        COALESCE(MAX(CASE WHEN rt.refunded = 1 THEN rt.updated_at ELSE 0 END), 0)     AS last_refund_at
+		 FROM vouchers v
+		 LEFT JOIN refund_txs rt ON rt.voucher_id = v.id
+		 WHERE v.pub_key IN (`+strings.Join(placeholders, ",")+`)
+		 GROUP BY v.id`,
 		args...)
 	if err != nil {
 		return nil, err
@@ -522,15 +535,16 @@ func (srv *Server) getVoucherStatusBatch(pubKeys []string) (map[string]*voucherS
 	for rows.Next() {
 		var pubKey string
 		var s voucherStatus
-		var updatedAt, refundAfterSeconds, refundTxID int64
-		var activeInt, refundedInt, transfersOnlyInt, uniqueRedemptionsInt, absoluteExpiryInt int
-		if err := rows.Scan(&s.ID, &pubKey, &s.BalanceMsat, &updatedAt, &refundAfterSeconds, &activeInt, &refundedInt, &refundTxID,
-			&transfersOnlyInt, &s.MaxRedeemMsat, &uniqueRedemptionsInt, &s.CreatedAt, &absoluteExpiryInt); err != nil {
+		var updatedAt, refundAfterSeconds int64
+		var activeInt, isRefundedInt, refundPendingInt, transfersOnlyInt, uniqueRedemptionsInt, absoluteExpiryInt int
+		if err := rows.Scan(&s.ID, &pubKey, &s.BalanceMsat, &updatedAt, &refundAfterSeconds, &activeInt,
+			&transfersOnlyInt, &s.MaxRedeemMsat, &uniqueRedemptionsInt, &s.CreatedAt, &absoluteExpiryInt,
+			&isRefundedInt, &refundPendingInt, &s.LastRefundAt); err != nil {
 			return nil, err
 		}
 		s.Active = activeInt == 1
-		s.Refunded = refundedInt == 1
-		s.RefundPending = refundTxID > 0 && !s.Refunded
+		s.Refunded = isRefundedInt == 1
+		s.RefundPending = refundPendingInt == 1 && !s.Refunded
 		s.TransfersOnly = transfersOnlyInt == 1
 		s.UniqueRedemptions = uniqueRedemptionsInt == 1
 		s.AbsoluteExpiry = absoluteExpiryInt == 1
@@ -644,7 +658,6 @@ func (srv *Server) getExpiredVouchersWithBalance() ([]Voucher, error) {
 		FROM vouchers
 		WHERE active = 1
 		  AND balance_msat > 0
-		  AND refunded = 0
 		  AND (
 		    (absolute_expiry = 1 AND (created_at + refund_after_seconds) <= ?)
 		    OR
@@ -682,7 +695,6 @@ func (srv *Server) getRegularRefundDueVouchers() ([]regularVoucher, error) {
 		SELECT id, balance_msat, regular_refund_first_at, regular_refund_interval_secs, regular_refund_last_at
 		FROM vouchers
 		WHERE active = 1
-		  AND refunded = 0
 		  AND regular_refund_first_at > 0
 		  AND (
 		    (absolute_expiry = 1 AND (created_at + refund_after_seconds) > ?)
@@ -748,7 +760,7 @@ func (srv *Server) nextRefundAt() (*time.Time, error) {
 		    ELSE updated_at + refund_after_seconds
 		  END as next_at
 		  FROM vouchers
-		  WHERE active = 1 AND balance_msat > 0 AND refunded = 0
+		  WHERE active = 1 AND balance_msat > 0
 		    AND (absolute_expiry = 1 OR updated_at > 0)
 
 		  UNION ALL
@@ -758,7 +770,7 @@ func (srv *Server) nextRefundAt() (*time.Time, error) {
 		    ELSE regular_refund_first_at
 		  END as next_at
 		  FROM vouchers
-		  WHERE active = 1 AND refunded = 0 AND regular_refund_first_at > 0
+		  WHERE active = 1 AND regular_refund_first_at > 0
 		) sub
 		WHERE next_at > ?`,
 		now,
@@ -774,11 +786,11 @@ func (srv *Server) nextRefundAt() (*time.Time, error) {
 	return &t, nil
 }
 
-func (srv *Server) insertRefundTx(dbTx *sql.Tx, refundCode string, amountMsat, dbTxFee int64) (int64, error) {
+func (srv *Server) insertRefundTx(dbTx *sql.Tx, voucherID int64, refundCode string, amountMsat, dbTxFee int64) (int64, error) {
 	res, err := dbTx.Exec(
-		`INSERT INTO refund_txs (refund_code, amount_msat, db_tx_fee, created_at)
-		 VALUES (?, ?, ?, ?)`,
-		refundCode, amountMsat, dbTxFee, time.Now().Unix(),
+		`INSERT INTO refund_txs (voucher_id, refund_code, amount_msat, db_tx_fee, created_at)
+		 VALUES (?, ?, ?, ?, ?)`,
+		voucherID, refundCode, amountMsat, dbTxFee, time.Now().Unix(),
 	)
 	if err != nil {
 		return 0, err
@@ -786,11 +798,12 @@ func (srv *Server) insertRefundTx(dbTx *sql.Tx, refundCode string, amountMsat, d
 	return res.LastInsertId()
 }
 
-func (srv *Server) markVouchersRefunded(dbTx *sql.Tx, ids []int64, refundTxID int64) error {
+func (srv *Server) markVouchersRefunded(dbTx *sql.Tx, ids []int64) error {
+	now := time.Now().Unix()
 	for _, id := range ids {
 		_, err := dbTx.Exec(
-			`UPDATE vouchers SET balance_msat = 0, refunded = 1, active = 0, refund_tx_id = ?, updated_at = ? WHERE id = ?`,
-			refundTxID, time.Now().Unix(), id,
+			`UPDATE vouchers SET balance_msat = 0, active = 0, updated_at = ? WHERE id = ?`,
+			now, id,
 		)
 		if err != nil {
 			return err
@@ -831,6 +844,37 @@ func (srv *Server) markRefundTxFailed(id int64, errMsg string) error {
 	_, err := srv.db.Exec(
 		`UPDATE refund_txs SET error_msg = ?, updated_at = ? WHERE id = ?`,
 		errMsg, time.Now().Unix(), id,
+	)
+	return err
+}
+
+func deleteVoucherRefundCodes(db dbQuerier, voucherID int64) error {
+	_, err := db.Exec(`DELETE FROM voucher_refund_codes WHERE voucher_id = ?`, voucherID)
+	return err
+}
+
+func (srv *Server) getVoucherIDByPubKey(db dbQuerier, pubKey string) (int64, error) {
+	var id int64
+	err := db.QueryRow(`SELECT id FROM vouchers WHERE pub_key = ?`, pubKey).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
+
+func (srv *Server) updateVoucher(dbTx *sql.Tx, id int64, refundAfterSeconds int64, singleUse, transfersOnly bool, maxRedeemMsat int64, uniqueRedemptions, absoluteExpiry bool, regularFirstAt, regularIntervalSecs int64) error {
+	_, err := dbTx.Exec(
+		`UPDATE vouchers SET
+			refund_after_seconds = ?, single_use = ?, transfers_only = ?,
+			max_redeem_msat = ?, unique_redemptions = ?, absolute_expiry = ?,
+			regular_refund_first_at = ?, regular_refund_interval_secs = ?,
+			regular_refund_last_at = 0,
+			active = 1, updated_at = ?
+		 WHERE id = ?`,
+		refundAfterSeconds, boolToInt(singleUse), boolToInt(transfersOnly),
+		maxRedeemMsat, boolToInt(uniqueRedemptions), boolToInt(absoluteExpiry),
+		regularFirstAt, regularIntervalSecs,
+		time.Now().Unix(), id,
 	)
 	return err
 }

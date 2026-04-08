@@ -43,7 +43,6 @@ type Voucher struct {
 	TransfersOnly      bool   `json:"transfers_only,omitempty"`
 	MaxRedeemMsat      int64  `json:"max_redeem_msat,omitempty"`
 	UniqueRedemptions  bool   `json:"unique_redemptions,omitempty"`
-	Refunded                 bool  `json:"refunded,omitempty"`
 	UpdatedAt                int64 `json:"updated_at,omitempty"`
 	AbsoluteExpiry           bool  `json:"absolute_expiry,omitempty"`
 	RegularRefundFirstAt     int64 `json:"regular_refund_first_at,omitempty"`
@@ -52,6 +51,7 @@ type Voucher struct {
 
 type RefundTx struct {
 	ID         int64  `json:"id"`
+	VoucherID  int64  `json:"voucher_id"`
 	RefundCode string `json:"refund_code"`
 	AmountMsat int64  `json:"amount_msat"`
 	DbTxFee    int64  `json:"db_tx_fee"`

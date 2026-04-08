@@ -17,6 +17,97 @@ import (
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
 )
 
+// voucherParams holds the shared fields present in both the create and edit request bodies.
+type voucherParams struct {
+	RefundCode  string `json:"refund_code"`
+	RefundCodes []struct {
+		Code  string `json:"code"`
+		Share int64  `json:"share"`
+	} `json:"refund_codes"`
+	RefundAfterSeconds int64 `json:"refund_after_seconds"`
+	SingleUse          bool  `json:"single_use"`
+	TransfersOnly      bool  `json:"transfers_only"`
+	MaxRedeemMsat      int64 `json:"max_redeem_msat"`
+	UniqueRedemptions  bool  `json:"unique_redemptions"`
+	AbsoluteExpiry     bool  `json:"absolute_expiry"`
+	RegularRefund      *struct {
+		FirstRefundAt   int64 `json:"first_refund_at"`
+		IntervalSeconds int64 `json:"interval_seconds"`
+	} `json:"regular_refund"`
+}
+
+type parsedVoucherParams struct {
+	NormalizedCodes     []VoucherRefundCode
+	RefundAfterSeconds  int64
+	SingleUse           bool
+	TransfersOnly       bool
+	MaxRedeemMsat       int64
+	UniqueRedemptions   bool
+	AbsoluteExpiry      bool
+	RegularFirstAt      int64
+	RegularIntervalSecs int64
+}
+
+// parseVoucherParams validates and normalizes the shared voucher fields.
+// Returns (parsed, 0, "") on success, or (zero, httpStatus, errMsg) on failure.
+func (srv *Server) parseVoucherParams(p voucherParams) (parsedVoucherParams, int, string) {
+	var out parsedVoucherParams
+
+	if p.RefundCode != "" && len(p.RefundCodes) > 0 {
+		return out, http.StatusUnprocessableEntity, "provide refund_code or refund_codes, not both"
+	} else if p.RefundCode != "" {
+		out.NormalizedCodes = []VoucherRefundCode{{RefundCode: strings.ToLower(p.RefundCode), Share: 1}}
+	} else if len(p.RefundCodes) > 0 {
+		for _, rc := range p.RefundCodes {
+			if rc.Code == "" {
+				return out, http.StatusBadRequest, "each refund_codes entry must have a non-empty code"
+			}
+			if rc.Share <= 0 {
+				return out, http.StatusBadRequest, "each refund_codes entry must have a share greater than 0"
+			}
+			out.NormalizedCodes = append(out.NormalizedCodes, VoucherRefundCode{RefundCode: strings.ToLower(rc.Code), Share: rc.Share})
+		}
+	} else {
+		return out, http.StatusBadRequest, "refund_code or refund_codes is required"
+	}
+
+	if p.RefundAfterSeconds <= 0 {
+		return out, http.StatusBadRequest, "refund_after_seconds must be greater than 0"
+	}
+	out.RefundAfterSeconds = p.RefundAfterSeconds
+	if out.RefundAfterSeconds > srv.cfg.maxVoucherExpireSeconds {
+		out.RefundAfterSeconds = srv.cfg.maxVoucherExpireSeconds
+	}
+
+	if p.MaxRedeemMsat > 0 && p.SingleUse {
+		return out, http.StatusUnprocessableEntity, "max_redeem_msat cannot be set on a single_use voucher"
+	}
+	if p.UniqueRedemptions && p.SingleUse {
+		return out, http.StatusUnprocessableEntity, "single_use cannot be set on a unique_redemptions voucher"
+	}
+	if p.UniqueRedemptions && !p.TransfersOnly {
+		return out, http.StatusUnprocessableEntity, "unique_redemptions vouchers must be transfers_only"
+	}
+	out.SingleUse = p.SingleUse
+	out.TransfersOnly = p.TransfersOnly
+	out.MaxRedeemMsat = p.MaxRedeemMsat
+	out.UniqueRedemptions = p.UniqueRedemptions
+	out.AbsoluteExpiry = p.AbsoluteExpiry
+
+	if p.RegularRefund != nil {
+		if p.RegularRefund.FirstRefundAt <= 0 {
+			return out, http.StatusBadRequest, "regular_refund.first_refund_at must be a valid unix timestamp"
+		}
+		if p.RegularRefund.IntervalSeconds <= 0 {
+			return out, http.StatusBadRequest, "regular_refund.interval_seconds must be greater than 0"
+		}
+		out.RegularFirstAt = p.RegularRefund.FirstRefundAt
+		out.RegularIntervalSecs = p.RegularRefund.IntervalSeconds
+	}
+
+	return out, 0, ""
+}
+
 func lnurlError(w http.ResponseWriter, status int, reason string) {
 	writeJSON(w, status, map[string]string{
 		"status": "ERROR",
@@ -37,59 +128,13 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var req struct {
-		PubKeys     []string `json:"pub_keys"`
-		RefundCode  string   `json:"refund_code"`
-		RefundCodes []struct {
-			Code  string `json:"code"`
-			Share int64  `json:"share"`
-		} `json:"refund_codes"`
-		RefundAfterSeconds int64 `json:"refund_after_seconds"`
-		SingleUse          bool  `json:"single_use"`
-		TransfersOnly      bool  `json:"transfers_only"`
-		MaxRedeemMsat      int64 `json:"max_redeem_msat"`
-		UniqueRedemptions  bool  `json:"unique_redemptions"`
-		AbsoluteExpiry     bool  `json:"absolute_expiry"`
-		RegularRefund      *struct {
-			FirstRefundAt   int64 `json:"first_refund_at"`
-			IntervalSeconds int64 `json:"interval_seconds"`
-		} `json:"regular_refund"`
+		PubKeys []string `json:"pub_keys"`
+		voucherParams
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		slog.Error("decode request body", "err", err)
 		lnurlError(w, http.StatusBadRequest, "invalid request body")
 		return
-	}
-
-	// Normalize refund code(s) into a canonical []VoucherRefundCode.
-	var normalizedCodes []VoucherRefundCode
-	if req.RefundCode != "" && len(req.RefundCodes) > 0 {
-		lnurlError(w, http.StatusUnprocessableEntity, "provide refund_code or refund_codes, not both")
-		return
-	} else if req.RefundCode != "" {
-		normalizedCodes = []VoucherRefundCode{{RefundCode: strings.ToLower(req.RefundCode), Share: 1}}
-	} else if len(req.RefundCodes) > 0 {
-		for _, rc := range req.RefundCodes {
-			if rc.Code == "" {
-				lnurlError(w, http.StatusBadRequest, "each refund_codes entry must have a non-empty code")
-				return
-			}
-			if rc.Share <= 0 {
-				lnurlError(w, http.StatusBadRequest, "each refund_codes entry must have a share greater than 0")
-				return
-			}
-			normalizedCodes = append(normalizedCodes, VoucherRefundCode{RefundCode: strings.ToLower(rc.Code), Share: rc.Share})
-		}
-	} else {
-		lnurlError(w, http.StatusBadRequest, "refund_code or refund_codes is required")
-		return
-	}
-
-	if req.RefundAfterSeconds <= 0 {
-		lnurlError(w, http.StatusBadRequest, "refund_after_seconds must be greater than 0")
-		return
-	}
-	if req.RefundAfterSeconds > srv.cfg.maxVoucherExpireSeconds {
-		req.RefundAfterSeconds = srv.cfg.maxVoucherExpireSeconds
 	}
 
 	if len(req.PubKeys) == 0 {
@@ -107,31 +152,11 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
-	if req.MaxRedeemMsat > 0 && req.SingleUse {
-		lnurlError(w, http.StatusUnprocessableEntity, "max_redeem_msat cannot be set on a single_use voucher")
-		return
-	}
-	if req.UniqueRedemptions && req.SingleUse {
-		lnurlError(w, http.StatusUnprocessableEntity, "single_use cannot be set on a unique_redemptions voucher")
-		return
-	}
-	if req.UniqueRedemptions && !req.TransfersOnly {
-		lnurlError(w, http.StatusUnprocessableEntity, "unique_redemptions vouchers must be transfers_only")
-		return
-	}
 
-	var regularFirstAt, regularIntervalSecs int64
-	if req.RegularRefund != nil {
-		if req.RegularRefund.FirstRefundAt <= 0 {
-			lnurlError(w, http.StatusBadRequest, "regular_refund.first_refund_at must be a valid unix timestamp")
-			return
-		}
-		if req.RegularRefund.IntervalSeconds <= 0 {
-			lnurlError(w, http.StatusBadRequest, "regular_refund.interval_seconds must be greater than 0")
-			return
-		}
-		regularFirstAt = req.RegularRefund.FirstRefundAt
-		regularIntervalSecs = req.RegularRefund.IntervalSeconds
+	p, status, errMsg := srv.parseVoucherParams(req.voucherParams)
+	if status != 0 {
+		lnurlError(w, status, errMsg)
+		return
 	}
 
 	pubKeyLen := len(req.PubKeys[0]) / 2
@@ -154,7 +179,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 
 	var vs []Voucher
 	for _, pubKey := range req.PubKeys {
-		voucher := srv.newVoucher(pubKey, batchID, req.RefundAfterSeconds, req.SingleUse, req.TransfersOnly, req.MaxRedeemMsat, req.UniqueRedemptions, req.AbsoluteExpiry, regularFirstAt, regularIntervalSecs)
+		voucher := srv.newVoucher(pubKey, batchID, p.RefundAfterSeconds, p.SingleUse, p.TransfersOnly, p.MaxRedeemMsat, p.UniqueRedemptions, p.AbsoluteExpiry, p.RegularFirstAt, p.RegularIntervalSecs)
 		// fund_key is a one-way SHA256 derivation from pub_key; safe to ignore error since pub_key is already validated hex.
 		voucher.FundKey, _ = secretToPubKey(pubKey)
 
@@ -180,7 +205,7 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 
-		if err := insertVoucherRefundCodes(dbTx, voucherID, normalizedCodes); err != nil {
+		if err := insertVoucherRefundCodes(dbTx, voucherID, p.NormalizedCodes); err != nil {
 			slog.Error("insert voucher refund codes", "err", err)
 			lnurlError(w, http.StatusInternalServerError, "internal error")
 			return
@@ -207,6 +232,97 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 	if err := json.NewEncoder(w).Encode(vs); err != nil {
 		slog.Error("encode response", "err", err)
 	}
+}
+
+// POST /edit — update voucher configuration, authenticated by secret_secret
+func (srv *Server) handleEditVoucher(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SecretSecret string `json:"secret_secret"`
+		voucherParams
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		slog.Error("edit: decode request body", "err", err)
+		lnurlError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate secret_secret and derive pub_key via double application of secretToPubKey.
+	secretBytes, err := hex.DecodeString(req.SecretSecret)
+	if err != nil || len(secretBytes) < 16 || len(secretBytes) > 32 {
+		lnurlError(w, http.StatusBadRequest, "invalid secret_secret: must be hex, 16–32 bytes")
+		return
+	}
+	secret, err := secretToPubKey(req.SecretSecret)
+	if err != nil {
+		lnurlError(w, http.StatusBadRequest, "invalid secret_secret")
+		return
+	}
+	pubKey, err := secretToPubKey(secret)
+	if err != nil {
+		lnurlError(w, http.StatusBadRequest, "invalid secret_secret")
+		return
+	}
+
+	p, status, errMsg := srv.parseVoucherParams(req.voucherParams)
+	if status != 0 {
+		lnurlError(w, status, errMsg)
+		return
+	}
+
+	dbTx, err := srv.db.Begin()
+	if err != nil {
+		slog.Error("edit: begin transaction", "err", err)
+		lnurlError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	defer dbTx.Rollback()
+
+	voucherID, err := srv.getVoucherIDByPubKey(dbTx, pubKey)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			lnurlError(w, http.StatusNotFound, "voucher not found")
+		} else {
+			slog.Error("edit: get voucher id", "err", err)
+			lnurlError(w, http.StatusInternalServerError, "internal error")
+		}
+		return
+	}
+
+	if err := deleteVoucherRefundCodes(dbTx, voucherID); err != nil {
+		slog.Error("edit: delete refund codes", "err", err)
+		lnurlError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := insertVoucherRefundCodes(dbTx, voucherID, p.NormalizedCodes); err != nil {
+		slog.Error("edit: insert refund codes", "err", err)
+		lnurlError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if err := srv.updateVoucher(dbTx, voucherID, p.RefundAfterSeconds, p.SingleUse, p.TransfersOnly,
+		p.MaxRedeemMsat, p.UniqueRedemptions, p.AbsoluteExpiry, p.RegularFirstAt, p.RegularIntervalSecs); err != nil {
+		slog.Error("edit: update voucher", "err", err)
+		lnurlError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if err := dbTx.Commit(); err != nil {
+		slog.Error("edit: commit", "err", err)
+		lnurlError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Signal refund worker to re-evaluate sleep in case the new schedule is sooner.
+	select {
+	case srv.refundWake <- struct{}{}:
+	default:
+	}
+
+	v := srv.newVoucher(pubKey, "", p.RefundAfterSeconds, p.SingleUse, p.TransfersOnly,
+		p.MaxRedeemMsat, p.UniqueRedemptions, p.AbsoluteExpiry, p.RegularFirstAt, p.RegularIntervalSecs)
+	v.FundKey, _ = secretToPubKey(pubKey)
+	v.Active = true
+
+	writeJSON(w, http.StatusOK, v)
 }
 
 // GET /f/{pubKey} — LNURL-pay step 1
