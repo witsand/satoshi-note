@@ -4,24 +4,30 @@ import (
 	"encoding/json"
 )
 
-// calculateRedeemFee returns the fee in msat for a redeem, rounded down to the
-// nearest sat and floored at the configured minimum.
+// calculateRedeemFee returns the fee in msat for a redeem. The fee is the
+// greater of the configured minimum fee and the bps fee computed on the net
+// send amount (i.e. fee = balance - floor(balance / (1 + bps/10000))).
 func (srv *Server) calculateRedeemFee(balanceMsat int64) int64 {
-	fee := balanceMsat*srv.cfg.redeemFeeBPS/10000/1000*1000 + 1000
-	if fee < srv.cfg.minRedeemFeeMsat {
-		fee = srv.cfg.minRedeemFeeMsat / 1000 * 1000
+	netSat := balanceMsat * 10000 / (10000 + srv.cfg.redeemFeeBPS) / 1000
+	bpsFee := balanceMsat - netSat*1000
+	minFee := srv.cfg.minRedeemFeeMsat / 1000 * 1000
+	if bpsFee > minFee {
+		return bpsFee
 	}
-	return fee
+	return minFee
 }
 
-// calculateInternalFee returns the fee in msat for an internal wallet transfer,
-// rounded down to the nearest sat and floored at the configured minimum.
+// calculateInternalFee returns the fee in msat for an internal wallet transfer.
+// The fee is the greater of the configured minimum fee and the bps fee computed
+// on the net send amount (i.e. fee = amount - floor(amount / (1 + bps/10000))).
 func (srv *Server) calculateInternalFee(amountMsat int64) int64 {
-	fee := amountMsat * srv.cfg.internalFeeBPS / 10000 / 1000 * 1000
-	if fee < srv.cfg.minInternalFeeMsat {
-		fee = srv.cfg.minInternalFeeMsat / 1000 * 1000
+	netSat := amountMsat * 10000 / (10000 + srv.cfg.internalFeeBPS) / 1000
+	bpsFee := amountMsat - netSat*1000
+	minFee := srv.cfg.minInternalFeeMsat / 1000 * 1000
+	if bpsFee > minFee {
+		return bpsFee
 	}
-	return fee
+	return minFee
 }
 
 // voucherStatusBody builds the JSON body for a voucher status response.

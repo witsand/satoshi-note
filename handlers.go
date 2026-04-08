@@ -567,11 +567,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Calculate fee (rounded down to nearest sat)
-	feeMsat := amountMsat * srv.cfg.internalFeeBPS / 10000 / 1000 * 1000
-	if feeMsat < srv.cfg.minInternalFeeMsat {
-		feeMsat = srv.cfg.minInternalFeeMsat / 1000 * 1000
-	}
+	feeMsat := srv.calculateInternalFee(amountMsat)
 	netMsat := amountMsat - feeMsat
 
 	// Execute atomically
