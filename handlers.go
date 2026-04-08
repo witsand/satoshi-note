@@ -346,14 +346,14 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 
 	if v, ok := lookupSingle(); ok {
 		remaining := srv.cfg.maxFundAmountMsat - v.BalanceMsat
-		if remaining < srv.cfg.minFundAmountMsat {
+		if remaining < 1000 {
 			lnurlError(w, http.StatusOK, "voucher is fully funded")
 			return
 		}
 		writeJSON(w, http.StatusOK, lnurlPayResponse(
 			"Fund a Voucher",
 			srv.cfg.baseURL+"/fund/"+key+"/callback",
-			srv.cfg.minFundAmountMsat, remaining,
+			1000, remaining,
 			nil,
 		))
 		return
@@ -373,14 +373,14 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	batchMax := minRemaining * n
-	if batchMax < srv.cfg.minFundAmountMsat*n {
+	if batchMax < 1000*n {
 		lnurlError(w, http.StatusOK, "batch vouchers are fully funded")
 		return
 	}
 	writeJSON(w, http.StatusOK, lnurlPayResponse(
 		"Fund a Batch Vouchers",
 		srv.cfg.baseURL+"/fund/"+key+"/callback",
-		srv.cfg.minFundAmountMsat*n, batchMax,
+		1000*n, batchMax,
 		nil,
 	))
 }
@@ -552,7 +552,7 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	amountMsat := req.AmountMsat
-	if amountMsat < srv.cfg.minFundAmountMsat*dstCount || amountMsat > srv.cfg.maxFundAmountMsat*dstCount {
+	if amountMsat < 1000*dstCount || amountMsat > srv.cfg.maxFundAmountMsat*dstCount {
 		lnurlError(w, http.StatusBadRequest, "amount_msat out of range")
 		return
 	}
@@ -687,11 +687,6 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if v.BalanceMsat < int64(srv.cfg.minRedeemAmountMsat) {
-		lnurlError(w, http.StatusOK, "voucher balance too low")
-		return
-	}
-
 	k1Bytes := make([]byte, len(pubKey)/2)
 	if _, err := rand.Read(k1Bytes); err != nil {
 		lnurlError(w, http.StatusOK, "internal error")
@@ -712,7 +707,7 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 	if v.MaxRedeemMsat > 0 && v.MaxRedeemMsat < maxRedeemable {
 		maxRedeemable = v.MaxRedeemMsat
 	}
-	minRedeemable := int64(srv.cfg.minRedeemAmountMsat) / 1000 * 1000
+	minRedeemable := int64(1000)
 
 	if minRedeemable > maxRedeemable {
 		lnurlError(w, http.StatusOK, "voucher balance too low")
@@ -1004,7 +999,7 @@ func (srv *Server) getCallbackAmount(r *http.Request, n int64) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("invalid amount")
 	}
-	if msats < srv.cfg.minFundAmountMsat*n || msats > srv.cfg.maxFundAmountMsat*n {
+	if msats < 1000*n || msats > srv.cfg.maxFundAmountMsat*n {
 		return 0, fmt.Errorf("amount out of range")
 	}
 	return msats, nil
@@ -1042,7 +1037,7 @@ func (srv *Server) handleLedger(w http.ResponseWriter, r *http.Request) {
 
 func (srv *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"min_fund_amount_msat": srv.cfg.minFundAmountMsat,
+		"min_fund_amount_msat": int64(1000),
 		"base_url":             srv.cfg.baseURL,
 	})
 }

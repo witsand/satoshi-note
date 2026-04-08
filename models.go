@@ -50,15 +50,18 @@ type Voucher struct {
 }
 
 type RefundTx struct {
-	ID         int64  `json:"id"`
-	VoucherID  int64  `json:"voucher_id"`
-	RefundCode string `json:"refund_code"`
-	AmountMsat int64  `json:"amount_msat"`
-	DbTxFee    int64  `json:"db_tx_fee"`
-	ActualFee  int64  `json:"actual_fee"`
-	Refunded   bool   `json:"refunded"`
-	ErrorMsg   string `json:"error_msg"`
-	CreatedAt  int64  `json:"created_at"`
+	ID              int64  `json:"id"`
+	VoucherID       int64  `json:"voucher_id"`
+	RefundCode      string `json:"refund_code"`
+	AmountMsat      int64  `json:"amount_msat"`
+	DbTxFee         int64  `json:"db_tx_fee"`
+	ActualFee       int64  `json:"actual_fee"`
+	Refunded        bool   `json:"refunded"`
+	InFlight        bool   `json:"in_flight"`
+	PaymentHash     string `json:"payment_hash"`
+	PaymentPreimage string `json:"payment_preimage"`
+	ErrorMsg        string `json:"error_msg"`
+	CreatedAt       int64  `json:"created_at"`
 }
 
 type RedeemTx struct {

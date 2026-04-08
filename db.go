@@ -91,6 +91,9 @@ func migrateSchema(db *sql.DB) error {
 		`ALTER TABLE vouchers DROP COLUMN refunded`,
 		`ALTER TABLE vouchers DROP COLUMN refund_tx_id`,
 		`CREATE INDEX IF NOT EXISTS idx_refund_txs_voucher_id ON refund_txs(voucher_id)`,
+		`ALTER TABLE refund_txs ADD COLUMN in_flight        INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE refund_txs ADD COLUMN payment_hash     TEXT    NOT NULL DEFAULT ""`,
+		`ALTER TABLE refund_txs ADD COLUMN payment_preimage TEXT    NOT NULL DEFAULT ""`,
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil {
@@ -181,16 +184,19 @@ func initSchema(db *sql.DB) error {
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS refund_txs (
-			id            INTEGER PRIMARY KEY,
-			voucher_id    INTEGER NOT NULL DEFAULT 0,
-			refund_code   TEXT    NOT NULL,
-			amount_msat   INTEGER NOT NULL,
-			db_tx_fee     INTEGER NOT NULL DEFAULT 0,
-			actual_fee    INTEGER NOT NULL DEFAULT 0,
-			refunded      INTEGER NOT NULL DEFAULT 0,
-			error_msg     TEXT    NOT NULL DEFAULT "",
-			created_at    INTEGER NOT NULL,
-			updated_at    INTEGER NOT NULL DEFAULT 0
+			id               INTEGER PRIMARY KEY,
+			voucher_id       INTEGER NOT NULL DEFAULT 0,
+			refund_code      TEXT    NOT NULL,
+			amount_msat      INTEGER NOT NULL,
+			db_tx_fee        INTEGER NOT NULL DEFAULT 0,
+			actual_fee       INTEGER NOT NULL DEFAULT 0,
+			refunded         INTEGER NOT NULL DEFAULT 0,
+			in_flight        INTEGER NOT NULL DEFAULT 0,
+			payment_hash     TEXT    NOT NULL DEFAULT "",
+			payment_preimage TEXT    NOT NULL DEFAULT "",
+			error_msg        TEXT    NOT NULL DEFAULT "",
+			created_at       INTEGER NOT NULL,
+			updated_at       INTEGER NOT NULL DEFAULT 0
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS redeem_sessions (
@@ -817,7 +823,9 @@ func (srv *Server) markVouchersRefunded(dbTx *sql.Tx, ids []int64) error {
 
 func (srv *Server) getPendingRefundTxs() ([]RefundTx, error) {
 	rows, err := srv.db.Query(
-		`SELECT id, refund_code, amount_msat, db_tx_fee FROM refund_txs WHERE refunded = 0`,
+		`SELECT id, voucher_id, refund_code, amount_msat, db_tx_fee
+		 FROM refund_txs
+		 WHERE refunded = 0 AND in_flight = 0`,
 	)
 	if err != nil {
 		return nil, err
@@ -827,7 +835,7 @@ func (srv *Server) getPendingRefundTxs() ([]RefundTx, error) {
 	var txs []RefundTx
 	for rows.Next() {
 		var rt RefundTx
-		if err := rows.Scan(&rt.ID, &rt.RefundCode, &rt.AmountMsat, &rt.DbTxFee); err != nil {
+		if err := rows.Scan(&rt.ID, &rt.VoucherID, &rt.RefundCode, &rt.AmountMsat, &rt.DbTxFee); err != nil {
 			return nil, err
 		}
 		txs = append(txs, rt)
@@ -835,17 +843,48 @@ func (srv *Server) getPendingRefundTxs() ([]RefundTx, error) {
 	return txs, rows.Err()
 }
 
-func (srv *Server) markRefundTxPaid(id, netDbTxFee, actualFee int64) error {
+func (srv *Server) getInFlightRefundTxs() ([]RefundTx, error) {
+	rows, err := srv.db.Query(
+		`SELECT id, voucher_id, refund_code, amount_msat FROM refund_txs WHERE in_flight = 1 AND refunded = 0`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var txs []RefundTx
+	for rows.Next() {
+		var rt RefundTx
+		if err := rows.Scan(&rt.ID, &rt.VoucherID, &rt.RefundCode, &rt.AmountMsat); err != nil {
+			return nil, err
+		}
+		txs = append(txs, rt)
+	}
+	return txs, rows.Err()
+}
+
+func (srv *Server) markRefundTxInFlight(id int64) error {
 	_, err := srv.db.Exec(
-		`UPDATE refund_txs SET refunded = 1, actual_fee = ?, db_tx_fee = ?, updated_at = ? WHERE id = ?`,
-		actualFee, netDbTxFee, time.Now().Unix(), id,
+		`UPDATE refund_txs SET in_flight = 1, updated_at = ? WHERE id = ?`,
+		time.Now().Unix(), id,
 	)
 	return err
 }
 
+func (srv *Server) markRefundTxPaid(id, netDbTxFee, actualFee int64, paymentHash, paymentPreimage string) error {
+	_, err := srv.db.Exec(
+		`UPDATE refund_txs SET refunded = 1, in_flight = 0, actual_fee = ?, db_tx_fee = ?,
+		 payment_hash = ?, payment_preimage = ?, updated_at = ? WHERE id = ?`,
+		actualFee, netDbTxFee, paymentHash, paymentPreimage, time.Now().Unix(), id,
+	)
+	return err
+}
+
+// markRefundTxFailed records a definitive payment failure and resets in_flight so the
+// row can be retried. Only call this when the SDK returned a definitive error (no money sent).
 func (srv *Server) markRefundTxFailed(id int64, errMsg string) error {
 	_, err := srv.db.Exec(
-		`UPDATE refund_txs SET error_msg = ?, updated_at = ? WHERE id = ?`,
+		`UPDATE refund_txs SET in_flight = 0, error_msg = ?, updated_at = ? WHERE id = ?`,
 		errMsg, time.Now().Unix(), id,
 	)
 	return err

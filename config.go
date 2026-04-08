@@ -22,9 +22,7 @@ type Config struct {
 	internalFeeBPS              int64
 	minInternalFeeMsat          int64
 	minRedeemFeeMsat            int64
-	minFundAmountMsat           int64
 	maxFundAmountMsat           int64
-	minRedeemAmountMsat         int64
 	maxVoucherExpireSeconds     int64
 	maxVouchersPerBatch         int64
 	createActive                bool
@@ -117,34 +115,11 @@ func loadConfig() (*Server, error) {
 		}
 	}
 
-	if v := os.Getenv("MIN_FUND_AMOUNT_MSAT"); v == "" {
-		return nil, errMissingEnv("MIN_FUND_AMOUNT_MSAT")
-	} else {
-		var err error
-		cfg.minFundAmountMsat, err = strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	if v := os.Getenv("MAX_FUND_AMOUNT_MSAT"); v == "" {
 		return nil, errMissingEnv("MAX_FUND_AMOUNT_MSAT")
 	} else {
 		var err error
 		if cfg.maxFundAmountMsat, err = strconv.ParseInt(v, 10, 64); err != nil {
-			return nil, err
-		}
-	}
-
-	if cfg.minFundAmountMsat >= cfg.maxFundAmountMsat {
-		return nil, fmt.Errorf("MIN_FUND_AMOUNT_MSAT must be less than MAX_FUND_AMOUNT_MSAT")
-	}
-
-	if v := os.Getenv("MIN_REDEEM_AMOUNT_MSAT"); v == "" {
-		return nil, errMissingEnv("MIN_REDEEM_AMOUNT_MSAT")
-	} else {
-		var err error
-		if cfg.minRedeemAmountMsat, err = strconv.ParseInt(v, 10, 64); err != nil {
 			return nil, err
 		}
 	}

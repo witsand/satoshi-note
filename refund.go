@@ -9,6 +9,9 @@ import (
 )
 
 func (srv *Server) runRefundWorker() {
+	// Warn about any rows left in-flight from a previous crash.
+	srv.warnInFlightRefunds()
+
 	// Run once on startup to catch any missed refunds.
 	srv.processExpiredRefunds()
 	srv.processRegularRefunds()
@@ -102,12 +105,10 @@ func (srv *Server) processExpiredRefunds() {
 		return
 	}
 
-	cfg := srv.cfg
 
 	// Process each voucher independently: one refund_tx per voucher per refund code split.
 	for _, v := range vouchers {
 		codes := refundCodesMap[v.ID]
-		splits := splitBalance(v.BalanceMsat, codes)
 
 		dbTx, err := srv.db.Begin()
 		if err != nil {
@@ -115,11 +116,25 @@ func (srv *Server) processExpiredRefunds() {
 			continue
 		}
 
+		// Re-read balance inside the transaction. A concurrent redemption may have
+		// reduced the balance between the outer query and now. Using the stale outer
+		// value would produce refund_txs for more than the voucher actually holds.
+		var currentBalance int64
+		if err := dbTx.QueryRow(
+			`SELECT balance_msat FROM vouchers WHERE id = ? AND active = 1 AND balance_msat > 0`, v.ID,
+		).Scan(&currentBalance); err != nil {
+			// Balance is 0 or voucher already inactive — nothing to refund.
+			dbTx.Rollback()
+			continue
+		}
+
+		splits := splitBalance(currentBalance, codes)
+
 		anyInserted := false
 		for refundCode, amount := range splits {
 			dbTxFee := srv.calculateRedeemFee(amount)
 			netMsat := amount - dbTxFee
-			if netMsat < cfg.minRedeemAmountMsat {
+			if netMsat < 1000 {
 				continue
 			}
 			if _, err := srv.insertRefundTx(dbTx, v.ID, refundCode, netMsat, dbTxFee); err != nil {
@@ -175,34 +190,17 @@ func (srv *Server) processRegularRefunds() {
 		return
 	}
 
-	cfg := srv.cfg
 
 	// Process each voucher independently: one refund_tx per voucher per refund code split.
 	for _, v := range vouchers {
 		newLastAt := nextRegularRefundAnchor(v.FirstAt, v.LastAt, v.IntervalSecs, now)
 		entry := regularRefundEntry{ID: v.ID, NewLastAt: newLastAt}
+		codes := refundCodesMap[v.ID]
 
+		// Fast path: outer query already saw balance = 0, no need to open a transaction.
 		if v.BalanceMsat == 0 {
 			if err := advanceRegularRefundTime(srv.db, []regularRefundEntry{entry}); err != nil {
 				slog.Error("refund worker: advance regular refund time", "voucher_id", v.ID, "err", err)
-			}
-			continue
-		}
-
-		codes := refundCodesMap[v.ID]
-		splits := splitBalance(v.BalanceMsat, codes)
-
-		anyAboveMin := false
-		for _, amount := range splits {
-			netMsat := amount - srv.calculateRedeemFee(amount)
-			if netMsat >= cfg.minRedeemAmountMsat {
-				anyAboveMin = true
-				break
-			}
-		}
-		if !anyAboveMin {
-			if err := advanceRegularRefundTime(srv.db, []regularRefundEntry{entry}); err != nil {
-				slog.Error("refund worker: advance regular refund time (below min)", "voucher_id", v.ID, "err", err)
 			}
 			continue
 		}
@@ -213,17 +211,56 @@ func (srv *Server) processRegularRefunds() {
 			continue
 		}
 
+		// Re-read balance inside the transaction. A concurrent redemption may have
+		// reduced the balance between the outer query and now.
+		var currentBalance int64
+		if err := dbTx.QueryRow(`SELECT balance_msat FROM vouchers WHERE id = ?`, v.ID).Scan(&currentBalance); err != nil {
+			dbTx.Rollback()
+			continue
+		}
+
+		if currentBalance == 0 {
+			dbTx.Rollback()
+			if err := advanceRegularRefundTime(srv.db, []regularRefundEntry{entry}); err != nil {
+				slog.Error("refund worker: advance regular refund time", "voucher_id", v.ID, "err", err)
+			}
+			continue
+		}
+
+		splits := splitBalance(currentBalance, codes)
+
+		anyAboveMin := false
+		for _, amount := range splits {
+			if amount-srv.calculateRedeemFee(amount) >= 1000 {
+				anyAboveMin = true
+				break
+			}
+		}
+		if !anyAboveMin {
+			dbTx.Rollback()
+			if err := advanceRegularRefundTime(srv.db, []regularRefundEntry{entry}); err != nil {
+				slog.Error("refund worker: advance regular refund time (below min)", "voucher_id", v.ID, "err", err)
+			}
+			continue
+		}
+
+		insertFailed := false
 		for refundCode, amount := range splits {
 			dbTxFee := srv.calculateRedeemFee(amount)
 			netMsat := amount - dbTxFee
-			if netMsat < cfg.minRedeemAmountMsat {
+			if netMsat < 1000 {
 				continue
 			}
 			if _, err := srv.insertRefundTx(dbTx, v.ID, refundCode, netMsat, dbTxFee); err != nil {
 				slog.Error("refund worker: insert regular refund tx", "voucher_id", v.ID, "refund_code", refundCode, "err", err)
-				dbTx.Rollback()
-				goto nextVoucher
+				insertFailed = true
+				break
 			}
+		}
+
+		if insertFailed {
+			dbTx.Rollback()
+			continue
 		}
 
 		if err := markVouchersRegularRefunded(dbTx, []regularRefundEntry{entry}); err != nil {
@@ -235,9 +272,25 @@ func (srv *Server) processRegularRefunds() {
 		if err := dbTx.Commit(); err != nil {
 			slog.Error("refund worker: commit regular", "voucher_id", v.ID, "err", err)
 		}
-		continue
+	}
+}
 
-	nextVoucher:
+// warnInFlightRefunds logs a warning for any refund_txs that were left in-flight
+// from a previous server crash. These rows are NOT retried automatically because
+// the payment outcome is unknown — they require manual investigation.
+func (srv *Server) warnInFlightRefunds() {
+	stuck, err := srv.getInFlightRefundTxs()
+	if err != nil {
+		slog.Error("refund worker: check in-flight refund txs", "err", err)
+		return
+	}
+	for _, rt := range stuck {
+		slog.Warn("refund worker: found in-flight refund tx from previous run — payment outcome unknown, manual review required",
+			"id", rt.ID,
+			"voucher_id", rt.VoucherID,
+			"refund_code", rt.RefundCode,
+			"amount_msat", rt.AmountMsat,
+		)
 	}
 }
 
@@ -296,8 +349,8 @@ func (srv *Server) payRefund(rt RefundTx) error {
 		Comment:    commentPtr,
 	})
 	if err := sdkErr(rawPrepErr); err != nil {
-		markErr := srv.markRefundTxFailed(rt.ID, err.Error())
-		if markErr != nil {
+		// Definitive failure before any payment attempt — safe to reset and retry later.
+		if markErr := srv.markRefundTxFailed(rt.ID, err.Error()); markErr != nil {
 			slog.Error("refund worker: mark refund tx failed", "id", rt.ID, "err", markErr)
 		}
 		return fmt.Errorf("prepare lnurl pay: %w", err)
@@ -305,19 +358,28 @@ func (srv *Server) payRefund(rt RefundTx) error {
 
 	estimateFeeMsat := int64(prepResp.FeeSats) * 1000
 	if estimateFeeMsat > rt.DbTxFee {
-		markErr := srv.markRefundTxFailed(rt.ID, "routing fee too high")
-		if markErr != nil {
+		// Definitive failure before any payment attempt — safe to reset and retry later.
+		if markErr := srv.markRefundTxFailed(rt.ID, "routing fee too high"); markErr != nil {
 			slog.Error("refund worker: mark refund tx failed", "id", rt.ID, "err", markErr)
 		}
 		return fmt.Errorf("routing fee %d msat exceeds db_tx_fee %d msat", estimateFeeMsat, rt.DbTxFee)
+	}
+
+	// Mark in-flight BEFORE sending. If the server crashes after this point but before
+	// markRefundTxPaid completes, the row will remain in_flight=1 and will NOT be retried
+	// automatically — requiring manual review. This is intentional: it is safer to hold
+	// the money and investigate than to risk a double payment.
+	if err := srv.markRefundTxInFlight(rt.ID); err != nil {
+		return fmt.Errorf("mark refund tx in-flight: %w", err)
 	}
 
 	lnurlPayResp, rawPayErr := srv.ln.LnurlPay(spark.LnurlPayRequest{
 		PrepareResponse: prepResp,
 	})
 	if err := sdkErr(rawPayErr); err != nil {
-		markErr := srv.markRefundTxFailed(rt.ID, err.Error())
-		if markErr != nil {
+		// SDK returned a definitive error — payment did not go through.
+		// Reset in_flight so the row can be retried.
+		if markErr := srv.markRefundTxFailed(rt.ID, err.Error()); markErr != nil {
 			slog.Error("refund worker: mark refund tx failed", "id", rt.ID, "err", markErr)
 		}
 		return fmt.Errorf("lnurl pay: %w", err)
@@ -327,7 +389,18 @@ func (srv *Server) payRefund(rt RefundTx) error {
 	if lnurlPayResp.Payment.Fees != nil {
 		actualFeeMsat = lnurlPayResp.Payment.Fees.Int64() * 1000
 	}
-	if err := srv.markRefundTxPaid(rt.ID, rt.DbTxFee-actualFeeMsat, actualFeeMsat); err != nil {
+
+	var paymentHash, paymentPreimage string
+	if lnurlPayResp.Payment.Details != nil {
+		if details, ok := (*lnurlPayResp.Payment.Details).(spark.PaymentDetailsLightning); ok {
+			paymentHash = details.HtlcDetails.PaymentHash
+			if details.HtlcDetails.Preimage != nil {
+				paymentPreimage = *details.HtlcDetails.Preimage
+			}
+		}
+	}
+
+	if err := srv.markRefundTxPaid(rt.ID, rt.DbTxFee-actualFeeMsat, actualFeeMsat, paymentHash, paymentPreimage); err != nil {
 		slog.Error("refund worker: mark refund tx paid", "id", rt.ID, "err", err)
 	}
 
