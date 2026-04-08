@@ -42,6 +42,8 @@ func main() {
 	}
 	slog.Info("pending funding payments caught up")
 
+	srv.warnPendingRedeemTxs()
+
 	if srv.cfg.refundActive {
 		go srv.runRefundWorker()
 	}

@@ -807,22 +807,27 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	dbTxFee := srv.calculateRedeemFee(v.BalanceMsat)
-
-	if estimateFeeMsat > dbTxFee {
-		lnurlError(w, http.StatusOK, "routing fee too high")
-		return
-	}
-
-	if amountMsat+dbTxFee > v.BalanceMsat {
-		lnurlError(w, http.StatusOK, "redeem amount exceeds voucher balance after fees")
-		return
-	}
-
-	redeemID, err := srv.insertRedeemAndBalance(v, secret, pr, amountMsat, dbTxFee)
+	// Balance deduction, fee calculation, and redeem_tx insertion are all performed
+	// atomically inside insertRedeemAndBalance. The fee is computed from the actual
+	// current balance (re-read inside the transaction) so stale outer reads can't
+	// cause an over- or under-deduction.
+	redeemID, dbTxFee, err := srv.insertRedeemAndBalance(v, secret, pr, amountMsat)
 	if err != nil {
 		slog.Error("insert redeem and balance", "err", err)
-		lnurlError(w, http.StatusOK, "internal db error")
+		lnurlError(w, http.StatusOK, "redeem failed: "+err.Error())
+		return
+	}
+
+	// Routing-fee check must happen after the deduction since the service fee
+	// is computed from the actual balance. Undo the deduction if the check fails.
+	if estimateFeeMsat > dbTxFee {
+		if restoreErr := srv.addVoucherBalance(v.ID, amountMsat+dbTxFee); restoreErr != nil {
+			slog.Error("restore voucher balance after routing fee rejection", "voucher_id", v.ID, "err", restoreErr)
+		}
+		if markErr := srv.updateRedeemTx(redeemID, TxFailed, 0, 0, "routing fee too high"); markErr != nil {
+			slog.Error("mark redeem tx failed (routing fee)", "id", redeemID, "err", markErr)
+		}
+		lnurlError(w, http.StatusOK, "routing fee too high")
 		return
 	}
 
@@ -836,7 +841,7 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		}
 		// Restore the balance that was deducted before the failed payment attempt.
 		if err := srv.addVoucherBalance(v.ID, amountMsat+dbTxFee); err != nil {
-			slog.Error("restore voucher balance after failed payment", "err", err)
+			slog.Error("restore voucher balance after failed payment", "voucher_id", v.ID, "err", err)
 		}
 		lnurlError(w, http.StatusOK, "payment failed")
 		return
@@ -854,23 +859,42 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]string{"status": "OK"})
 }
 
-func (srv *Server) insertRedeemAndBalance(v *Voucher, secret, pr string, msat, fee int64) (int64, error) {
+// insertRedeemAndBalance atomically deducts the voucher balance and records the
+// redeem_tx as TxPending. The service fee is computed from the balance re-read
+// inside the transaction so concurrent operations between the outer voucher lookup
+// and this call cannot cause a stale fee or an incorrect amount check.
+// Returns (redeemID, actualDbTxFee, error).
+func (srv *Server) insertRedeemAndBalance(v *Voucher, secret, pr string, amountMsat int64) (int64, int64, error) {
 	dbTx, err := srv.db.Begin()
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	defer dbTx.Rollback()
 
-	if err := srv.updateVoucherBalance(dbTx, v.ID, -msat-fee); err != nil {
-		return 0, err
+	// Re-read balance inside the transaction to get the authoritative value.
+	var currentBalance int64
+	if err := dbTx.QueryRow(
+		`SELECT balance_msat FROM vouchers WHERE id = ? AND active = 1`, v.ID,
+	).Scan(&currentBalance); err != nil {
+		return 0, 0, fmt.Errorf("voucher not found or inactive")
 	}
 
-	redeemID, err := srv.insertRedeemTx(dbTx, v.ID, secret, pr, msat, fee)
+	dbTxFee := srv.calculateRedeemFee(currentBalance)
+
+	if amountMsat+dbTxFee > currentBalance {
+		return 0, 0, fmt.Errorf("insufficient balance after fee")
+	}
+
+	if err := srv.updateVoucherBalance(dbTx, v.ID, -amountMsat-dbTxFee); err != nil {
+		return 0, 0, err
+	}
+
+	redeemID, err := srv.insertRedeemTx(dbTx, v.ID, secret, pr, amountMsat, dbTxFee)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
-	return redeemID, dbTx.Commit()
+	return redeemID, dbTxFee, dbTx.Commit()
 }
 
 func (srv *Server) updateFundTxConfirmed(tx *FundTx) error {
