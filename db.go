@@ -46,9 +46,9 @@ func openDB(path string) (*sql.DB, error) {
 		}
 	}
 
-	if err := initSchema(db); err != nil {
+	if err := initSchemaTables(db); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("init schema: %w", err)
+		return nil, fmt.Errorf("init schema tables: %w", err)
 	}
 
 	if err := migrateSchema(db); err != nil {
@@ -59,6 +59,11 @@ func openDB(path string) (*sql.DB, error) {
 	if err := migrateFundKeys(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate fund keys: %w", err)
+	}
+
+	if err := initSchemaIndexes(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("init schema indexes: %w", err)
 	}
 
 	return db, nil
@@ -139,14 +144,13 @@ func migrateFundKeys(db *sql.DB) error {
 			return fmt.Errorf("update fund_key for voucher %d: %w", r.id, err)
 		}
 	}
-	// Create unique index (idempotent).
-	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_fund_key ON vouchers(fund_key)`); err != nil {
-		return fmt.Errorf("create fund_key index: %w", err)
-	}
 	return nil
 }
 
-func initSchema(db *sql.DB) error {
+// initSchemaTables creates all tables. Runs before migrations so that existing
+// databases (which may be missing columns added by migrations) are not broken
+// by index creation referencing those columns. See initSchemaIndexes.
+func initSchemaTables(db *sql.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS vouchers (
 			id                             INTEGER PRIMARY KEY,
@@ -247,21 +251,36 @@ func initSchema(db *sql.DB) error {
 			refund_code TEXT    NOT NULL,
 			share       INTEGER NOT NULL DEFAULT 1
 		)`,
-
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_pub_key ON vouchers(pub_key)`,
-		`CREATE INDEX IF NOT EXISTS idx_vouchers_batch_id       ON vouchers(batch_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_fund_txs_status         ON fund_txs(status)`,
-		`CREATE INDEX IF NOT EXISTS idx_redeem_sessions_k1      ON redeem_sessions(k1, pub_key)`,
-		`CREATE INDEX IF NOT EXISTS idx_redeem_txs_voucher_id   ON redeem_txs(voucher_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_refund_txs_refunded     ON refund_txs(refunded)`,
-		`CREATE INDEX IF NOT EXISTS idx_refund_txs_voucher_id   ON refund_txs(voucher_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_vrc_voucher_id          ON voucher_refund_codes(voucher_id)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_fund_key   ON vouchers(fund_key)`,
 	}
 
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("exec schema: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// initSchemaIndexes creates all indexes. Runs after migrations so that columns
+// added by migrations (e.g. voucher_id on refund_txs) are present before the
+// index referencing them is created.
+func initSchemaIndexes(db *sql.DB) error {
+	indexes := []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_pub_key      ON vouchers(pub_key)`,
+		`CREATE INDEX        IF NOT EXISTS idx_vouchers_batch_id     ON vouchers(batch_id)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_fund_key     ON vouchers(fund_key)`,
+		`CREATE INDEX        IF NOT EXISTS idx_fund_txs_status       ON fund_txs(status)`,
+		`CREATE INDEX        IF NOT EXISTS idx_redeem_sessions_k1    ON redeem_sessions(k1, pub_key)`,
+		`CREATE INDEX        IF NOT EXISTS idx_redeem_txs_voucher_id ON redeem_txs(voucher_id)`,
+		`CREATE INDEX        IF NOT EXISTS idx_refund_txs_refunded   ON refund_txs(refunded)`,
+		`CREATE INDEX        IF NOT EXISTS idx_refund_txs_voucher_id ON refund_txs(voucher_id)`,
+		`CREATE INDEX        IF NOT EXISTS idx_vrc_voucher_id        ON voucher_refund_codes(voucher_id)`,
+	}
+
+	for _, idx := range indexes {
+		if _, err := db.Exec(idx); err != nil {
+			return fmt.Errorf("exec index: %w", err)
 		}
 	}
 
