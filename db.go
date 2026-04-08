@@ -146,21 +146,23 @@ func migrateFundKeys(db *sql.DB) error {
 func initSchema(db *sql.DB) error {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS vouchers (
-			id                    INTEGER PRIMARY KEY,
-			pub_key               TEXT NOT NULL,
-			fund_key              TEXT NOT NULL DEFAULT "",
-			batch_id              TEXT NOT NULL,
-			refund_code           TEXT NOT NULL,
-			refund_after_seconds  INTEGER NOT NULL,
-			absolute_expiry       INTEGER NOT NULL DEFAULT 0,
-			balance_msat          INTEGER NOT NULL DEFAULT 0,
-			single_use            INTEGER NOT NULL,
-			transfers_only        INTEGER NOT NULL DEFAULT 0,
-			max_redeem_msat       INTEGER NOT NULL DEFAULT 0,
-			unique_redemptions    INTEGER NOT NULL DEFAULT 0,
-			active                INTEGER NOT NULL DEFAULT 1,
-			created_at            INTEGER NOT NULL,
-			updated_at            INTEGER NOT NULL DEFAULT 0
+			id                             INTEGER PRIMARY KEY,
+			pub_key                        TEXT    NOT NULL,
+			fund_key                       TEXT    NOT NULL DEFAULT "",
+			batch_id                       TEXT    NOT NULL,
+			refund_after_seconds           INTEGER NOT NULL,
+			absolute_expiry                INTEGER NOT NULL DEFAULT 0,
+			balance_msat                   INTEGER NOT NULL DEFAULT 0,
+			single_use                     INTEGER NOT NULL,
+			transfers_only                 INTEGER NOT NULL DEFAULT 0,
+			max_redeem_msat                INTEGER NOT NULL DEFAULT 0,
+			unique_redemptions             INTEGER NOT NULL DEFAULT 0,
+			regular_refund_first_at        INTEGER NOT NULL DEFAULT 0,
+			regular_refund_interval_secs   INTEGER NOT NULL DEFAULT 0,
+			regular_refund_last_at         INTEGER NOT NULL DEFAULT 0,
+			active                         INTEGER NOT NULL DEFAULT 1,
+			created_at                     INTEGER NOT NULL,
+			updated_at                     INTEGER NOT NULL DEFAULT 0
 		)`,
 
 		`CREATE TABLE IF NOT EXISTS fund_txs (
@@ -248,6 +250,7 @@ func initSchema(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_refund_txs_refunded     ON refund_txs(refunded)`,
 		`CREATE INDEX IF NOT EXISTS idx_refund_txs_voucher_id   ON refund_txs(voucher_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_vrc_voucher_id          ON voucher_refund_codes(voucher_id)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_vouchers_fund_key   ON vouchers(fund_key)`,
 	}
 
 	for _, stmt := range stmts {
