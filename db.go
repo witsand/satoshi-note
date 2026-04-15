@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -102,7 +103,53 @@ func migrateSchema(db *sql.DB) error {
 		`ALTER TABLE refund_txs ADD COLUMN dust_msat        INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE vouchers ADD COLUMN regular_refund_immediate INTEGER NOT NULL DEFAULT 0`,
 	}
+
+	columnExists := func(table, col string) (bool, error) {
+		// Use SQLite's table_info pragma for robust, idempotent migrations.
+		rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
+		if err != nil {
+			return false, err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			// cid, name, type, notnull, dflt_value, pk
+			var cid int
+			var name, typ string
+			var notnull, pk int
+			var dflt sql.NullString
+			if err := rows.Scan(&cid, &name, &typ, &notnull, &dflt, &pk); err != nil {
+				return false, err
+			}
+			if strings.EqualFold(name, col) {
+				return true, nil
+			}
+		}
+		return false, rows.Err()
+	}
+
+	addColRE := regexp.MustCompile(`(?i)^\s*ALTER\s+TABLE\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+ADD\s+COLUMN\s+([a-zA-Z_][a-zA-Z0-9_]*)\b`)
+	dropColRE := regexp.MustCompile(`(?i)^\s*ALTER\s+TABLE\s+([a-zA-Z_][a-zA-Z0-9_]*)\s+DROP\s+COLUMN\s+([a-zA-Z_][a-zA-Z0-9_]*)\b`)
 	for _, m := range migrations {
+		if mm := addColRE.FindStringSubmatch(m); len(mm) == 3 {
+			table, col := mm[1], mm[2]
+			ok, err := columnExists(table, col)
+			if err != nil {
+				return fmt.Errorf("check column exists %s.%s: %w", table, col, err)
+			}
+			if ok {
+				continue
+			}
+		}
+		if mm := dropColRE.FindStringSubmatch(m); len(mm) == 3 {
+			table, col := mm[1], mm[2]
+			ok, err := columnExists(table, col)
+			if err != nil {
+				return fmt.Errorf("check column exists %s.%s: %w", table, col, err)
+			}
+			if !ok {
+				continue
+			}
+		}
 		if _, err := db.Exec(m); err != nil {
 			errStr := err.Error()
 			if !strings.Contains(errStr, "duplicate column name") &&
