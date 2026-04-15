@@ -9,6 +9,8 @@ import (
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
 )
 
+const dustThresholdMsat = 1000
+
 func (srv *Server) runRefundWorker() {
 	// Warn about any rows left in-flight from a previous crash.
 	srv.warnInFlightRefunds()
@@ -121,7 +123,7 @@ func (srv *Server) insertImmediateRegularRefunds(dbTx *sql.Tx, voucherIDs []int6
 
 		anyAboveMin := false
 		for _, amount := range splits {
-			if amount-srv.calculateRedeemFee(amount) >= 1000 {
+			if amount-srv.calculateRedeemFee(amount) >= dustThresholdMsat {
 				anyAboveMin = true
 				break
 			}
@@ -133,7 +135,7 @@ func (srv *Server) insertImmediateRegularRefunds(dbTx *sql.Tx, voucherIDs []int6
 		for refundCode, amount := range splits {
 			dbTxFee := srv.calculateRedeemFee(amount)
 			netMsat := amount - dbTxFee
-			if netMsat < 1000 {
+			if netMsat < dustThresholdMsat {
 				continue
 			}
 			dustMsat := netMsat % 1000
@@ -219,7 +221,7 @@ func (srv *Server) processExpiredRefunds() {
 		for refundCode, amount := range splits {
 			dbTxFee := srv.calculateRedeemFee(amount)
 			netMsat := amount - dbTxFee
-			if netMsat < 1000 {
+			if netMsat < dustThresholdMsat {
 				continue
 			}
 			dustMsat := netMsat % 1000
@@ -318,7 +320,7 @@ func (srv *Server) processRegularRefunds() {
 
 		anyAboveMin := false
 		for _, amount := range splits {
-			if amount-srv.calculateRedeemFee(amount) >= 1000 {
+			if amount-srv.calculateRedeemFee(amount) >= dustThresholdMsat {
 				anyAboveMin = true
 				break
 			}
@@ -335,7 +337,7 @@ func (srv *Server) processRegularRefunds() {
 		for refundCode, amount := range splits {
 			dbTxFee := srv.calculateRedeemFee(amount)
 			netMsat := amount - dbTxFee
-			if netMsat < 1000 {
+			if netMsat < dustThresholdMsat {
 				continue
 			}
 			dustMsat := netMsat % 1000

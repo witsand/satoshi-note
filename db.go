@@ -292,6 +292,25 @@ func initSchemaIndexes(db *sql.DB) error {
 }
 
 
+const redeemSessionWindowSecs = 1800 // 30-minute validity window for LNURL-withdraw k1 sessions
+
+// checkRedeemSession returns nil if the k1 session is valid (exists, unused, not expired).
+// It does NOT mark the session as used — call markRedeemSessionUsed after acquiring the semaphore.
+func (srv *Server) checkRedeemSession(k1, pubKey string) error {
+	var count int
+	err := srv.db.QueryRow(
+		`SELECT COUNT(*) FROM redeem_sessions WHERE k1 = ? AND pub_key = ? AND used = 0 AND created_at >= ?`,
+		k1, pubKey, time.Now().Unix()-redeemSessionWindowSecs,
+	).Scan(&count)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return fmt.Errorf("redeem session not found, expired or already used")
+	}
+	return nil
+}
+
 func (srv *Server) insertRedeemSession(k1, pubKey string) error {
 	_, err := srv.db.Exec(
 		`INSERT INTO redeem_sessions (k1, pub_key, created_at) VALUES (?, ?, ?)`,
@@ -323,7 +342,7 @@ func (srv *Server) updateRedeemTx(redeemID int64, status TxStatus, dbTxFee, actu
 func (srv *Server) markRedeemSessionUsed(k1, pubKey string) error {
 	res, err := srv.db.Exec(
 		`UPDATE redeem_sessions SET used = 1, updated_at = ? WHERE k1 = ? AND pub_key = ? AND used = 0 AND created_at >= ?`,
-		time.Now().Unix(), k1, pubKey, time.Now().Unix()-1800) // 30 minute window
+		time.Now().Unix(), k1, pubKey, time.Now().Unix()-redeemSessionWindowSecs)
 	if err != nil {
 		return err
 	}

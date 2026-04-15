@@ -1,11 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"time"
 
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
 )
+
+const fundTxLookbackSecs = 600
 
 // warnPendingRedeemTxs logs a warning for any redeem_txs left in TxPending state
 // from a previous run. A pending row means the server crashed after deducting the
@@ -56,7 +59,7 @@ func (srv *Server) checkPendingFundTXs() error {
 		}
 	}
 
-	ps, err := srv.getPaymentsCompleted(since - 600) // Get payments 10 minutes prior to last pengding payment
+	ps, err := srv.getPaymentsCompleted(since - fundTxLookbackSecs) // Get payments prior to earliest pending
 	if err != nil {
 		return err
 	}
@@ -74,8 +77,7 @@ func (srv *Server) checkPendingFundTXs() error {
 				tx.PaymentPreimage = *details.HtlcDetails.Preimage
 
 				if err := srv.updateFundTxConfirmed(tx); err != nil {
-					slog.Error("updated fund tx confirmed failed", "err", err)
-					continue
+					return fmt.Errorf("update fund tx confirmed (pr=%s): %w", tx.PR, err)
 				}
 			}
 		}

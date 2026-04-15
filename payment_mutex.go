@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const withdrawalTimeout = 5 * time.Second
+
 type paymentSemaphore struct {
 	ch              chan struct{}
 	withdrawWaiters atomic.Int32
@@ -48,7 +50,7 @@ func (p *paymentSemaphore) acquireForWithdrawal() bool {
 	p.withdrawWaiters.Add(1)
 	defer p.withdrawWaiters.Add(-1)
 
-	timeout := time.NewTimer(5 * time.Second)
+	timeout := time.NewTimer(withdrawalTimeout)
 	defer timeout.Stop()
 
 	for {

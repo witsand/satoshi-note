@@ -17,6 +17,10 @@ import (
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
 )
 
+// maxPathParamLen caps path parameters (secret, pubKey, key) before any crypto or DB work.
+// Legitimate hex pubKeys/secrets are at most 64 chars; 128 is a safe generous upper bound.
+const maxPathParamLen = 128
+
 // voucherParams holds the shared fields present in both the create and edit request bodies.
 type voucherParams struct {
 	RefundCode  string `json:"refund_code"`
@@ -346,6 +350,10 @@ func (srv *Server) handleLNURLPayVoucher(w http.ResponseWriter, r *http.Request)
 	}
 
 	key := r.PathValue("pubKey")
+	if len(key) > maxPathParamLen {
+		lnurlError(w, http.StatusOK, "invalid key")
+		return
+	}
 
 	lookupSingle := func() (*Voucher, bool) {
 		if v, err := srv.getVoucherByFundKey(srv.db, key); err == nil {
@@ -406,6 +414,10 @@ func (srv *Server) handleLNURLPayCallbackVoucher(w http.ResponseWriter, r *http.
 	}
 
 	key := r.PathValue("pubKey")
+	if len(key) > maxPathParamLen {
+		lnurlError(w, http.StatusOK, "invalid key")
+		return
+	}
 
 	tx := &FundTx{}
 
@@ -517,18 +529,6 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		lnurlError(w, http.StatusBadRequest, "fingerprint required for this voucher")
 		return
 	}
-	if src.UniqueRedemptions && req.Fingerprint != "" {
-		used, err := srv.usedFingerprints([]int64{src.ID}, req.Fingerprint)
-		if err != nil {
-			slog.Error("check fingerprint", "err", err)
-			lnurlError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		if used[src.ID] {
-			lnurlError(w, http.StatusConflict, "this fingerprint has already redeemed this voucher")
-			return
-		}
-	}
 
 	// Resolve destination
 	var dstVoucher *Voucher
@@ -624,6 +624,9 @@ func (srv *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Authoritative uniqueness guard: INSERT OR IGNORE inside the transaction means a
+	// concurrent duplicate request returns inserted=false here, and the deferred Rollback
+	// undoes the balance deduction and transfer record.
 	if src.UniqueRedemptions {
 		inserted, err := insertRedemptionFingerprint(dbTx, src.ID, req.Fingerprint)
 		if err != nil {
@@ -657,6 +660,10 @@ func (srv *Server) handleLNURLVerify(w http.ResponseWriter, r *http.Request) {
 	}
 
 	key := r.PathValue("key")
+	if len(key) > maxPathParamLen {
+		lnurlError(w, http.StatusOK, "invalid key")
+		return
+	}
 
 	tx, err := srv.getFundTxByKey(key)
 	if err != nil {
@@ -678,6 +685,10 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 	}
 
 	secret := r.PathValue("secret")
+	if len(secret) > maxPathParamLen {
+		lnurlError(w, http.StatusOK, "invalid secret")
+		return
+	}
 
 	pubKey, err := secretToPubKey(secret)
 	if err != nil {
@@ -744,6 +755,10 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 	}
 
 	secret := r.PathValue("secret")
+	if len(secret) > maxPathParamLen {
+		lnurlError(w, http.StatusOK, "invalid secret")
+		return
+	}
 
 	pubKey, err := secretToPubKey(secret)
 	if err != nil {
@@ -763,12 +778,20 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// Validate k1 before acquiring the semaphore so invalid/expired sessions fail fast
+	// without blocking legitimate withdrawals.
+	if err := srv.checkRedeemSession(k1, pubKey); err != nil {
+		lnurlError(w, http.StatusOK, "invalid or expired k1")
+		return
+	}
+
 	if !srv.paymentSema.acquireForWithdrawal() {
 		lnurlError(w, http.StatusOK, "server busy, please retry")
 		return
 	}
 	defer srv.paymentSema.releaseAfter(srv.cfg.paymentCooldown)
 
+	// Atomically mark the session used after acquiring the semaphore.
 	err = srv.markRedeemSessionUsed(k1, pubKey)
 	if err != nil {
 		lnurlError(w, http.StatusOK, "invalid or expired k1")
