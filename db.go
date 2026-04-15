@@ -102,6 +102,7 @@ func migrateSchema(db *sql.DB) error {
 		`ALTER TABLE refund_txs ADD COLUMN payment_preimage TEXT    NOT NULL DEFAULT ""`,
 		`ALTER TABLE refund_txs ADD COLUMN dust_msat        INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE vouchers ADD COLUMN regular_refund_immediate INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE refund_txs ADD COLUMN retry_count     INTEGER NOT NULL DEFAULT 0`,
 	}
 
 	columnExists := func(table, col string) (bool, error) {
@@ -915,7 +916,7 @@ func (srv *Server) getPendingRefundTxs() ([]RefundTx, error) {
 	rows, err := srv.db.Query(
 		`SELECT id, voucher_id, refund_code, amount_msat, db_tx_fee
 		 FROM refund_txs
-		 WHERE refunded = 0 AND in_flight = 0`,
+		 WHERE refunded = 0 AND in_flight = 0 AND retry_count < 3`,
 	)
 	if err != nil {
 		return nil, err
@@ -953,6 +954,28 @@ func (srv *Server) getInFlightRefundTxs() ([]RefundTx, error) {
 	return txs, rows.Err()
 }
 
+func (srv *Server) getAbandonedRefundTxs() ([]RefundTx, error) {
+	rows, err := srv.db.Query(
+		`SELECT id, voucher_id, refund_code, amount_msat, retry_count, error_msg
+		 FROM refund_txs
+		 WHERE refunded = 0 AND in_flight = 0 AND retry_count >= 3`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var txs []RefundTx
+	for rows.Next() {
+		var rt RefundTx
+		if err := rows.Scan(&rt.ID, &rt.VoucherID, &rt.RefundCode, &rt.AmountMsat, &rt.RetryCount, &rt.ErrorMsg); err != nil {
+			return nil, err
+		}
+		txs = append(txs, rt)
+	}
+	return txs, rows.Err()
+}
+
 func (srv *Server) markRefundTxInFlight(id int64) error {
 	_, err := srv.db.Exec(
 		`UPDATE refund_txs SET in_flight = 1, updated_at = ? WHERE id = ?`,
@@ -970,11 +993,12 @@ func (srv *Server) markRefundTxPaid(id, netDbTxFee, actualFee int64, paymentHash
 	return err
 }
 
-// markRefundTxFailed records a definitive payment failure and resets in_flight so the
-// row can be retried. Only call this when the SDK returned a definitive error (no money sent).
+// markRefundTxFailed records a definitive payment failure, increments retry_count, and
+// resets in_flight. Only call this when the SDK returned a definitive error (no money sent).
+// Once retry_count reaches 3 the row is excluded from future payment attempts.
 func (srv *Server) markRefundTxFailed(id int64, errMsg string) error {
 	_, err := srv.db.Exec(
-		`UPDATE refund_txs SET in_flight = 0, error_msg = ?, updated_at = ? WHERE id = ?`,
+		`UPDATE refund_txs SET in_flight = 0, error_msg = ?, retry_count = retry_count + 1, updated_at = ? WHERE id = ?`,
 		errMsg, time.Now().Unix(), id,
 	)
 	return err

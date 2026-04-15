@@ -14,6 +14,8 @@ const dustThresholdMsat = 1000
 func (srv *Server) runRefundWorker() {
 	// Warn about any rows left in-flight from a previous crash.
 	srv.warnInFlightRefunds()
+	// Warn about any refund txs that have been abandoned after exceeding the retry limit.
+	srv.warnAbandonedRefunds()
 
 	// Run once on startup to catch any missed refunds.
 	srv.processExpiredRefunds()
@@ -363,6 +365,27 @@ func (srv *Server) processRegularRefunds() {
 		if err := dbTx.Commit(); err != nil {
 			slog.Error("refund worker: commit regular", "voucher_id", v.ID, "err", err)
 		}
+	}
+}
+
+// warnAbandonedRefunds logs a warning for any refund_txs that have exceeded the
+// maximum retry limit (3 attempts). These rows will not be retried automatically
+// and require manual intervention.
+func (srv *Server) warnAbandonedRefunds() {
+	abandoned, err := srv.getAbandonedRefundTxs()
+	if err != nil {
+		slog.Error("refund worker: check abandoned refund txs", "err", err)
+		return
+	}
+	for _, rt := range abandoned {
+		slog.Warn("refund worker: refund tx abandoned after max retries — manual intervention required",
+			"id", rt.ID,
+			"voucher_id", rt.VoucherID,
+			"refund_code", rt.RefundCode,
+			"amount_msat", rt.AmountMsat,
+			"retry_count", rt.RetryCount,
+			"last_error", rt.ErrorMsg,
+		)
 	}
 }
 

@@ -59,6 +59,7 @@ type RefundTx struct {
 	ActualFee       int64  `json:"actual_fee"`
 	Refunded        bool   `json:"refunded"`
 	InFlight        bool   `json:"in_flight"`
+	RetryCount      int    `json:"retry_count"`
 	PaymentHash     string `json:"payment_hash"`
 	PaymentPreimage string `json:"payment_preimage"`
 	ErrorMsg        string `json:"error_msg"`
