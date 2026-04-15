@@ -99,6 +99,8 @@ func migrateSchema(db *sql.DB) error {
 		`ALTER TABLE refund_txs ADD COLUMN in_flight        INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE refund_txs ADD COLUMN payment_hash     TEXT    NOT NULL DEFAULT ""`,
 		`ALTER TABLE refund_txs ADD COLUMN payment_preimage TEXT    NOT NULL DEFAULT ""`,
+		`ALTER TABLE refund_txs ADD COLUMN dust_msat        INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE vouchers ADD COLUMN regular_refund_immediate INTEGER NOT NULL DEFAULT 0`,
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil {
@@ -167,6 +169,7 @@ func initSchemaTables(db *sql.DB) error {
 			regular_refund_first_at        INTEGER NOT NULL DEFAULT 0,
 			regular_refund_interval_secs   INTEGER NOT NULL DEFAULT 0,
 			regular_refund_last_at         INTEGER NOT NULL DEFAULT 0,
+			regular_refund_immediate       INTEGER NOT NULL DEFAULT 0,
 			active                         INTEGER NOT NULL DEFAULT 1,
 			created_at                     INTEGER NOT NULL,
 			updated_at                     INTEGER NOT NULL DEFAULT 0
@@ -193,6 +196,7 @@ func initSchemaTables(db *sql.DB) error {
 			refund_code      TEXT    NOT NULL,
 			amount_msat      INTEGER NOT NULL,
 			db_tx_fee        INTEGER NOT NULL DEFAULT 0,
+			dust_msat        INTEGER NOT NULL DEFAULT 0,
 			actual_fee       INTEGER NOT NULL DEFAULT 0,
 			refunded         INTEGER NOT NULL DEFAULT 0,
 			in_flight        INTEGER NOT NULL DEFAULT 0,
@@ -724,6 +728,7 @@ func (srv *Server) getRegularRefundDueVouchers() ([]regularVoucher, error) {
 		FROM vouchers
 		WHERE active = 1
 		  AND regular_refund_first_at > 0
+		  AND COALESCE(regular_refund_immediate, 0) = 0
 		  AND (
 		    (absolute_expiry = 1 AND (created_at + refund_after_seconds) > ?)
 		    OR (absolute_expiry = 0 AND (updated_at = 0 OR (updated_at + refund_after_seconds) > ?))
@@ -799,6 +804,7 @@ func (srv *Server) nextRefundAt() (*time.Time, error) {
 		  END as next_at
 		  FROM vouchers
 		  WHERE active = 1 AND regular_refund_first_at > 0
+		    AND COALESCE(regular_refund_immediate, 0) = 0
 		) sub
 		WHERE next_at > ?`,
 		now,
@@ -814,11 +820,11 @@ func (srv *Server) nextRefundAt() (*time.Time, error) {
 	return &t, nil
 }
 
-func (srv *Server) insertRefundTx(dbTx *sql.Tx, voucherID int64, refundCode string, amountMsat, dbTxFee int64) (int64, error) {
+func (srv *Server) insertRefundTx(dbTx *sql.Tx, voucherID int64, refundCode string, amountMsat, dbTxFee, dustMsat int64) (int64, error) {
 	res, err := dbTx.Exec(
-		`INSERT INTO refund_txs (voucher_id, refund_code, amount_msat, db_tx_fee, created_at)
-		 VALUES (?, ?, ?, ?, ?)`,
-		voucherID, refundCode, amountMsat, dbTxFee, time.Now().Unix(),
+		`INSERT INTO refund_txs (voucher_id, refund_code, amount_msat, db_tx_fee, dust_msat, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		voucherID, refundCode, amountMsat, dbTxFee, dustMsat, time.Now().Unix(),
 	)
 	if err != nil {
 		return 0, err
@@ -923,18 +929,19 @@ func (srv *Server) getVoucherIDByPubKey(db dbQuerier, pubKey string) (int64, err
 	return id, nil
 }
 
-func (srv *Server) updateVoucher(dbTx *sql.Tx, id int64, refundAfterSeconds int64, singleUse, transfersOnly bool, maxRedeemMsat int64, uniqueRedemptions, absoluteExpiry bool, regularFirstAt, regularIntervalSecs int64) error {
+func (srv *Server) updateVoucher(dbTx *sql.Tx, id int64, refundAfterSeconds int64, singleUse, transfersOnly bool, maxRedeemMsat int64, uniqueRedemptions, absoluteExpiry bool, regularFirstAt, regularIntervalSecs int64, regularRefundImmediate bool) error {
 	_, err := dbTx.Exec(
 		`UPDATE vouchers SET
 			refund_after_seconds = ?, single_use = ?, transfers_only = ?,
 			max_redeem_msat = ?, unique_redemptions = ?, absolute_expiry = ?,
 			regular_refund_first_at = ?, regular_refund_interval_secs = ?,
+			regular_refund_immediate = ?,
 			regular_refund_last_at = 0,
 			active = 1, updated_at = ?
 		 WHERE id = ?`,
 		refundAfterSeconds, boolToInt(singleUse), boolToInt(transfersOnly),
 		maxRedeemMsat, boolToInt(uniqueRedemptions), boolToInt(absoluteExpiry),
-		regularFirstAt, regularIntervalSecs,
+		regularFirstAt, regularIntervalSecs, boolToInt(regularRefundImmediate),
 		time.Now().Unix(), id,
 	)
 	return err
@@ -952,7 +959,7 @@ func insertVoucherRefundCodes(db dbQuerier, voucherID int64, codes []VoucherRefu
 	return nil
 }
 
-func (srv *Server) getRefundCodesForVouchers(ids []int64) (map[int64][]VoucherRefundCode, error) {
+func (srv *Server) getRefundCodesForVouchers(db dbQuerier, ids []int64) (map[int64][]VoucherRefundCode, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -964,7 +971,7 @@ func (srv *Server) getRefundCodesForVouchers(ids []int64) (map[int64][]VoucherRe
 	}
 	query := `SELECT voucher_id, refund_code, share FROM voucher_refund_codes WHERE voucher_id IN (` +
 		strings.Join(placeholders, ",") + `)`
-	rows, err := srv.db.Query(query, args...)
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -993,6 +1000,7 @@ type LedgerStats struct {
 	VouchersBalanceMsat      int64   `json:"vouchers_balance_msat"`
 	FundTxsDustMsat          int64   `json:"fund_txs_dust_msat"`
 	RefundTxsDbTxFee         int64   `json:"refund_txs_db_tx_fee"`
+	RefundTxsDustMsat        int64   `json:"refund_txs_dust_msat"`
 	RefundTxsPendingMsat     int64   `json:"refund_txs_pending_msat"`
 	RedeemTxsDbTxFee         int64   `json:"redeem_txs_db_tx_fee"`
 	TransferTxsFeeMsat       int64   `json:"transfer_txs_fee_msat"`
@@ -1007,6 +1015,7 @@ func (srv *Server) getLedgerStats() (LedgerStats, error) {
 			(SELECT COALESCE(SUM(balance_msat), 0) FROM vouchers WHERE balance_msat > 0),
 			(SELECT COALESCE(SUM(dust_msat),    0) FROM fund_txs),
 			(SELECT COALESCE(SUM(db_tx_fee),    0) FROM refund_txs),
+			(SELECT COALESCE(SUM(dust_msat),    0) FROM refund_txs),
 			(SELECT COALESCE(SUM(amount_msat),  0) FROM refund_txs WHERE refunded = 0),
 			(SELECT COALESCE(SUM(db_tx_fee),    0) FROM redeem_txs),
 			(SELECT COALESCE(SUM(fee_msat),     0) FROM transfer_txs),
@@ -1023,6 +1032,7 @@ func (srv *Server) getLedgerStats() (LedgerStats, error) {
 		&s.VouchersBalanceMsat,
 		&s.FundTxsDustMsat,
 		&s.RefundTxsDbTxFee,
+		&s.RefundTxsDustMsat,
 		&s.RefundTxsPendingMsat,
 		&s.RedeemTxsDbTxFee,
 		&s.TransferTxsFeeMsat,

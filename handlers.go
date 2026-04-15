@@ -24,6 +24,7 @@ type voucherParams struct {
 		Code  string `json:"code"`
 		Share int64  `json:"share"`
 	} `json:"refund_codes"`
+	// Refund and expire after this many seconds of not being funded
 	RefundAfterSeconds int64 `json:"refund_after_seconds"`
 	SingleUse          bool  `json:"single_use"`
 	TransfersOnly      bool  `json:"transfers_only"`
@@ -31,6 +32,7 @@ type voucherParams struct {
 	UniqueRedemptions  bool  `json:"unique_redemptions"`
 	AbsoluteExpiry     bool  `json:"absolute_expiry"`
 	RegularRefund      *struct {
+		Immediate       bool  `json:"immediate"`
 		FirstRefundAt   int64 `json:"first_refund_at"`
 		IntervalSeconds int64 `json:"interval_seconds"`
 	} `json:"regular_refund"`
@@ -46,6 +48,7 @@ type parsedVoucherParams struct {
 	AbsoluteExpiry      bool
 	RegularFirstAt      int64
 	RegularIntervalSecs int64
+	RegularImmediate    bool
 }
 
 // parseVoucherParams validates and normalizes the shared voucher fields.
@@ -95,14 +98,23 @@ func (srv *Server) parseVoucherParams(p voucherParams) (parsedVoucherParams, int
 	out.AbsoluteExpiry = p.AbsoluteExpiry
 
 	if p.RegularRefund != nil {
-		if p.RegularRefund.FirstRefundAt <= 0 {
-			return out, http.StatusBadRequest, "regular_refund.first_refund_at must be a valid unix timestamp"
+		if p.RegularRefund.Immediate {
+			if p.RegularRefund.FirstRefundAt != 0 || p.RegularRefund.IntervalSeconds != 0 {
+				return out, http.StatusUnprocessableEntity, "regular_refund.first_refund_at and interval_seconds must not be set when regular_refund.immediate is true"
+			}
+			out.RegularImmediate = true
+			out.RegularFirstAt = 0
+			out.RegularIntervalSecs = 0
+		} else {
+			if p.RegularRefund.FirstRefundAt <= 0 {
+				return out, http.StatusBadRequest, "regular_refund.first_refund_at must be a valid unix timestamp"
+			}
+			if p.RegularRefund.IntervalSeconds <= 0 {
+				return out, http.StatusBadRequest, "regular_refund.interval_seconds must be greater than 0"
+			}
+			out.RegularFirstAt = p.RegularRefund.FirstRefundAt
+			out.RegularIntervalSecs = p.RegularRefund.IntervalSeconds
 		}
-		if p.RegularRefund.IntervalSeconds <= 0 {
-			return out, http.StatusBadRequest, "regular_refund.interval_seconds must be greater than 0"
-		}
-		out.RegularFirstAt = p.RegularRefund.FirstRefundAt
-		out.RegularIntervalSecs = p.RegularRefund.IntervalSeconds
 	}
 
 	return out, 0, ""
@@ -179,17 +191,18 @@ func (srv *Server) handleCreateVouchers(w http.ResponseWriter, r *http.Request) 
 
 	var vs []Voucher
 	for _, pubKey := range req.PubKeys {
-		voucher := srv.newVoucher(pubKey, batchID, p.RefundAfterSeconds, p.SingleUse, p.TransfersOnly, p.MaxRedeemMsat, p.UniqueRedemptions, p.AbsoluteExpiry, p.RegularFirstAt, p.RegularIntervalSecs)
+		voucher := srv.newVoucher(pubKey, batchID, p.RefundAfterSeconds, p.SingleUse, p.TransfersOnly, p.MaxRedeemMsat, p.UniqueRedemptions, p.AbsoluteExpiry, p.RegularFirstAt, p.RegularIntervalSecs, p.RegularImmediate)
 		// fund_key is a one-way SHA256 derivation from pub_key; safe to ignore error since pub_key is already validated hex.
 		voucher.FundKey, _ = secretToPubKey(pubKey)
 
 		result, err := dbTx.Exec(
-			`INSERT INTO vouchers (pub_key, fund_key, batch_id, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, absolute_expiry, regular_refund_first_at, regular_refund_interval_secs, regular_refund_last_at, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+			`INSERT INTO vouchers (pub_key, fund_key, batch_id, refund_after_seconds, single_use, transfers_only, max_redeem_msat, unique_redemptions, absolute_expiry, regular_refund_first_at, regular_refund_interval_secs, regular_refund_immediate, regular_refund_last_at, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
 			voucher.PubKey, voucher.FundKey, voucher.BatchID,
 			voucher.RefundAfterSeconds, boolToInt(voucher.SingleUse),
 			boolToInt(voucher.TransfersOnly), voucher.MaxRedeemMsat, boolToInt(voucher.UniqueRedemptions),
 			boolToInt(voucher.AbsoluteExpiry), voucher.RegularRefundFirstAt, voucher.RegularRefundIntervalSecs,
+			boolToInt(voucher.RegularRefundImmediate),
 			time.Now().Unix(),
 		)
 		if err != nil {
@@ -299,7 +312,7 @@ func (srv *Server) handleEditVoucher(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := srv.updateVoucher(dbTx, voucherID, p.RefundAfterSeconds, p.SingleUse, p.TransfersOnly,
-		p.MaxRedeemMsat, p.UniqueRedemptions, p.AbsoluteExpiry, p.RegularFirstAt, p.RegularIntervalSecs); err != nil {
+		p.MaxRedeemMsat, p.UniqueRedemptions, p.AbsoluteExpiry, p.RegularFirstAt, p.RegularIntervalSecs, p.RegularImmediate); err != nil {
 		slog.Error("edit: update voucher", "err", err)
 		lnurlError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -318,7 +331,7 @@ func (srv *Server) handleEditVoucher(w http.ResponseWriter, r *http.Request) {
 	}
 
 	v := srv.newVoucher(pubKey, "", p.RefundAfterSeconds, p.SingleUse, p.TransfersOnly,
-		p.MaxRedeemMsat, p.UniqueRedemptions, p.AbsoluteExpiry, p.RegularFirstAt, p.RegularIntervalSecs)
+		p.MaxRedeemMsat, p.UniqueRedemptions, p.AbsoluteExpiry, p.RegularFirstAt, p.RegularIntervalSecs, p.RegularImmediate)
 	v.FundKey, _ = secretToPubKey(pubKey)
 	v.Active = true
 
@@ -905,9 +918,14 @@ func (srv *Server) updateFundTxConfirmed(tx *FundTx) error {
 		return err
 	}
 
-	dust, err := srv.updateFundBalance(dbTx, tx)
+	dust, creditedIDs, err := srv.updateFundBalance(dbTx, tx)
 	if err != nil {
 		slog.Error("update voucher balance", "err", err)
+		return err
+	}
+
+	if err := srv.insertImmediateRegularRefunds(dbTx, creditedIDs); err != nil {
+		slog.Error("immediate regular refund", "err", err)
 		return err
 	}
 
@@ -918,38 +936,51 @@ func (srv *Server) updateFundTxConfirmed(tx *FundTx) error {
 		}
 	}
 
-	return dbTx.Commit()
+	if err := dbTx.Commit(); err != nil {
+		return err
+	}
+	select {
+	case srv.refundWake <- struct{}{}:
+	default:
+	}
+	return nil
 }
 
 // updateFundBalance credits voucher balances for a confirmed fund tx.
 // For batch payments, returns the msat remainder lost to per-sat rounding
-// (tracked in fund_txs.dust_msat). Always returns 0 for single-voucher payments.
-func (srv *Server) updateFundBalance(dbTx *sql.Tx, tx *FundTx) (int64, error) {
+// (tracked in fund_txs.dust_msat) and the voucher IDs that received a credit.
+// Dust is always 0 for single-voucher payments.
+func (srv *Server) updateFundBalance(dbTx *sql.Tx, tx *FundTx) (dust int64, creditedIDs []int64, err error) {
 	if tx.PubKey != "" {
 		v, err := srv.getVoucherByPubKey(dbTx, tx.PubKey)
 		if err != nil {
-			return 0, fmt.Errorf("get voucher by pubkey: %w", err)
+			return 0, nil, fmt.Errorf("get voucher by pubkey: %w", err)
 		}
-		return 0, srv.updateVoucherBalance(dbTx, v.ID, int64(tx.Msat)-tx.FeeMsat)
+		if err := srv.updateVoucherBalance(dbTx, v.ID, int64(tx.Msat)-tx.FeeMsat); err != nil {
+			return 0, nil, err
+		}
+		return 0, []int64{v.ID}, nil
 	}
 
 	vs, err := srv.getVouchersByBatchID(dbTx, tx.BatchID)
 	if err != nil {
-		return 0, fmt.Errorf("get vouchers by batch id: %w", err)
+		return 0, nil, fmt.Errorf("get vouchers by batch id: %w", err)
 	}
 
 	total := int64(tx.Msat) - tx.FeeMsat
 	share := total / int64(len(vs))
 	share = (share / 1000) * 1000
-	dust := total - share*int64(len(vs))
+	dust = total - share*int64(len(vs))
 
+	creditedIDs = make([]int64, 0, len(vs))
 	for _, v := range vs {
 		if err := srv.updateVoucherBalance(dbTx, v.ID, share); err != nil {
-			return 0, fmt.Errorf("update voucher balance: %w", err)
+			return 0, nil, fmt.Errorf("update voucher balance: %w", err)
 		}
+		creditedIDs = append(creditedIDs, v.ID)
 	}
 
-	return dust, nil
+	return dust, creditedIDs, nil
 }
 
 func (srv *Server) handleVoucherStatusBatch(w http.ResponseWriter, r *http.Request) {
@@ -1045,6 +1076,7 @@ func (srv *Server) handleLedger(w http.ResponseWriter, r *http.Request) {
 		"vouchers_balance_msat":        stats.VouchersBalanceMsat,
 		"fund_txs_dust_msat":           stats.FundTxsDustMsat,
 		"refund_txs_db_tx_fee":         stats.RefundTxsDbTxFee,
+		"refund_txs_dust_msat":         stats.RefundTxsDustMsat,
 		"refund_txs_pending_msat":      stats.RefundTxsPendingMsat,
 		"redeem_txs_db_tx_fee":         stats.RedeemTxsDbTxFee,
 		"transfer_txs_fee_msat":        stats.TransferTxsFeeMsat,

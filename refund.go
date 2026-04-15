@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"time"
@@ -66,6 +67,90 @@ func splitBalance(balanceMsat int64, codes []VoucherRefundCode) map[string]int64
 	return out
 }
 
+// insertImmediateRegularRefunds enqueues refund_tx rows for vouchers with
+// regular_refund_immediate set, draining balance in the same transaction as funding.
+func (srv *Server) insertImmediateRegularRefunds(dbTx *sql.Tx, voucherIDs []int64) error {
+	seen := make(map[int64]struct{}, len(voucherIDs))
+	var unique []int64
+	for _, id := range voucherIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+
+	var immediateIDs []int64
+	for _, id := range unique {
+		var imm int
+		var bal int64
+		if err := dbTx.QueryRow(
+			`SELECT regular_refund_immediate, balance_msat FROM vouchers WHERE id = ?`, id,
+		).Scan(&imm, &bal); err != nil {
+			return fmt.Errorf("voucher %d: %w", id, err)
+		}
+		if imm != 1 || bal == 0 {
+			continue
+		}
+		immediateIDs = append(immediateIDs, id)
+	}
+	if len(immediateIDs) == 0 {
+		return nil
+	}
+
+	codesMap, err := srv.getRefundCodesForVouchers(dbTx, immediateIDs)
+	if err != nil {
+		return fmt.Errorf("get refund codes for immediate regular: %w", err)
+	}
+
+	now := time.Now().Unix()
+	for _, id := range immediateIDs {
+		var currentBalance int64
+		if err := dbTx.QueryRow(`SELECT balance_msat FROM vouchers WHERE id = ?`, id).Scan(&currentBalance); err != nil {
+			return fmt.Errorf("re-read balance voucher %d: %w", id, err)
+		}
+		if currentBalance == 0 {
+			continue
+		}
+
+		codes := codesMap[id]
+		if len(codes) == 0 {
+			return fmt.Errorf("voucher %d: no refund codes for immediate regular refund", id)
+		}
+		splits := splitBalance(currentBalance, codes)
+
+		anyAboveMin := false
+		for _, amount := range splits {
+			if amount-srv.calculateRedeemFee(amount) >= 1000 {
+				anyAboveMin = true
+				break
+			}
+		}
+		if !anyAboveMin {
+			continue
+		}
+
+		for refundCode, amount := range splits {
+			dbTxFee := srv.calculateRedeemFee(amount)
+			netMsat := amount - dbTxFee
+			if netMsat < 1000 {
+				continue
+			}
+			dustMsat := netMsat % 1000
+			netMsat -= dustMsat
+			if _, err := srv.insertRefundTx(dbTx, id, refundCode, netMsat, dbTxFee, dustMsat); err != nil {
+				return fmt.Errorf("insert immediate regular refund tx voucher %d: %w", id, err)
+			}
+		}
+
+		entry := regularRefundEntry{ID: id, NewLastAt: now}
+		if err := markVouchersRegularRefunded(dbTx, []regularRefundEntry{entry}); err != nil {
+			return fmt.Errorf("mark voucher regular refunded %d: %w", id, err)
+		}
+	}
+	return nil
+}
+
 // nextRegularRefundAnchor returns the last past-due scheduled anchor time,
 // advancing by intervalSecs until the next occurrence would be in the future.
 // This pins the refund schedule to firstAt regardless of processing delays.
@@ -99,7 +184,7 @@ func (srv *Server) processExpiredRefunds() {
 	for i, v := range vouchers {
 		ids[i] = v.ID
 	}
-	refundCodesMap, err := srv.getRefundCodesForVouchers(ids)
+	refundCodesMap, err := srv.getRefundCodesForVouchers(srv.db, ids)
 	if err != nil {
 		slog.Error("refund worker: get refund codes", "err", err)
 		return
@@ -137,7 +222,9 @@ func (srv *Server) processExpiredRefunds() {
 			if netMsat < 1000 {
 				continue
 			}
-			if _, err := srv.insertRefundTx(dbTx, v.ID, refundCode, netMsat, dbTxFee); err != nil {
+			dustMsat := netMsat % 1000
+			netMsat -= dustMsat
+			if _, err := srv.insertRefundTx(dbTx, v.ID, refundCode, netMsat, dbTxFee, dustMsat); err != nil {
 				slog.Error("refund worker: insert refund tx", "voucher_id", v.ID, "refund_code", refundCode, "err", err)
 				dbTx.Rollback()
 				anyInserted = false
@@ -184,7 +271,7 @@ func (srv *Server) processRegularRefunds() {
 	for i, v := range vouchers {
 		ids[i] = v.ID
 	}
-	refundCodesMap, err := srv.getRefundCodesForVouchers(ids)
+	refundCodesMap, err := srv.getRefundCodesForVouchers(srv.db, ids)
 	if err != nil {
 		slog.Error("refund worker: get refund codes for regular", "err", err)
 		return
@@ -251,7 +338,9 @@ func (srv *Server) processRegularRefunds() {
 			if netMsat < 1000 {
 				continue
 			}
-			if _, err := srv.insertRefundTx(dbTx, v.ID, refundCode, netMsat, dbTxFee); err != nil {
+			dustMsat := netMsat % 1000
+			netMsat -= dustMsat
+			if _, err := srv.insertRefundTx(dbTx, v.ID, refundCode, netMsat, dbTxFee, dustMsat); err != nil {
 				slog.Error("refund worker: insert regular refund tx", "voucher_id", v.ID, "refund_code", refundCode, "err", err)
 				insertFailed = true
 				break

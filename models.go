@@ -45,8 +45,9 @@ type Voucher struct {
 	UniqueRedemptions  bool   `json:"unique_redemptions,omitempty"`
 	UpdatedAt                int64 `json:"updated_at,omitempty"`
 	AbsoluteExpiry           bool  `json:"absolute_expiry,omitempty"`
-	RegularRefundFirstAt     int64 `json:"regular_refund_first_at,omitempty"`
+	RegularRefundFirstAt      int64 `json:"regular_refund_first_at,omitempty"`
 	RegularRefundIntervalSecs int64 `json:"regular_refund_interval_seconds,omitempty"`
+	RegularRefundImmediate    bool  `json:"regular_refund_immediate,omitempty"`
 }
 
 type RefundTx struct {

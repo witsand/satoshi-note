@@ -16,7 +16,7 @@ func secretToPubKey(secret string) (string, error) {
 	return hex.EncodeToString(h[:len(b)]), nil
 }
 
-func (srv *Server) newVoucher(pubKey, batchID string, refundAfterSeconds int64, singleUse, transfersOnly bool, maxRedeemMsat int64, uniqueRedemptions bool, absoluteExpiry bool, regularRefundFirstAt, regularRefundIntervalSecs int64) *Voucher {
+func (srv *Server) newVoucher(pubKey, batchID string, refundAfterSeconds int64, singleUse, transfersOnly bool, maxRedeemMsat int64, uniqueRedemptions bool, absoluteExpiry bool, regularRefundFirstAt, regularRefundIntervalSecs int64, regularRefundImmediate bool) *Voucher {
 	return &Voucher{
 		PubKey:                    pubKey,
 		FundURLPrefix:             srv.cfg.baseURL + "/f/",
@@ -30,6 +30,7 @@ func (srv *Server) newVoucher(pubKey, batchID string, refundAfterSeconds int64, 
 		AbsoluteExpiry:            absoluteExpiry,
 		RegularRefundFirstAt:      regularRefundFirstAt,
 		RegularRefundIntervalSecs: regularRefundIntervalSecs,
+		RegularRefundImmediate:    regularRefundImmediate,
 		Active:                    true,
 	}
 }
