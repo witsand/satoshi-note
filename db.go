@@ -338,7 +338,6 @@ func initSchemaIndexes(db *sql.DB) error {
 	return nil
 }
 
-
 const redeemSessionWindowSecs = 1800 // 30-minute validity window for LNURL-withdraw k1 sessions
 
 // checkRedeemSession returns nil if the k1 session is valid (exists, unused, not expired).
