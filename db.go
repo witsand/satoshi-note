@@ -1088,12 +1088,19 @@ func boolToInt(b bool) int {
 type LedgerStats struct {
 	VouchersBalanceMsat      int64   `json:"vouchers_balance_msat"`
 	FundTxsDustMsat          int64   `json:"fund_txs_dust_msat"`
+	FundTxsFeeMsatConfirmed  int64   `json:"fund_txs_fee_msat_confirmed"`
 	RefundTxsDbTxFee         int64   `json:"refund_txs_db_tx_fee"`
 	RefundTxsDustMsat        int64   `json:"refund_txs_dust_msat"`
 	RefundTxsPendingMsat     int64   `json:"refund_txs_pending_msat"`
+	RefundTxsPendingOutMsat  int64   `json:"refund_txs_pending_out_msat"`
+	RefundFeesEarnedMsat     int64   `json:"refund_fees_earned_msat"`
 	RedeemTxsDbTxFee         int64   `json:"redeem_txs_db_tx_fee"`
+	RedeemTxsPendingOutMsat  int64   `json:"redeem_txs_pending_out_msat"`
+	RedeemFeesEarnedMsat     int64   `json:"redeem_fees_earned_msat"`
 	TransferTxsFeeMsat       int64   `json:"transfer_txs_fee_msat"`
 	TransferTxsDustMsat      int64   `json:"transfer_txs_dust_msat"`
+	DustRetainedMsat         int64   `json:"dust_retained_msat"`
+	FeesEarnedMsat           int64   `json:"fees_earned_msat"`
 	VouchersAvgSecsToExpiry  float64 `json:"vouchers_avg_secs_to_expiry"`
 	VouchersWithBalanceCount int64   `json:"vouchers_with_balance_count"`
 }
@@ -1103,29 +1110,48 @@ func (srv *Server) getLedgerStats() (LedgerStats, error) {
 		SELECT
 			(SELECT COALESCE(SUM(balance_msat), 0) FROM vouchers WHERE balance_msat > 0),
 			(SELECT COALESCE(SUM(dust_msat),    0) FROM fund_txs),
+			(SELECT COALESCE(SUM(fee_msat),     0) FROM fund_txs WHERE status = ?),
 			(SELECT COALESCE(SUM(db_tx_fee),    0) FROM refund_txs),
 			(SELECT COALESCE(SUM(dust_msat),    0) FROM refund_txs),
 			(SELECT COALESCE(SUM(amount_msat),  0) FROM refund_txs WHERE refunded = 0),
+			(SELECT COALESCE(SUM(amount_msat + db_tx_fee), 0) FROM refund_txs WHERE refunded = 0),
+			(SELECT COALESCE(SUM(db_tx_fee - actual_fee),  0) FROM refund_txs WHERE refunded = 1),
 			(SELECT COALESCE(SUM(db_tx_fee),    0) FROM redeem_txs),
+			(SELECT COALESCE(SUM(msat + db_tx_fee),        0) FROM redeem_txs WHERE status = ?),
+			(SELECT COALESCE(SUM(db_tx_fee - actual_ln_fee), 0) FROM redeem_txs WHERE status = ?),
 			(SELECT COALESCE(SUM(fee_msat),     0) FROM transfer_txs),
 			(SELECT COALESCE(SUM(dust_msat),    0) FROM transfer_txs),
+			(SELECT COALESCE(SUM(dust_msat),    0) FROM fund_txs)
+				+ (SELECT COALESCE(SUM(dust_msat), 0) FROM refund_txs)
+				+ (SELECT COALESCE(SUM(dust_msat), 0) FROM transfer_txs),
+			(SELECT COALESCE(SUM(fee_msat),     0) FROM fund_txs WHERE status = ?)
+				+ (SELECT COALESCE(SUM(fee_msat), 0) FROM transfer_txs)
+				+ (SELECT COALESCE(SUM(db_tx_fee - actual_ln_fee), 0) FROM redeem_txs WHERE status = ?)
+				+ (SELECT COALESCE(SUM(db_tx_fee - actual_fee), 0) FROM refund_txs WHERE refunded = 1),
 			(SELECT COALESCE(
 				CAST(SUM(balance_msat * (created_at + refund_after_seconds - ?)) AS REAL)
 				/ NULLIF(SUM(balance_msat), 0),
 				0
 			) FROM vouchers WHERE balance_msat > 0),
 			(SELECT COUNT(*) FROM vouchers WHERE balance_msat > 0)
-	`, time.Now().Unix())
+	`, TxConfirmed, TxPending, TxConfirmed, TxConfirmed, TxConfirmed, time.Now().Unix())
 	var s LedgerStats
 	err := row.Scan(
 		&s.VouchersBalanceMsat,
 		&s.FundTxsDustMsat,
+		&s.FundTxsFeeMsatConfirmed,
 		&s.RefundTxsDbTxFee,
 		&s.RefundTxsDustMsat,
 		&s.RefundTxsPendingMsat,
+		&s.RefundTxsPendingOutMsat,
+		&s.RefundFeesEarnedMsat,
 		&s.RedeemTxsDbTxFee,
+		&s.RedeemTxsPendingOutMsat,
+		&s.RedeemFeesEarnedMsat,
 		&s.TransferTxsFeeMsat,
 		&s.TransferTxsDustMsat,
+		&s.DustRetainedMsat,
+		&s.FeesEarnedMsat,
 		&s.VouchersAvgSecsToExpiry,
 		&s.VouchersWithBalanceCount,
 	)
