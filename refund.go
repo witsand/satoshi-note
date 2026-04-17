@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"time"
 
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
@@ -445,6 +446,7 @@ func (srv *Server) payRefund(rt RefundTx) error {
 	}
 
 	amountSats := uint64(rt.AmountMsat / 1000)
+	amount := new(big.Int).SetUint64(amountSats)
 	comment := "Voucher Refunds"
 
 	var commentPtr *string
@@ -458,7 +460,7 @@ func (srv *Server) payRefund(rt RefundTx) error {
 	}
 
 	prepResp, rawPrepErr := srv.ln.PrepareLnurlPay(spark.PrepareLnurlPayRequest{
-		AmountSats: amountSats,
+		Amount:     amount,
 		PayRequest: payRequest,
 		Comment:    commentPtr,
 	})
