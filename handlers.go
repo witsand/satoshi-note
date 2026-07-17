@@ -1128,8 +1128,18 @@ func (srv *Server) handleLedger(w http.ResponseWriter, r *http.Request) {
 }
 
 func (srv *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	// Fee schedule is published so clients (e.g. skattejag) can estimate the cost of a
+	// redeem/transfer up front and decide whether a payout is worth sending. The reference
+	// example fees are computed as max(min_fee, bps applied to the amount) — see
+	// calculateRedeemFee / calculateInternalFee.
 	writeJSON(w, http.StatusOK, map[string]any{
-		"min_fund_amount_msat": int64(1000),
-		"base_url":             srv.cfg.baseURL,
+		"min_fund_amount_msat":  int64(1000),
+		"max_fund_amount_msat":  srv.cfg.maxFundAmountMsat,
+		"base_url":              srv.cfg.baseURL,
+		"redeem_fee_bps":        srv.cfg.redeemFeeBPS,
+		"min_redeem_fee_msat":   srv.cfg.minRedeemFeeMsat,
+		"internal_fee_bps":      srv.cfg.internalFeeBPS,
+		"min_internal_fee_msat": srv.cfg.minInternalFeeMsat,
+		"fee_model":             "max(min_fee, amount - floor(amount/(1+bps/10000)))",
 	})
 }
