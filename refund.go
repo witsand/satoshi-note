@@ -195,7 +195,6 @@ func (srv *Server) processExpiredRefunds() {
 		return
 	}
 
-
 	// Process each voucher independently: one refund_tx per voucher per refund code split.
 	for _, v := range vouchers {
 		codes := refundCodesMap[v.ID]
@@ -211,9 +210,9 @@ func (srv *Server) processExpiredRefunds() {
 		// value would produce refund_txs for more than the voucher actually holds.
 		var currentBalance int64
 		if err := dbTx.QueryRow(
-			`SELECT balance_msat FROM vouchers WHERE id = ? AND active = 1 AND balance_msat > 0`, v.ID,
+			`SELECT balance_msat FROM vouchers WHERE id = ? AND balance_msat > 0`, v.ID,
 		).Scan(&currentBalance); err != nil {
-			// Balance is 0 or voucher already inactive — nothing to refund.
+			// Balance is 0 — nothing to refund.
 			dbTx.Rollback()
 			continue
 		}
@@ -221,6 +220,7 @@ func (srv *Server) processExpiredRefunds() {
 		splits := splitBalance(currentBalance, codes)
 
 		anyInserted := false
+		insertFailed := false
 		for refundCode, amount := range splits {
 			dbTxFee := srv.calculateRedeemFee(amount)
 			netMsat := amount - dbTxFee
@@ -232,15 +232,27 @@ func (srv *Server) processExpiredRefunds() {
 			if _, err := srv.insertRefundTx(dbTx, v.ID, refundCode, netMsat, dbTxFee, dustMsat); err != nil {
 				slog.Error("refund worker: insert refund tx", "voucher_id", v.ID, "refund_code", refundCode, "err", err)
 				dbTx.Rollback()
-				anyInserted = false
+				insertFailed = true
 				break
 			}
 			anyInserted = true
 		}
+		if insertFailed {
+			continue
+		}
 
 		if !anyInserted {
-			dbTx.Rollback()
-			continue
+			// Entire leftover is below the min payout. Keep it as dust so the
+			// voucher is zeroed and the identity still closes.
+			refundCode := ""
+			if len(codes) > 0 {
+				refundCode = codes[0].RefundCode
+			}
+			if err := srv.insertRetainedDustRefundTx(dbTx, v.ID, refundCode, currentBalance); err != nil {
+				slog.Error("refund worker: insert retained dust refund tx", "voucher_id", v.ID, "err", err)
+				dbTx.Rollback()
+				continue
+			}
 		}
 
 		if err := srv.markVouchersRefunded(dbTx, []int64{v.ID}); err != nil {
@@ -281,7 +293,6 @@ func (srv *Server) processRegularRefunds() {
 		slog.Error("refund worker: get refund codes for regular", "err", err)
 		return
 	}
-
 
 	// Process each voucher independently: one refund_tx per voucher per refund code split.
 	for _, v := range vouchers {

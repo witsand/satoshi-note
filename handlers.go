@@ -1087,44 +1087,15 @@ func (srv *Server) handleLedger(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stats, err := srv.getLedgerStats()
+	stmt, err := srv.getLedgerStats()
 	if err != nil {
 		slog.Error("get ledger stats", "err", err)
 		lnurlError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
-	walletMsat := int64(infoResp.BalanceSats) * 1000
-	imbalanceMsat := walletMsat -
-		stats.VouchersBalanceMsat -
-		stats.RefundTxsPendingOutMsat -
-		stats.RedeemTxsPendingOutMsat -
-		stats.FeesEarnedMsat -
-		stats.DustRetainedMsat
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"sdk_balance_msat":             walletMsat,
-		"vouchers_balance_msat":        stats.VouchersBalanceMsat,
-		"fund_txs_dust_msat":           stats.FundTxsDustMsat,
-		"fund_txs_fee_msat_confirmed":  stats.FundTxsFeeMsatConfirmed,
-		"refund_txs_db_tx_fee":         stats.RefundTxsDbTxFee,
-		"refund_txs_dust_msat":         stats.RefundTxsDustMsat,
-		"refund_txs_pending_msat":      stats.RefundTxsPendingMsat,
-		"refund_txs_pending_out_msat":  stats.RefundTxsPendingOutMsat,
-		"refund_fees_earned_msat":      stats.RefundFeesEarnedMsat,
-		"redeem_txs_db_tx_fee":         stats.RedeemTxsDbTxFee,
-		"redeem_txs_pending_out_msat":  stats.RedeemTxsPendingOutMsat,
-		"redeem_fees_earned_msat":      stats.RedeemFeesEarnedMsat,
-		"transfer_txs_fee_msat":        stats.TransferTxsFeeMsat,
-		"transfer_txs_dust_msat":       stats.TransferTxsDustMsat,
-		"dust_retained_msat":           stats.DustRetainedMsat,
-		"fees_earned_msat":             stats.FeesEarnedMsat,
-		"imbalance_msat":               imbalanceMsat,
-		"balances":                     imbalanceMsat == 0,
-		"health":                       walletMsat - stats.VouchersBalanceMsat - stats.RefundTxsPendingMsat,
-		"vouchers_avg_hours_to_expiry": stats.VouchersAvgSecsToExpiry / 60 / 60,
-		"vouchers_with_balance_count":  stats.VouchersWithBalanceCount,
-	})
+	stmt.finalize(int64(infoResp.BalanceSats) * 1000)
+	writeJSON(w, http.StatusOK, stmt)
 }
 
 func (srv *Server) handleConfig(w http.ResponseWriter, r *http.Request) {

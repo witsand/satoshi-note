@@ -754,8 +754,7 @@ func (srv *Server) getExpiredVouchersWithBalance() ([]Voucher, error) {
 	rows, err := srv.db.Query(`
 		SELECT id, balance_msat
 		FROM vouchers
-		WHERE active = 1
-		  AND balance_msat > 0
+		WHERE balance_msat > 0
 		  AND (
 		    (absolute_expiry = 1 AND (created_at + refund_after_seconds) <= ?)
 		    OR
@@ -859,7 +858,7 @@ func (srv *Server) nextRefundAt() (*time.Time, error) {
 		    ELSE updated_at + refund_after_seconds
 		  END as next_at
 		  FROM vouchers
-		  WHERE active = 1 AND balance_msat > 0
+		  WHERE balance_msat > 0
 		    AND (absolute_expiry = 1 OR updated_at > 0)
 
 		  UNION ALL
@@ -896,6 +895,18 @@ func (srv *Server) insertRefundTx(dbTx *sql.Tx, voucherID int64, refundCode stri
 		return 0, err
 	}
 	return res.LastInsertId()
+}
+
+// insertRetainedDustRefundTx records a below-min leftover as dust. The row is
+// refunded=1 with amount 0 so the payment worker will not try to send it.
+func (srv *Server) insertRetainedDustRefundTx(dbTx *sql.Tx, voucherID int64, refundCode string, dustMsat int64) error {
+	now := time.Now().Unix()
+	_, err := dbTx.Exec(
+		`INSERT INTO refund_txs (voucher_id, refund_code, amount_msat, db_tx_fee, dust_msat, refunded, created_at, updated_at)
+		 VALUES (?, ?, 0, 0, ?, 1, ?, ?)`,
+		voucherID, refundCode, dustMsat, now, now,
+	)
+	return err
 }
 
 func (srv *Server) markVouchersRefunded(dbTx *sql.Tx, ids []int64) error {
@@ -1085,77 +1096,351 @@ func boolToInt(b bool) int {
 	return 0
 }
 
-type LedgerStats struct {
-	VouchersBalanceMsat      int64   `json:"vouchers_balance_msat"`
-	FundTxsDustMsat          int64   `json:"fund_txs_dust_msat"`
-	FundTxsFeeMsatConfirmed  int64   `json:"fund_txs_fee_msat_confirmed"`
-	RefundTxsDbTxFee         int64   `json:"refund_txs_db_tx_fee"`
-	RefundTxsDustMsat        int64   `json:"refund_txs_dust_msat"`
-	RefundTxsPendingMsat     int64   `json:"refund_txs_pending_msat"`
-	RefundTxsPendingOutMsat  int64   `json:"refund_txs_pending_out_msat"`
-	RefundFeesEarnedMsat     int64   `json:"refund_fees_earned_msat"`
-	RedeemTxsDbTxFee         int64   `json:"redeem_txs_db_tx_fee"`
-	RedeemTxsPendingOutMsat  int64   `json:"redeem_txs_pending_out_msat"`
-	RedeemFeesEarnedMsat     int64   `json:"redeem_fees_earned_msat"`
-	TransferTxsFeeMsat       int64   `json:"transfer_txs_fee_msat"`
-	TransferTxsDustMsat      int64   `json:"transfer_txs_dust_msat"`
-	DustRetainedMsat         int64   `json:"dust_retained_msat"`
-	FeesEarnedMsat           int64   `json:"fees_earned_msat"`
-	VouchersAvgSecsToExpiry  float64 `json:"vouchers_avg_secs_to_expiry"`
-	VouchersWithBalanceCount int64   `json:"vouchers_with_balance_count"`
+// LedgerStatement is the GET /ledger funds statement: Spark wallet vs DB books.
+type LedgerStatement struct {
+	WalletMsat    int64 `json:"wallet_msat"`
+	ExplainedMsat int64 `json:"explained_msat"`
+	ImbalanceMsat int64 `json:"imbalance_msat"`
+	Balanced      bool  `json:"balanced"`
+
+	Liabilities ledgerLiabilities   `json:"liabilities"`
+	Equity      ledgerEquity        `json:"equity"`
+	Activity    ledgerActivity      `json:"activity"`
+	Vouchers    ledgerVoucherCounts `json:"vouchers"`
 }
 
-func (srv *Server) getLedgerStats() (LedgerStats, error) {
+type ledgerLiabilities struct {
+	Vouchers       ledgerVoucherLiability `json:"vouchers"`
+	Refunds        ledgerRefundLiability  `json:"refunds"`
+	RedeemsPending ledgerRedeemPending    `json:"redeems_pending"`
+}
+
+type ledgerVoucherLiability struct {
+	Active   ledgerActiveVouchers   `json:"active"`
+	Inactive ledgerInactiveVouchers `json:"inactive"`
+}
+
+type ledgerActiveVouchers struct {
+	Count           int64   `json:"count"`
+	BalanceMsat     int64   `json:"balance_msat"`
+	AvgSecsToExpiry float64 `json:"avg_secs_to_expiry"`
+}
+
+type ledgerInactiveVouchers struct {
+	Count       int64 `json:"count"`
+	BalanceMsat int64 `json:"balance_msat"`
+}
+
+type ledgerHeldBucket struct {
+	Count           int64 `json:"count"`
+	AmountMsat      int64 `json:"amount_msat"`
+	FeeReservedMsat int64 `json:"fee_reserved_msat"`
+}
+
+type ledgerRefundLiability struct {
+	Pending   ledgerHeldBucket `json:"pending"`
+	InFlight  ledgerHeldBucket `json:"in_flight"`
+	Abandoned ledgerHeldBucket `json:"abandoned"`
+	HeldMsat  int64            `json:"held_msat"`
+}
+
+type ledgerRedeemPending struct {
+	Count           int64 `json:"count"`
+	AmountMsat      int64 `json:"amount_msat"`
+	FeeReservedMsat int64 `json:"fee_reserved_msat"`
+	HeldMsat        int64 `json:"held_msat"`
+}
+
+type ledgerEquity struct {
+	Fees ledgerFees `json:"fees"`
+	Dust ledgerDust `json:"dust"`
+}
+
+type ledgerFees struct {
+	FundReceiveMsat int64 `json:"fund_receive_msat"`
+	TransferMsat    int64 `json:"transfer_msat"`
+	RedeemNetMsat   int64 `json:"redeem_net_msat"`
+	RefundNetMsat   int64 `json:"refund_net_msat"`
+	TotalMsat       int64 `json:"total_msat"`
+}
+
+type ledgerDust struct {
+	FundMsat     int64 `json:"fund_msat"`
+	TransferMsat int64 `json:"transfer_msat"`
+	RefundMsat   int64 `json:"refund_msat"`
+	TotalMsat    int64 `json:"total_msat"`
+}
+
+type ledgerActivity struct {
+	FundTxs     ledgerFundActivity     `json:"fund_txs"`
+	RedeemTxs   ledgerRedeemActivity   `json:"redeem_txs"`
+	RefundTxs   ledgerRefundActivity   `json:"refund_txs"`
+	TransferTxs ledgerTransferActivity `json:"transfer_txs"`
+}
+
+type ledgerFundActivity struct {
+	Pending   ledgerCountMsat     `json:"pending"`
+	Confirmed ledgerFundConfirmed `json:"confirmed"`
+}
+
+type ledgerCountMsat struct {
+	Count int64 `json:"count"`
+	Msat  int64 `json:"msat"`
+}
+
+type ledgerFundConfirmed struct {
+	Count    int64 `json:"count"`
+	Msat     int64 `json:"msat"`
+	FeeMsat  int64 `json:"fee_msat"`
+	DustMsat int64 `json:"dust_msat"`
+}
+
+type ledgerRedeemActivity struct {
+	Pending   ledgerRedeemPendingAct `json:"pending"`
+	Confirmed ledgerRedeemConfirmed  `json:"confirmed"`
+	Failed    ledgerCountMsat        `json:"failed"`
+}
+
+type ledgerRedeemPendingAct struct {
+	Count           int64 `json:"count"`
+	Msat            int64 `json:"msat"`
+	FeeReservedMsat int64 `json:"fee_reserved_msat"`
+}
+
+type ledgerRedeemConfirmed struct {
+	Count          int64 `json:"count"`
+	Msat           int64 `json:"msat"`
+	ServiceFeeMsat int64 `json:"service_fee_msat"`
+	LnFeeMsat      int64 `json:"ln_fee_msat"`
+}
+
+type ledgerRefundActivity struct {
+	Paid ledgerRefundPaid `json:"paid"`
+}
+
+type ledgerRefundPaid struct {
+	Count          int64 `json:"count"`
+	AmountMsat     int64 `json:"amount_msat"`
+	ServiceFeeMsat int64 `json:"service_fee_msat"`
+	LnFeeMsat      int64 `json:"ln_fee_msat"`
+}
+
+type ledgerTransferActivity struct {
+	Count      int64 `json:"count"`
+	AmountMsat int64 `json:"amount_msat"`
+	FeeMsat    int64 `json:"fee_msat"`
+	DustMsat   int64 `json:"dust_msat"`
+}
+
+type ledgerVoucherCounts struct {
+	Total               int64 `json:"total"`
+	Active              int64 `json:"active"`
+	WithBalance         int64 `json:"with_balance"`
+	ExpiredWithBalance  int64 `json:"expired_with_balance"`
+	Inactive            int64 `json:"inactive"`
+	InactiveWithBalance int64 `json:"inactive_with_balance"`
+}
+
+func heldMsat(b ledgerHeldBucket) int64 {
+	return b.AmountMsat + b.FeeReservedMsat
+}
+
+// finalize fills derived totals and the wallet identity.
+// explained = active and inactive voucher balances + unpaid refunds (amount+fee)
+// + pending redeems (amount+fee) + fees + dust.
+func (s *LedgerStatement) finalize(walletMsat int64) {
+	s.WalletMsat = walletMsat
+
+	s.Vouchers.InactiveWithBalance = s.Liabilities.Vouchers.Inactive.Count
+	s.Liabilities.Refunds.HeldMsat = heldMsat(s.Liabilities.Refunds.Pending) +
+		heldMsat(s.Liabilities.Refunds.InFlight) +
+		heldMsat(s.Liabilities.Refunds.Abandoned)
+	s.Liabilities.RedeemsPending.HeldMsat = s.Liabilities.RedeemsPending.AmountMsat +
+		s.Liabilities.RedeemsPending.FeeReservedMsat
+
+	s.Activity.RedeemTxs.Pending.Count = s.Liabilities.RedeemsPending.Count
+	s.Activity.RedeemTxs.Pending.Msat = s.Liabilities.RedeemsPending.AmountMsat
+	s.Activity.RedeemTxs.Pending.FeeReservedMsat = s.Liabilities.RedeemsPending.FeeReservedMsat
+
+	s.Equity.Fees.FundReceiveMsat = s.Activity.FundTxs.Confirmed.FeeMsat
+	s.Equity.Fees.TransferMsat = s.Activity.TransferTxs.FeeMsat
+	s.Equity.Fees.RedeemNetMsat = s.Activity.RedeemTxs.Confirmed.ServiceFeeMsat - s.Activity.RedeemTxs.Confirmed.LnFeeMsat
+	s.Equity.Fees.RefundNetMsat = s.Activity.RefundTxs.Paid.ServiceFeeMsat - s.Activity.RefundTxs.Paid.LnFeeMsat
+	s.Equity.Fees.TotalMsat = s.Equity.Fees.FundReceiveMsat +
+		s.Equity.Fees.TransferMsat +
+		s.Equity.Fees.RedeemNetMsat +
+		s.Equity.Fees.RefundNetMsat
+
+	s.Equity.Dust.FundMsat = s.Activity.FundTxs.Confirmed.DustMsat
+	s.Equity.Dust.TransferMsat = s.Activity.TransferTxs.DustMsat
+	s.Equity.Dust.TotalMsat = s.Equity.Dust.FundMsat + s.Equity.Dust.TransferMsat + s.Equity.Dust.RefundMsat
+
+	s.ExplainedMsat = s.Liabilities.Vouchers.Active.BalanceMsat +
+		s.Liabilities.Vouchers.Inactive.BalanceMsat +
+		s.Liabilities.Refunds.HeldMsat +
+		s.Liabilities.RedeemsPending.HeldMsat +
+		s.Equity.Fees.TotalMsat +
+		s.Equity.Dust.TotalMsat
+	s.ImbalanceMsat = s.WalletMsat - s.ExplainedMsat
+	s.Balanced = s.ImbalanceMsat == 0
+}
+
+func (srv *Server) getLedgerStats() (LedgerStatement, error) {
 	row := srv.db.QueryRow(`
+		WITH
+			now(ts) AS (SELECT ?),
+			st(pending, confirmed, failed) AS (SELECT ?, ?, ?)
 		SELECT
-			(SELECT COALESCE(SUM(balance_msat), 0) FROM vouchers WHERE balance_msat > 0),
-			(SELECT COALESCE(SUM(dust_msat),    0) FROM fund_txs),
-			(SELECT COALESCE(SUM(fee_msat),     0) FROM fund_txs WHERE status = ?),
-			(SELECT COALESCE(SUM(db_tx_fee),    0) FROM refund_txs),
-			(SELECT COALESCE(SUM(dust_msat),    0) FROM refund_txs),
-			(SELECT COALESCE(SUM(amount_msat),  0) FROM refund_txs WHERE refunded = 0),
-			(SELECT COALESCE(SUM(amount_msat + db_tx_fee), 0) FROM refund_txs WHERE refunded = 0),
-			(SELECT COALESCE(SUM(db_tx_fee - actual_fee),  0) FROM refund_txs WHERE refunded = 1),
-			(SELECT COALESCE(SUM(db_tx_fee),    0) FROM redeem_txs),
-			(SELECT COALESCE(SUM(msat + db_tx_fee),        0) FROM redeem_txs WHERE status = ?),
-			(SELECT COALESCE(SUM(db_tx_fee - actual_ln_fee), 0) FROM redeem_txs WHERE status = ?),
-			(SELECT COALESCE(SUM(fee_msat),     0) FROM transfer_txs),
-			(SELECT COALESCE(SUM(dust_msat),    0) FROM transfer_txs),
-			(SELECT COALESCE(SUM(dust_msat),    0) FROM fund_txs)
-				+ (SELECT COALESCE(SUM(dust_msat), 0) FROM refund_txs)
-				+ (SELECT COALESCE(SUM(dust_msat), 0) FROM transfer_txs),
-			(SELECT COALESCE(SUM(fee_msat),     0) FROM fund_txs WHERE status = ?)
-				+ (SELECT COALESCE(SUM(fee_msat), 0) FROM transfer_txs)
-				+ (SELECT COALESCE(SUM(db_tx_fee - actual_ln_fee), 0) FROM redeem_txs WHERE status = ?)
-				+ (SELECT COALESCE(SUM(db_tx_fee - actual_fee), 0) FROM refund_txs WHERE refunded = 1),
-			(SELECT COALESCE(
-				CAST(SUM(balance_msat * (created_at + refund_after_seconds - ?)) AS REAL)
-				/ NULLIF(SUM(balance_msat), 0),
-				0
-			) FROM vouchers WHERE balance_msat > 0),
-			(SELECT COUNT(*) FROM vouchers WHERE balance_msat > 0)
-	`, TxConfirmed, TxPending, TxConfirmed, TxConfirmed, TxConfirmed, time.Now().Unix())
-	var s LedgerStats
+			v.total, v.active, v.inactive, v.with_balance, v.expired_with_balance,
+			v.active_bal_count, v.active_balance, v.avg_secs,
+			v.inactive_bal_count, v.inactive_balance,
+			rf.pending_count, rf.pending_amount, rf.pending_fee,
+			rf.in_flight_count, rf.in_flight_amount, rf.in_flight_fee,
+			rf.abandoned_count, rf.abandoned_amount, rf.abandoned_fee,
+			rf.paid_count, rf.paid_amount, rf.paid_service_fee, rf.paid_ln_fee, rf.dust,
+			rd.pending_count, rd.pending_msat, rd.pending_fee,
+			rd.confirmed_count, rd.confirmed_msat, rd.confirmed_service_fee, rd.confirmed_ln_fee,
+			rd.failed_count, rd.failed_msat,
+			f.pending_count, f.pending_msat,
+			f.confirmed_count, f.confirmed_msat, f.confirmed_fee, f.dust,
+			t.n, t.amount, t.fee, t.dust
+		FROM
+			(
+				SELECT
+					COUNT(*) AS total,
+					COALESCE(SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END), 0) AS active,
+					COALESCE(SUM(CASE WHEN active = 0 THEN 1 ELSE 0 END), 0) AS inactive,
+					COALESCE(SUM(CASE WHEN balance_msat > 0 THEN 1 ELSE 0 END), 0) AS with_balance,
+					COALESCE(SUM(CASE
+						WHEN active = 1 AND balance_msat > 0 AND (
+							(absolute_expiry = 1 AND (created_at + refund_after_seconds) <= (SELECT ts FROM now))
+							OR (absolute_expiry = 0 AND updated_at > 0 AND (updated_at + refund_after_seconds) <= (SELECT ts FROM now))
+						) THEN 1 ELSE 0
+					END), 0) AS expired_with_balance,
+					COALESCE(SUM(CASE WHEN active = 1 AND balance_msat > 0 THEN 1 ELSE 0 END), 0) AS active_bal_count,
+					COALESCE(SUM(CASE WHEN active = 1 AND balance_msat > 0 THEN balance_msat ELSE 0 END), 0) AS active_balance,
+					COALESCE(
+						CAST(SUM(CASE
+							WHEN active = 1 AND balance_msat > 0 AND (absolute_expiry = 1 OR updated_at > 0) THEN
+								balance_msat * (
+									CASE WHEN absolute_expiry = 1
+										THEN created_at + refund_after_seconds
+										ELSE updated_at + refund_after_seconds
+									END - (SELECT ts FROM now)
+								)
+							ELSE 0
+						END) AS REAL)
+						/ NULLIF(SUM(CASE
+							WHEN active = 1 AND balance_msat > 0 AND (absolute_expiry = 1 OR updated_at > 0) THEN balance_msat
+							ELSE 0
+						END), 0),
+						0
+					) AS avg_secs,
+					COALESCE(SUM(CASE WHEN active = 0 AND balance_msat > 0 THEN 1 ELSE 0 END), 0) AS inactive_bal_count,
+					COALESCE(SUM(CASE WHEN active = 0 AND balance_msat > 0 THEN balance_msat ELSE 0 END), 0) AS inactive_balance
+				FROM vouchers
+			) v,
+			(
+				SELECT
+					COALESCE(SUM(CASE WHEN refunded = 0 AND in_flight = 0 AND retry_count < 3 THEN 1 ELSE 0 END), 0) AS pending_count,
+					COALESCE(SUM(CASE WHEN refunded = 0 AND in_flight = 0 AND retry_count < 3 THEN amount_msat ELSE 0 END), 0) AS pending_amount,
+					COALESCE(SUM(CASE WHEN refunded = 0 AND in_flight = 0 AND retry_count < 3 THEN db_tx_fee ELSE 0 END), 0) AS pending_fee,
+					COALESCE(SUM(CASE WHEN refunded = 0 AND in_flight = 1 THEN 1 ELSE 0 END), 0) AS in_flight_count,
+					COALESCE(SUM(CASE WHEN refunded = 0 AND in_flight = 1 THEN amount_msat ELSE 0 END), 0) AS in_flight_amount,
+					COALESCE(SUM(CASE WHEN refunded = 0 AND in_flight = 1 THEN db_tx_fee ELSE 0 END), 0) AS in_flight_fee,
+					COALESCE(SUM(CASE WHEN refunded = 0 AND in_flight = 0 AND retry_count >= 3 THEN 1 ELSE 0 END), 0) AS abandoned_count,
+					COALESCE(SUM(CASE WHEN refunded = 0 AND in_flight = 0 AND retry_count >= 3 THEN amount_msat ELSE 0 END), 0) AS abandoned_amount,
+					COALESCE(SUM(CASE WHEN refunded = 0 AND in_flight = 0 AND retry_count >= 3 THEN db_tx_fee ELSE 0 END), 0) AS abandoned_fee,
+					COALESCE(SUM(CASE WHEN refunded = 1 THEN 1 ELSE 0 END), 0) AS paid_count,
+					COALESCE(SUM(CASE WHEN refunded = 1 THEN amount_msat ELSE 0 END), 0) AS paid_amount,
+					COALESCE(SUM(CASE WHEN refunded = 1 THEN db_tx_fee + actual_fee ELSE 0 END), 0) AS paid_service_fee,
+					COALESCE(SUM(CASE WHEN refunded = 1 THEN actual_fee ELSE 0 END), 0) AS paid_ln_fee,
+					COALESCE(SUM(dust_msat), 0) AS dust
+				FROM refund_txs
+			) rf,
+			(
+				SELECT
+					COALESCE(SUM(CASE WHEN status = (SELECT pending FROM st) THEN 1 ELSE 0 END), 0) AS pending_count,
+					COALESCE(SUM(CASE WHEN status = (SELECT pending FROM st) THEN msat ELSE 0 END), 0) AS pending_msat,
+					COALESCE(SUM(CASE WHEN status = (SELECT pending FROM st) THEN ln_fee ELSE 0 END), 0) AS pending_fee,
+					COALESCE(SUM(CASE WHEN status = (SELECT confirmed FROM st) THEN 1 ELSE 0 END), 0) AS confirmed_count,
+					COALESCE(SUM(CASE WHEN status = (SELECT confirmed FROM st) THEN msat ELSE 0 END), 0) AS confirmed_msat,
+					COALESCE(SUM(CASE WHEN status = (SELECT confirmed FROM st) THEN ln_fee ELSE 0 END), 0) AS confirmed_service_fee,
+					COALESCE(SUM(CASE WHEN status = (SELECT confirmed FROM st) THEN actual_ln_fee ELSE 0 END), 0) AS confirmed_ln_fee,
+					COALESCE(SUM(CASE WHEN status = (SELECT failed FROM st) THEN 1 ELSE 0 END), 0) AS failed_count,
+					COALESCE(SUM(CASE WHEN status = (SELECT failed FROM st) THEN msat ELSE 0 END), 0) AS failed_msat
+				FROM redeem_txs
+			) rd,
+			(
+				SELECT
+					COALESCE(SUM(CASE WHEN status = (SELECT pending FROM st) THEN 1 ELSE 0 END), 0) AS pending_count,
+					COALESCE(SUM(CASE WHEN status = (SELECT pending FROM st) THEN msat ELSE 0 END), 0) AS pending_msat,
+					COALESCE(SUM(CASE WHEN status = (SELECT confirmed FROM st) THEN 1 ELSE 0 END), 0) AS confirmed_count,
+					COALESCE(SUM(CASE WHEN status = (SELECT confirmed FROM st) THEN msat ELSE 0 END), 0) AS confirmed_msat,
+					COALESCE(SUM(CASE WHEN status = (SELECT confirmed FROM st) THEN fee_msat ELSE 0 END), 0) AS confirmed_fee,
+					COALESCE(SUM(dust_msat), 0) AS dust
+				FROM fund_txs
+			) f,
+			(
+				SELECT
+					COUNT(*) AS n,
+					COALESCE(SUM(amount_msat), 0) AS amount,
+					COALESCE(SUM(fee_msat), 0) AS fee,
+					COALESCE(SUM(dust_msat), 0) AS dust
+				FROM transfer_txs
+			) t
+	`, time.Now().Unix(), TxPending, TxConfirmed, TxFailed)
+
+	var s LedgerStatement
 	err := row.Scan(
-		&s.VouchersBalanceMsat,
-		&s.FundTxsDustMsat,
-		&s.FundTxsFeeMsatConfirmed,
-		&s.RefundTxsDbTxFee,
-		&s.RefundTxsDustMsat,
-		&s.RefundTxsPendingMsat,
-		&s.RefundTxsPendingOutMsat,
-		&s.RefundFeesEarnedMsat,
-		&s.RedeemTxsDbTxFee,
-		&s.RedeemTxsPendingOutMsat,
-		&s.RedeemFeesEarnedMsat,
-		&s.TransferTxsFeeMsat,
-		&s.TransferTxsDustMsat,
-		&s.DustRetainedMsat,
-		&s.FeesEarnedMsat,
-		&s.VouchersAvgSecsToExpiry,
-		&s.VouchersWithBalanceCount,
+		&s.Vouchers.Total,
+		&s.Vouchers.Active,
+		&s.Vouchers.Inactive,
+		&s.Vouchers.WithBalance,
+		&s.Vouchers.ExpiredWithBalance,
+		&s.Liabilities.Vouchers.Active.Count,
+		&s.Liabilities.Vouchers.Active.BalanceMsat,
+		&s.Liabilities.Vouchers.Active.AvgSecsToExpiry,
+		&s.Liabilities.Vouchers.Inactive.Count,
+		&s.Liabilities.Vouchers.Inactive.BalanceMsat,
+		&s.Liabilities.Refunds.Pending.Count,
+		&s.Liabilities.Refunds.Pending.AmountMsat,
+		&s.Liabilities.Refunds.Pending.FeeReservedMsat,
+		&s.Liabilities.Refunds.InFlight.Count,
+		&s.Liabilities.Refunds.InFlight.AmountMsat,
+		&s.Liabilities.Refunds.InFlight.FeeReservedMsat,
+		&s.Liabilities.Refunds.Abandoned.Count,
+		&s.Liabilities.Refunds.Abandoned.AmountMsat,
+		&s.Liabilities.Refunds.Abandoned.FeeReservedMsat,
+		&s.Activity.RefundTxs.Paid.Count,
+		&s.Activity.RefundTxs.Paid.AmountMsat,
+		&s.Activity.RefundTxs.Paid.ServiceFeeMsat,
+		&s.Activity.RefundTxs.Paid.LnFeeMsat,
+		&s.Equity.Dust.RefundMsat,
+		&s.Liabilities.RedeemsPending.Count,
+		&s.Liabilities.RedeemsPending.AmountMsat,
+		&s.Liabilities.RedeemsPending.FeeReservedMsat,
+		&s.Activity.RedeemTxs.Confirmed.Count,
+		&s.Activity.RedeemTxs.Confirmed.Msat,
+		&s.Activity.RedeemTxs.Confirmed.ServiceFeeMsat,
+		&s.Activity.RedeemTxs.Confirmed.LnFeeMsat,
+		&s.Activity.RedeemTxs.Failed.Count,
+		&s.Activity.RedeemTxs.Failed.Msat,
+		&s.Activity.FundTxs.Pending.Count,
+		&s.Activity.FundTxs.Pending.Msat,
+		&s.Activity.FundTxs.Confirmed.Count,
+		&s.Activity.FundTxs.Confirmed.Msat,
+		&s.Activity.FundTxs.Confirmed.FeeMsat,
+		&s.Activity.FundTxs.Confirmed.DustMsat,
+		&s.Activity.TransferTxs.Count,
+		&s.Activity.TransferTxs.AmountMsat,
+		&s.Activity.TransferTxs.FeeMsat,
+		&s.Activity.TransferTxs.DustMsat,
 	)
-	return s, err
+	if err != nil {
+		return s, err
+	}
+	return s, nil
 }
 
 func (srv *Server) insertTransferTx(dbTx *sql.Tx, fromPubKey, toPubKey, toBatchID string, amountMsat, feeMsat, netMsat, dustMsat int64) error {
