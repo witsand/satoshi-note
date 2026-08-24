@@ -29,6 +29,7 @@ type Config struct {
 	fundActive                  bool
 	redeemActive                bool
 	refundActive                bool
+	retryAbandonedRefunds       bool
 	refundWorkerIntervalSeconds int64
 	paymentCooldown             time.Duration
 	invoiceExpirySeconds        int64
@@ -146,6 +147,7 @@ func loadConfig() (*Server, error) {
 	cfg.fundActive, _ = strconv.ParseBool(os.Getenv("FUND_ACTIVE"))
 	cfg.redeemActive, _ = strconv.ParseBool(os.Getenv("REDEEM_ACTIVE"))
 	cfg.refundActive, _ = strconv.ParseBool(os.Getenv("REFUND_ACTIVE"))
+	cfg.retryAbandonedRefunds, _ = strconv.ParseBool(os.Getenv("RETRY_ABANDONED_REFUNDS"))
 
 	cfg.refundWorkerIntervalSeconds = int64(86400)
 	if v := os.Getenv("REFUND_WORKER_INTERVAL_SECONDS"); v != "" {

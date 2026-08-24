@@ -967,7 +967,7 @@ func (srv *Server) getInFlightRefundTxs() ([]RefundTx, error) {
 
 func (srv *Server) getAbandonedRefundTxs() ([]RefundTx, error) {
 	rows, err := srv.db.Query(
-		`SELECT id, voucher_id, refund_code, amount_msat, retry_count, error_msg
+		`SELECT id, voucher_id, refund_code, amount_msat, db_tx_fee, dust_msat, retry_count, error_msg
 		 FROM refund_txs
 		 WHERE refunded = 0 AND in_flight = 0 AND retry_count >= 3`,
 	)
@@ -979,7 +979,7 @@ func (srv *Server) getAbandonedRefundTxs() ([]RefundTx, error) {
 	var txs []RefundTx
 	for rows.Next() {
 		var rt RefundTx
-		if err := rows.Scan(&rt.ID, &rt.VoucherID, &rt.RefundCode, &rt.AmountMsat, &rt.RetryCount, &rt.ErrorMsg); err != nil {
+		if err := rows.Scan(&rt.ID, &rt.VoucherID, &rt.RefundCode, &rt.AmountMsat, &rt.DbTxFee, &rt.DustMsat, &rt.RetryCount, &rt.ErrorMsg); err != nil {
 			return nil, err
 		}
 		txs = append(txs, rt)
@@ -1013,6 +1013,46 @@ func (srv *Server) markRefundTxFailed(id int64, errMsg string) error {
 		errMsg, time.Now().Unix(), id,
 	)
 	return err
+}
+
+func (srv *Server) resetAbandonedRefund(id, amountMsat, dbTxFee, dustMsat int64) error {
+	res, err := srv.db.Exec(
+		`UPDATE refund_txs
+		 SET amount_msat = ?, db_tx_fee = ?, dust_msat = ?, retry_count = 0, error_msg = "", in_flight = 0, updated_at = ?
+		 WHERE id = ? AND refunded = 0 AND in_flight = 0 AND retry_count >= 3`,
+		amountMsat, dbTxFee, dustMsat, time.Now().Unix(), id,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("abandoned refund tx %d not found or no longer abandoned", id)
+	}
+	return nil
+}
+
+func (srv *Server) retainAbandonedAsDust(id, grossMsat int64) error {
+	res, err := srv.db.Exec(
+		`UPDATE refund_txs
+		 SET amount_msat = 0, db_tx_fee = 0, dust_msat = ?, refunded = 1, retry_count = 0, error_msg = "", in_flight = 0, updated_at = ?
+		 WHERE id = ? AND refunded = 0 AND in_flight = 0 AND retry_count >= 3`,
+		grossMsat, time.Now().Unix(), id,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("abandoned refund tx %d not found or no longer abandoned", id)
+	}
+	return nil
 }
 
 func deleteVoucherRefundCodes(db dbQuerier, voucherID int64) error {
@@ -1137,11 +1177,25 @@ type ledgerHeldBucket struct {
 	FeeReservedMsat int64 `json:"fee_reserved_msat"`
 }
 
+type ledgerAbandonedItem struct {
+	RefundCode      string `json:"refund_code"`
+	AmountMsat      int64  `json:"amount_msat"`
+	FeeReservedMsat int64  `json:"fee_reserved_msat"`
+	ErrorMsg        string `json:"error_msg"`
+}
+
+type ledgerAbandonedBucket struct {
+	Count           int64                 `json:"count"`
+	AmountMsat      int64                 `json:"amount_msat"`
+	FeeReservedMsat int64                 `json:"fee_reserved_msat"`
+	Items           []ledgerAbandonedItem `json:"items"`
+}
+
 type ledgerRefundLiability struct {
-	Pending   ledgerHeldBucket `json:"pending"`
-	InFlight  ledgerHeldBucket `json:"in_flight"`
-	Abandoned ledgerHeldBucket `json:"abandoned"`
-	HeldMsat  int64            `json:"held_msat"`
+	Pending   ledgerHeldBucket      `json:"pending"`
+	InFlight  ledgerHeldBucket      `json:"in_flight"`
+	Abandoned ledgerAbandonedBucket `json:"abandoned"`
+	HeldMsat  int64                 `json:"held_msat"`
 }
 
 type ledgerRedeemPending struct {
@@ -1254,7 +1308,7 @@ func (s *LedgerStatement) finalize(walletMsat int64) {
 	s.Vouchers.InactiveWithBalance = s.Liabilities.Vouchers.Inactive.Count
 	s.Liabilities.Refunds.HeldMsat = heldMsat(s.Liabilities.Refunds.Pending) +
 		heldMsat(s.Liabilities.Refunds.InFlight) +
-		heldMsat(s.Liabilities.Refunds.Abandoned)
+		s.Liabilities.Refunds.Abandoned.AmountMsat + s.Liabilities.Refunds.Abandoned.FeeReservedMsat
 	s.Liabilities.RedeemsPending.HeldMsat = s.Liabilities.RedeemsPending.AmountMsat +
 		s.Liabilities.RedeemsPending.FeeReservedMsat
 
@@ -1439,6 +1493,20 @@ func (srv *Server) getLedgerStats() (LedgerStatement, error) {
 	)
 	if err != nil {
 		return s, err
+	}
+
+	s.Liabilities.Refunds.Abandoned.Items = []ledgerAbandonedItem{}
+	abandoned, err := srv.getAbandonedRefundTxs()
+	if err != nil {
+		return s, err
+	}
+	for _, rt := range abandoned {
+		s.Liabilities.Refunds.Abandoned.Items = append(s.Liabilities.Refunds.Abandoned.Items, ledgerAbandonedItem{
+			RefundCode:      rt.RefundCode,
+			AmountMsat:      rt.AmountMsat,
+			FeeReservedMsat: rt.DbTxFee,
+			ErrorMsg:        rt.ErrorMsg,
+		})
 	}
 	return s, nil
 }

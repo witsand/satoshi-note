@@ -28,26 +28,26 @@ type VoucherRefundCode struct {
 }
 
 type Voucher struct {
-	ID                 int64  `json:"-"`
-	Secret             string `json:"secret,omitempty"`
-	ClaimLNURL         string `json:"claim_lnurl,omitempty"`
-	PubKey             string `json:"pubkey,omitempty"`
-	FundURLPrefix      string `json:"fund_url_prefix,omitempty"`
-	BatchID            string `json:"batch_id,omitempty"`
-	WithdrawURLPrefix  string `json:"withdraw_url_prefix,omitempty"`
-	FundKey            string `json:"fund_key,omitempty"`
-	RefundAfterSeconds int64  `json:"refund_after_seconds"`
-	BalanceMsat        int64  `json:"balance_msat,omitempty"`
-	Active             bool   `json:"active,omitempty"`
-	SingleUse          bool   `json:"single_use,omitempty"`
-	TransfersOnly      bool   `json:"transfers_only,omitempty"`
-	MaxRedeemMsat      int64  `json:"max_redeem_msat,omitempty"`
-	UniqueRedemptions  bool   `json:"unique_redemptions,omitempty"`
-	UpdatedAt                int64 `json:"updated_at,omitempty"`
-	AbsoluteExpiry           bool  `json:"absolute_expiry,omitempty"`
-	RegularRefundFirstAt      int64 `json:"regular_refund_first_at,omitempty"`
-	RegularRefundIntervalSecs int64 `json:"regular_refund_interval_seconds,omitempty"`
-	RegularRefundImmediate    bool  `json:"regular_refund_immediate,omitempty"`
+	ID                        int64  `json:"-"`
+	Secret                    string `json:"secret,omitempty"`
+	ClaimLNURL                string `json:"claim_lnurl,omitempty"`
+	PubKey                    string `json:"pubkey,omitempty"`
+	FundURLPrefix             string `json:"fund_url_prefix,omitempty"`
+	BatchID                   string `json:"batch_id,omitempty"`
+	WithdrawURLPrefix         string `json:"withdraw_url_prefix,omitempty"`
+	FundKey                   string `json:"fund_key,omitempty"`
+	RefundAfterSeconds        int64  `json:"refund_after_seconds"`
+	BalanceMsat               int64  `json:"balance_msat,omitempty"`
+	Active                    bool   `json:"active,omitempty"`
+	SingleUse                 bool   `json:"single_use,omitempty"`
+	TransfersOnly             bool   `json:"transfers_only,omitempty"`
+	MaxRedeemMsat             int64  `json:"max_redeem_msat,omitempty"`
+	UniqueRedemptions         bool   `json:"unique_redemptions,omitempty"`
+	UpdatedAt                 int64  `json:"updated_at,omitempty"`
+	AbsoluteExpiry            bool   `json:"absolute_expiry,omitempty"`
+	RegularRefundFirstAt      int64  `json:"regular_refund_first_at,omitempty"`
+	RegularRefundIntervalSecs int64  `json:"regular_refund_interval_seconds,omitempty"`
+	RegularRefundImmediate    bool   `json:"regular_refund_immediate,omitempty"`
 }
 
 type RefundTx struct {
@@ -60,6 +60,7 @@ type RefundTx struct {
 	Refunded        bool   `json:"refunded"`
 	InFlight        bool   `json:"in_flight"`
 	RetryCount      int    `json:"retry_count"`
+	DustMsat        int64  `json:"dust_msat"`
 	PaymentHash     string `json:"payment_hash"`
 	PaymentPreimage string `json:"payment_preimage"`
 	ErrorMsg        string `json:"error_msg"`

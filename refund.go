@@ -421,6 +421,12 @@ func (srv *Server) warnInFlightRefunds() {
 }
 
 func (srv *Server) doPendingRefunds() {
+	if srv.cfg.retryAbandonedRefunds {
+		if err := srv.requeueAbandonedRefunds(); err != nil {
+			slog.Error("refund worker: requeue abandoned refunds", "err", err)
+		}
+	}
+
 	// Attempt payment for all pending refund txs.
 	pending, err := srv.getPendingRefundTxs()
 	if err != nil {
@@ -435,6 +441,41 @@ func (srv *Server) doPendingRefunds() {
 			slog.Info("refund worker: refund paid", "id", rt.ID, "refund_code", rt.RefundCode, "amount_msat", rt.AmountMsat)
 		}
 	}
+}
+
+func (srv *Server) requeueAbandonedRefunds() error {
+	abandoned, err := srv.getAbandonedRefundTxs()
+	if err != nil {
+		return err
+	}
+	for _, rt := range abandoned {
+		if err := srv.repriceAbandonedRefund(rt); err != nil {
+			slog.Error("refund worker: reprice abandoned refund", "id", rt.ID, "err", err)
+			continue
+		}
+	}
+	return nil
+}
+
+func (srv *Server) repriceAbandonedRefund(rt RefundTx) error {
+	gross := rt.AmountMsat + rt.DbTxFee + rt.DustMsat
+	newFee := srv.calculateRedeemFee(gross)
+	net := gross - newFee
+	if net < dustThresholdMsat {
+		slog.Info("refund worker: abandoned refund below min after reprice — retaining as dust",
+			"id", rt.ID, "gross_msat", gross, "new_fee_msat", newFee)
+		return srv.retainAbandonedAsDust(rt.ID, gross)
+	}
+	dust := net % 1000
+	net -= dust
+	slog.Info("refund worker: repriced abandoned refund",
+		"id", rt.ID,
+		"gross_msat", gross,
+		"amount_msat", net,
+		"fee_msat", newFee,
+		"dust_msat", dust,
+	)
+	return srv.resetAbandonedRefund(rt.ID, net, newFee, dust)
 }
 
 func (srv *Server) payRefund(rt RefundTx) error {
