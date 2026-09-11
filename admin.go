@@ -163,8 +163,10 @@ func (srv *Server) handleAdminDeposit(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAdminWithdraw pays booked equity (fees + dust not yet withdrawn) to a bolt11
-// invoice, LNURL-pay, or lightning address. Capped so voucher/refund holds stay
-// covered, and refused entirely while the wallet does not cover the books.
+// invoice, LNURL-pay, or lightning address. The withdrawable cap is a GROSS budget
+// (amount + routing fee). A blank amount means "withdraw everything": the estimated
+// routing fee is subtracted from the cap so the send fits inside it, leaving a little
+// equity behind if the actual fee comes in higher.
 func (srv *Server) handleAdminWithdraw(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Destination string `json:"destination"`
@@ -184,46 +186,22 @@ func (srv *Server) handleAdminWithdraw(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stmt, err := srv.ledgerStatement()
-	if err != nil {
-		slog.Error("ledger statement", "err", err)
-		lnurlError(w, http.StatusInternalServerError, "internal error")
+	if err := srv.payAdminWithdraw(req.AmountMsat, req.Destination, w); err != nil {
+		// payAdminWithdraw already wrote the response for handled cases.
+		if !errors.Is(err, errWithdrawHandled) {
+			slog.Error("admin withdraw", "err", err)
+			lnurlError(w, http.StatusBadGateway, err.Error())
+		}
 		return
 	}
-	capMsat := withdrawCapMsat(stmt)
-	if capMsat < 1000 {
-		lnurlError(w, http.StatusConflict, "no equity available to withdraw")
-		return
-	}
-
-	amountMsat := req.AmountMsat
-	if amountMsat == 0 {
-		amountMsat = satRound(capMsat)
-	}
-	if amountMsat < 1000 {
-		lnurlError(w, http.StatusBadRequest, "amount_msat must be at least 1000 (1 sat)")
-		return
-	}
-	if amountMsat%1000 != 0 {
-		lnurlError(w, http.StatusBadRequest, "amount_msat must be a whole number of sats")
-		return
-	}
-	if amountMsat > capMsat {
-		lnurlError(w, http.StatusConflict, fmt.Sprintf("amount exceeds withdrawable equity cap %d msat", capMsat))
-		return
-	}
-
-	if err := srv.payAdminWithdraw(amountMsat, req.Destination); err != nil {
-		slog.Error("admin withdraw", "err", err)
-		lnurlError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{"status": "OK", "amount_msat": amountMsat})
 }
 
-// withdrawCapMsat is the most an admin withdraw may take: booked equity still on the
-// books, further limited so voucher/refund/redeem holds stay covered by the wallet.
+// errWithdrawHandled marks errors whose HTTP response was already written.
+var errWithdrawHandled = errors.New("withdraw response already written")
+
+// withdrawCapMsat is the gross budget for an admin withdraw (amount + routing fee):
+// booked equity still on the books, further limited so voucher/refund/redeem holds
+// stay covered by the wallet.
 func withdrawCapMsat(s LedgerStatement) int64 {
 	liabilities := s.Liabilities.Vouchers.Active.BalanceMsat +
 		s.Liabilities.Vouchers.Inactive.BalanceMsat +
@@ -248,10 +226,12 @@ func satRound(msat int64) int64 {
 	return msat / 1000 * 1000
 }
 
-// payAdminWithdraw sends amountMsat to destination (bolt11, LNURL-pay, or lightning
-// address) and records the operator_tx with an idempotency key. The confirmed gross
-// (amount + actual routing fee) is what reduces equity.available_msat.
-func (srv *Server) payAdminWithdraw(amountMsat int64, destination string) error {
+// payAdminWithdraw sends to destination (bolt11, LNURL-pay, or lightning address)
+// and records the operator_tx with an idempotency key. requestedMsat == 0 means
+// "withdraw the full available equity": the routing fee is estimated first and
+// subtracted from the cap so the send fits. The confirmed gross (amount + actual
+// routing fee) is what reduces equity.available_msat.
+func (srv *Server) payAdminWithdraw(requestedMsat int64, destination string, w http.ResponseWriter) error {
 	srv.paymentSema.acquireForWithdrawal()
 	defer srv.paymentSema.releaseAfter(srv.cfg.paymentCooldown)
 
@@ -260,66 +240,80 @@ func (srv *Server) payAdminWithdraw(amountMsat int64, destination string) error 
 		return fmt.Errorf("parse destination: %w", err)
 	}
 
-	id, err := srv.insertOperatorTx(operatorKindWithdraw, amountMsat, 0, "", destination)
+	stmt, err := srv.ledgerStatement()
+	if err != nil {
+		return fmt.Errorf("ledger statement: %w", err)
+	}
+	capMsat := withdrawCapMsat(stmt)
+	if capMsat < 1000 {
+		lnurlError(w, http.StatusConflict, "no equity available to withdraw")
+		return errWithdrawHandled
+	}
+
+	switch v := inputType.(type) {
+	case spark.InputTypeBolt11Invoice:
+		return srv.sendAdminWithdrawBolt11(w, requestedMsat, capMsat, v)
+	case spark.InputTypeLightningAddress:
+		return srv.sendAdminWithdrawLnurl(w, requestedMsat, capMsat, v.Field0.PayRequest)
+	case spark.InputTypeLnurlPay:
+		return srv.sendAdminWithdrawLnurl(w, requestedMsat, capMsat, v.Field0)
+	default:
+		return fmt.Errorf("unsupported destination type: %T", inputType)
+	}
+}
+
+// resolveWithdrawAmount works out the net send amount given the gross cap and the
+// estimated routing fee. A blank (0) amount means "full equity": net = cap - fee.
+// An explicit amount must fit with the fee inside the cap.
+func resolveWithdrawAmount(requestedMsat, capMsat, estimateFeeMsat int64) (int64, error) {
+	amountMsat := requestedMsat
+	if amountMsat == 0 {
+		amountMsat = capMsat - estimateFeeMsat
+	}
+	amountMsat = satRound(amountMsat)
+	if amountMsat < 1000 {
+		return 0, fmt.Errorf("available equity %d msat does not cover the routing fee %d msat", capMsat, estimateFeeMsat)
+	}
+	if amountMsat+estimateFeeMsat > capMsat {
+		return 0, fmt.Errorf("amount + routing fee %d msat exceeds withdrawable equity %d msat", amountMsat+estimateFeeMsat, capMsat)
+	}
+	return amountMsat, nil
+}
+
+func (srv *Server) sendAdminWithdrawBolt11(w http.ResponseWriter, requestedMsat, capMsat int64, invoice spark.InputTypeBolt11Invoice) error {
+	prepResp, rawPrepErr := srv.ln.PrepareSendPayment(spark.PrepareSendPaymentRequest{
+		PaymentRequest: spark.PaymentRequestInput{Input: invoice.Field0.Invoice.Bolt11},
+	})
+	if err := sdkErr(rawPrepErr); err != nil {
+		return fmt.Errorf("prepare send payment: %w", err)
+	}
+
+	pm, ok := prepResp.PaymentMethod.(spark.SendPaymentMethodBolt11Invoice)
+	if !ok {
+		return fmt.Errorf("unexpected payment method %T", prepResp.PaymentMethod)
+	}
+	if pm.InvoiceDetails.AmountMsat == nil {
+		return fmt.Errorf("zero-amount invoices are not supported")
+	}
+	estimateFeeMsat := int64(pm.LightningFeeSats) * 1000
+	invoiceAmountMsat := int64(*pm.InvoiceDetails.AmountMsat)
+
+	// bolt11 invoices carry their own amount, which always wins.
+	amountMsat := invoiceAmountMsat
+	if requestedMsat != 0 && invoiceAmountMsat != requestedMsat {
+		return fmt.Errorf("invoice amount %d msat does not match requested %d msat", invoiceAmountMsat, requestedMsat)
+	}
+	if _, err := resolveWithdrawAmount(amountMsat, capMsat, estimateFeeMsat); err != nil {
+		return err
+	}
+
+	id, err := srv.insertOperatorTx(operatorKindWithdraw, amountMsat, 0, invoice.Field0.Invoice.Bolt11, "")
 	if err != nil {
 		return fmt.Errorf("insert operator withdraw: %w", err)
 	}
 	idempotencyKey := uuid5(satoshiNoteUUIDNamespace, fmt.Sprintf("operator-withdraw:%d", id))
 	if err := srv.setOperatorTxIdempotencyKey(id, idempotencyKey); err != nil {
 		slog.Error("store operator withdraw idempotency key", "id", id, "err", err)
-	}
-
-	switch v := inputType.(type) {
-	case spark.InputTypeBolt11Invoice:
-		return srv.sendAdminWithdrawBolt11(id, amountMsat, v, idempotencyKey)
-	case spark.InputTypeLightningAddress:
-		return srv.sendAdminWithdrawLnurl(id, amountMsat, v.Field0.PayRequest, idempotencyKey)
-	case spark.InputTypeLnurlPay:
-		return srv.sendAdminWithdrawLnurl(id, amountMsat, v.Field0, idempotencyKey)
-	default:
-		markErr := srv.markOperatorTxFailed(id, fmt.Sprintf("unsupported destination type: %T", inputType))
-		if markErr != nil {
-			slog.Error("mark operator withdraw failed", "id", id, "err", markErr)
-		}
-		return fmt.Errorf("unsupported destination type: %T", inputType)
-	}
-}
-
-func (srv *Server) sendAdminWithdrawBolt11(id, amountMsat int64, invoice spark.InputTypeBolt11Invoice, idempotencyKey string) error {
-	prepResp, rawPrepErr := srv.ln.PrepareSendPayment(spark.PrepareSendPaymentRequest{
-		PaymentRequest: spark.PaymentRequestInput{Input: invoice.Field0.Invoice.Bolt11},
-	})
-	if err := sdkErr(rawPrepErr); err != nil {
-		srv.failOperatorTx(id, fmt.Sprintf("prepare send payment: %v", err))
-		return fmt.Errorf("prepare send payment: %w", err)
-	}
-
-	var estimateFeeMsat, invoiceAmountMsat int64
-	pm, ok := prepResp.PaymentMethod.(spark.SendPaymentMethodBolt11Invoice)
-	if !ok {
-		srv.failOperatorTx(id, fmt.Sprintf("unexpected payment method %T", prepResp.PaymentMethod))
-		return fmt.Errorf("unexpected payment method %T", prepResp.PaymentMethod)
-	}
-	if pm.InvoiceDetails.AmountMsat == nil {
-		srv.failOperatorTx(id, "zero-amount invoices are not supported")
-		return fmt.Errorf("zero-amount invoices are not supported")
-	}
-	estimateFeeMsat = int64(pm.LightningFeeSats) * 1000
-	invoiceAmountMsat = int64(*pm.InvoiceDetails.AmountMsat)
-	if invoiceAmountMsat != amountMsat {
-		srv.failOperatorTx(id, fmt.Sprintf("invoice amount %d msat does not match requested %d msat", invoiceAmountMsat, amountMsat))
-		return fmt.Errorf("invoice amount %d msat does not match requested %d msat", invoiceAmountMsat, amountMsat)
-	}
-
-	// The routing fee must fit in the remaining equity cap.
-	stmt, err := srv.ledgerStatement()
-	if err != nil {
-		srv.failOperatorTx(id, fmt.Sprintf("ledger statement: %v", err))
-		return fmt.Errorf("ledger statement: %w", err)
-	}
-	if amountMsat+estimateFeeMsat > withdrawCapMsat(stmt) {
-		srv.failOperatorTx(id, "routing fee exceeds withdrawable equity")
-		return fmt.Errorf("routing fee %d msat exceeds withdrawable equity", estimateFeeMsat)
 	}
 
 	sendResp, rawSendErr := srv.ln.SendPayment(spark.SendPaymentRequest{
@@ -347,43 +341,45 @@ func (srv *Server) sendAdminWithdrawBolt11(id, amountMsat int64, invoice spark.I
 	if err := srv.markOperatorTxConfirmed(id, actualFeeMsat, hash, preimage); err != nil {
 		slog.Error("mark operator withdraw confirmed", "id", id, "err", err)
 	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"status": "OK", "amount_msat": amountMsat, "fee_msat": actualFeeMsat})
 	return nil
 }
 
-func (srv *Server) sendAdminWithdrawLnurl(id, amountMsat int64, payRequest spark.LnurlPayRequestDetails, idempotencyKey string) error {
-	amountSats := uint64(amountMsat / 1000)
-	amount := new(big.Int).SetUint64(amountSats)
-	comment := "Operator equity withdrawal"
-
-	var commentPtr *string
-	if payRequest.CommentAllowed > 0 {
-		if len(comment) > int(payRequest.CommentAllowed) {
-			truncated := comment[:payRequest.CommentAllowed]
-			commentPtr = &truncated
-		} else {
-			commentPtr = &comment
-		}
+func (srv *Server) sendAdminWithdrawLnurl(w http.ResponseWriter, requestedMsat, capMsat int64, payRequest spark.LnurlPayRequestDetails) error {
+	// Estimate the fee at the cap (full withdraw) or the requested amount, then
+	// subtract it from the cap so a blank amount withdraws everything minus the fee.
+	estimateBasis := requestedMsat
+	if estimateBasis == 0 {
+		estimateBasis = capMsat
 	}
-
-	prepResp, rawPrepErr := srv.ln.PrepareLnurlPay(spark.PrepareLnurlPayRequest{
-		Amount:     amount,
-		PayRequest: payRequest,
-		Comment:    commentPtr,
-	})
-	if err := sdkErr(rawPrepErr); err != nil {
-		srv.failOperatorTx(id, fmt.Sprintf("prepare lnurl pay: %v", err))
-		return fmt.Errorf("prepare lnurl pay: %w", err)
-	}
-
-	estimateFeeMsat := int64(prepResp.FeeSats) * 1000
-	stmt, err := srv.ledgerStatement()
+	estimate, err := srv.estimateLnurlFee(payRequest, estimateBasis)
 	if err != nil {
-		srv.failOperatorTx(id, fmt.Sprintf("ledger statement: %v", err))
-		return fmt.Errorf("ledger statement: %w", err)
+		return err
 	}
-	if amountMsat+estimateFeeMsat > withdrawCapMsat(stmt) {
-		srv.failOperatorTx(id, "routing fee exceeds withdrawable equity")
-		return fmt.Errorf("routing fee %d msat exceeds withdrawable equity", estimateFeeMsat)
+
+	amountMsat, err := resolveWithdrawAmount(requestedMsat, capMsat, estimate)
+	if err != nil {
+		return err
+	}
+
+	// Re-prepare at the final amount so the fee quote matches what we send.
+	prepResp, err := srv.prepareLnurl(payRequest, amountMsat)
+	if err != nil {
+		return err
+	}
+	finalFeeMsat := int64(prepResp.FeeSats) * 1000
+	if amountMsat+finalFeeMsat > capMsat {
+		return fmt.Errorf("amount + routing fee %d msat exceeds withdrawable equity %d msat", amountMsat+finalFeeMsat, capMsat)
+	}
+
+	id, err := srv.insertOperatorTx(operatorKindWithdraw, amountMsat, 0, "", payRequest.Callback)
+	if err != nil {
+		return fmt.Errorf("insert operator withdraw: %w", err)
+	}
+	idempotencyKey := uuid5(satoshiNoteUUIDNamespace, fmt.Sprintf("operator-withdraw:%d", id))
+	if err := srv.setOperatorTxIdempotencyKey(id, idempotencyKey); err != nil {
+		slog.Error("store operator withdraw idempotency key", "id", id, "err", err)
 	}
 
 	lnurlPayResp, rawPayErr := srv.ln.LnurlPay(spark.LnurlPayRequest{
@@ -411,7 +407,44 @@ func (srv *Server) sendAdminWithdrawLnurl(id, amountMsat int64, payRequest spark
 	if err := srv.markOperatorTxConfirmed(id, actualFeeMsat, hash, preimage); err != nil {
 		slog.Error("mark operator withdraw confirmed", "id", id, "err", err)
 	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"status": "OK", "amount_msat": amountMsat, "fee_msat": actualFeeMsat})
 	return nil
+}
+
+// estimateLnurlFee returns the SDK's routing-fee quote (msat) for paying amountMsat.
+func (srv *Server) estimateLnurlFee(payRequest spark.LnurlPayRequestDetails, amountMsat int64) (int64, error) {
+	prepResp, err := srv.prepareLnurl(payRequest, amountMsat)
+	if err != nil {
+		return 0, err
+	}
+	return int64(prepResp.FeeSats) * 1000, nil
+}
+
+func (srv *Server) prepareLnurl(payRequest spark.LnurlPayRequestDetails, amountMsat int64) (spark.PrepareLnurlPayResponse, error) {
+	amountSats := uint64(amountMsat / 1000)
+	amount := new(big.Int).SetUint64(amountSats)
+	comment := "Operator equity withdrawal"
+
+	var commentPtr *string
+	if payRequest.CommentAllowed > 0 {
+		if len(comment) > int(payRequest.CommentAllowed) {
+			truncated := comment[:payRequest.CommentAllowed]
+			commentPtr = &truncated
+		} else {
+			commentPtr = &comment
+		}
+	}
+
+	prepResp, rawPrepErr := srv.ln.PrepareLnurlPay(spark.PrepareLnurlPayRequest{
+		Amount:     amount,
+		PayRequest: payRequest,
+		Comment:    commentPtr,
+	})
+	if err := sdkErr(rawPrepErr); err != nil {
+		return spark.PrepareLnurlPayResponse{}, fmt.Errorf("prepare lnurl pay: %w", err)
+	}
+	return prepResp, nil
 }
 
 // failOperatorTx marks a withdraw failed and logs if that itself fails.
