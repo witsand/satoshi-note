@@ -63,6 +63,7 @@ type RefundTx struct {
 	DustMsat        int64  `json:"dust_msat"`
 	PaymentHash     string `json:"payment_hash"`
 	PaymentPreimage string `json:"payment_preimage"`
+	IdempotencyKey  string `json:"-"`
 	ErrorMsg        string `json:"error_msg"`
 	CreatedAt       int64  `json:"created_at"`
 }

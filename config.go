@@ -33,6 +33,7 @@ type Config struct {
 	refundWorkerIntervalSeconds int64
 	paymentCooldown             time.Duration
 	invoiceExpirySeconds        int64
+	maxConcurrentClaims         uint32
 }
 
 func errMissingEnv(name string) error {
@@ -174,6 +175,16 @@ func loadConfig() (*Server, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// SDK default is 4; this is a server receiving many concurrent payments.
+	cfg.maxConcurrentClaims = 8
+	if v := os.Getenv("MAX_CONCURRENT_CLAIMS"); v != "" {
+		parsed, err := strconv.ParseUint(v, 10, 32)
+		if err != nil || parsed == 0 {
+			return nil, fmt.Errorf("MAX_CONCURRENT_CLAIMS must be a positive integer")
+		}
+		cfg.maxConcurrentClaims = uint32(parsed)
 	}
 
 	return &Server{cfg: cfg}, nil

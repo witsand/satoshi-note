@@ -799,7 +799,7 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 	}
 
 	prepResp, rawPrepErr := srv.ln.PrepareSendPayment(spark.PrepareSendPaymentRequest{
-		PaymentRequest: pr,
+		PaymentRequest: spark.PaymentRequestInput{Input: pr},
 	})
 	if err := sdkErr(rawPrepErr); err != nil {
 		slog.Error("prepare send payment", "err", err)
@@ -863,8 +863,14 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
+	// The idempotency key is derived deterministically from the redeem tx id, so a
+	// manual retry of a redeem whose outcome is unknown (crash between SendPayment
+	// and the status update) makes the SDK return the original payment instead of
+	// paying twice.
+	idempotencyKey := uuid5(satoshiNoteUUIDNamespace, fmt.Sprintf("redeem:%d", redeemID))
 	sendResp, rawSendErr := srv.ln.SendPayment(spark.SendPaymentRequest{
 		PrepareResponse: prepResp,
+		IdempotencyKey:  &idempotencyKey,
 	})
 	if sendErr := sdkErr(rawSendErr); sendErr != nil {
 		slog.Error("send payment", "err", sendErr)
@@ -882,6 +888,16 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 	var actualFeeMsat int64
 	if sendResp.Payment.Fees != nil {
 		actualFeeMsat = sendResp.Payment.Fees.Int64() * 1000
+	}
+
+	// Store the SDK payment id BEFORE marking confirmed, so a crash in between
+	// leaves a pending row that can be resolved via GetPayment at startup.
+	if err := srv.setRedeemTxPaymentID(redeemID, sendResp.Payment.Id); err != nil {
+		slog.Error("store redeem tx payment id", "id", redeemID, "err", err)
+	}
+	if sendResp.Payment.Status != spark.PaymentStatusCompleted {
+		slog.Warn("send payment returned non-completed status",
+			"id", redeemID, "payment_id", sendResp.Payment.Id, "status", sendResp.Payment.Status)
 	}
 
 	if err := srv.updateRedeemTx(redeemID, TxConfirmed, dbTxFee-actualFeeMsat, actualFeeMsat, ""); err != nil {
@@ -937,6 +953,13 @@ func (srv *Server) updateFundTxConfirmed(tx *FundTx) error {
 	defer dbTx.Rollback()
 
 	if err := updateFundTXStatus(dbTx, tx.Key, TxConfirmed, tx.PaymentHash, tx.PaymentPreimage); err != nil {
+		if errors.Is(err, errFundTxNotPending) {
+			// Already confirmed — the same paid invoice was seen twice (e.g. the
+			// payment-succeeded event plus the startup catch-up). No-op so a
+			// voucher can never be credited twice for one payment.
+			slog.Info("fund tx already confirmed, skipping duplicate credit", "key", tx.Key)
+			return nil
+		}
 		slog.Error("update fund tx status", "err", err)
 		return err
 	}
@@ -1095,7 +1118,45 @@ func (srv *Server) handleLedger(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stmt.finalize(int64(infoResp.BalanceSats) * 1000)
+
+	// BalanceSats covers only spendable Spark leaves. Surface what it excludes so
+	// the ledger can be reconciled against another wallet showing the same mnemonic:
+	// unclaimed on-chain deposits and any token balances are not part of wallet_msat.
+	stmt.UnclaimedDepositsMsat = srv.unclaimedDepositsMsat()
+	stmt.TokenBalances = tokenBalancesToJSON(infoResp.TokenBalances)
+
 	writeJSON(w, http.StatusOK, stmt)
+}
+
+// unclaimedDepositsMsat returns the total msat held in on-chain deposits the SDK has
+// not (yet) claimed into the Spark tree. Returns nil when the query fails — the field
+// is then omitted from the ledger response rather than reported as zero.
+func (srv *Server) unclaimedDepositsMsat() *int64 {
+	resp, rawErr := srv.ln.ListUnclaimedDeposits(spark.ListUnclaimedDepositsRequest{})
+	if err := sdkErr(rawErr); err != nil {
+		slog.Error("list unclaimed deposits", "err", err)
+		return nil
+	}
+	var total int64
+	for _, d := range resp.Deposits {
+		total += int64(d.AmountSats) * 1000
+	}
+	return &total
+}
+
+// tokenBalancesToJSON renders SDK token balances as decimal strings (u128 does not
+// survive JSON round-trips through float64). Nil when there are no tokens.
+func tokenBalancesToJSON(balances map[string]spark.TokenBalance) map[string]string {
+	if len(balances) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(balances))
+	for id, tb := range balances {
+		if tb.Balance != nil {
+			out[id] = tb.Balance.String()
+		}
+	}
+	return out
 }
 
 func (srv *Server) handleConfig(w http.ResponseWriter, r *http.Request) {

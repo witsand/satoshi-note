@@ -13,6 +13,15 @@ import (
 const dustThresholdMsat = 1000
 
 func (srv *Server) runRefundWorker() {
+	// Rows left in-flight by a crash: those attempted with an SDK idempotency key are
+	// safe to retry (the SDK dedupes by key and returns the original payment), so
+	// return them to pending. Rows without a key predate idempotency support and
+	// remain manual-review — warnInFlightRefunds logs them.
+	if n, err := srv.resetKeyedInFlightRefunds(); err != nil {
+		slog.Error("refund worker: reset keyed in-flight refunds", "err", err)
+	} else if n > 0 {
+		slog.Info("refund worker: re-queued in-flight refunds protected by an idempotency key", "count", n)
+	}
 	// Warn about any rows left in-flight from a previous crash.
 	srv.warnInFlightRefunds()
 	// Warn about any refund txs that have been abandoned after exceeding the retry limit.
@@ -402,8 +411,10 @@ func (srv *Server) warnAbandonedRefunds() {
 }
 
 // warnInFlightRefunds logs a warning for any refund_txs that were left in-flight
-// from a previous server crash. These rows are NOT retried automatically because
-// the payment outcome is unknown — they require manual investigation.
+// from a previous server crash AND were attempted without an SDK idempotency key.
+// These rows are NOT retried automatically because the payment outcome is unknown
+// and a retry could pay twice — they require manual investigation. Keyed rows are
+// re-queued by resetKeyedInFlightRefunds instead.
 func (srv *Server) warnInFlightRefunds() {
 	stuck, err := srv.getInFlightRefundTxs()
 	if err != nil {
@@ -534,15 +545,22 @@ func (srv *Server) payRefund(rt RefundTx) error {
 	}
 
 	// Mark in-flight BEFORE sending. If the server crashes after this point but before
-	// markRefundTxPaid completes, the row will remain in_flight=1 and will NOT be retried
-	// automatically — requiring manual review. This is intentional: it is safer to hold
-	// the money and investigate than to risk a double payment.
-	if err := srv.markRefundTxInFlight(rt.ID); err != nil {
+	// markRefundTxPaid completes, the row remains in_flight=1. Because the payment is
+	// attempted with a per-refund idempotency key (stored on the row, reused across
+	// retries), the next run safely retries it: the SDK returns the original payment
+	// instead of paying twice. Rows attempted before idempotency support (no key
+	// stored) stay in-flight for manual review.
+	idempotencyKey := rt.IdempotencyKey
+	if idempotencyKey == "" {
+		idempotencyKey = uuid5(satoshiNoteUUIDNamespace, fmt.Sprintf("refund:%d", rt.ID))
+	}
+	if err := srv.markRefundTxInFlight(rt.ID, idempotencyKey); err != nil {
 		return fmt.Errorf("mark refund tx in-flight: %w", err)
 	}
 
 	lnurlPayResp, rawPayErr := srv.ln.LnurlPay(spark.LnurlPayRequest{
 		PrepareResponse: prepResp,
+		IdempotencyKey:  &idempotencyKey,
 	})
 	if err := sdkErr(rawPayErr); err != nil {
 		// SDK returned a definitive error — payment did not go through.
@@ -556,6 +574,11 @@ func (srv *Server) payRefund(rt RefundTx) error {
 	var actualFeeMsat int64
 	if lnurlPayResp.Payment.Fees != nil {
 		actualFeeMsat = lnurlPayResp.Payment.Fees.Int64() * 1000
+	}
+
+	if lnurlPayResp.Payment.Status != spark.PaymentStatusCompleted {
+		slog.Warn("refund worker: lnurl pay returned non-completed status",
+			"id", rt.ID, "payment_id", lnurlPayResp.Payment.Id, "status", lnurlPayResp.Payment.Status)
 	}
 
 	var paymentHash, paymentPreimage string

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"math/big"
 	"time"
 
 	spark "github.com/breez/breez-sdk-spark-go/breez_sdk_spark"
@@ -14,29 +15,57 @@ type SparkListener struct {
 }
 
 func (l *SparkListener) OnEvent(e spark.SdkEvent) {
-	// slog.Info("sdk event", "type", fmt.Sprintf("%T", e))
+	switch ev := e.(type) {
+	case spark.SdkEventPaymentSucceeded:
+		l.onPaymentSucceeded(ev.Payment)
+	case spark.SdkEventSynced:
+		// The SDK cache (what GetInfo reads) is now fresh from the network.
+		slog.Info("sdk event: wallet synced")
+	case spark.SdkEventPaymentPending:
+		slog.Info("sdk event: payment in flight", "payment_id", ev.Payment.Id)
+	case spark.SdkEventPaymentFailed:
+		slog.Warn("sdk event: payment failed",
+			"payment_id", ev.Payment.Id,
+			"amount_sats", u128OrNil(ev.Payment.Amount),
+			"details_type", paymentDetailsType(ev.Payment.Details),
+		)
+	case spark.SdkEventNewDeposits:
+		slog.Info("sdk event: on-chain deposits detected", "count", len(ev.NewDeposits))
+	case spark.SdkEventClaimedDeposits:
+		slog.Info("sdk event: deposits claimed", "count", len(ev.ClaimedDeposits))
+	case spark.SdkEventUnclaimedDeposits:
+		for _, d := range ev.UnclaimedDeposits {
+			slog.Warn("sdk event: deposit could not be claimed",
+				"txid", d.Txid, "vout", d.Vout, "amount_sats", d.AmountSats,
+				"claim_error", d.ClaimError)
+		}
+	case spark.SdkEventAutoOptimization:
+		// Background leaf optimizer progress; locks leaves briefly (balance flicker).
+		slog.Debug("sdk event: auto leaf optimization")
+	default:
+		slog.Debug("sdk event", "type", fmt.Sprintf("%T", e))
+	}
+}
 
-	ev, ok := e.(spark.SdkEventPaymentSucceeded)
-	if !ok {
+// onPaymentSucceeded credits a voucher for a paid fund invoice. The SDK refreshes
+// its cached balance before emitting this event, so GetInfo reflects the payment.
+func (l *SparkListener) onPaymentSucceeded(p spark.Payment) {
+	if p.Details == nil {
 		return
 	}
 
-	if ev.Payment.Details == nil {
-		return
-	}
-
-	details, ok := (*ev.Payment.Details).(spark.PaymentDetailsLightning)
+	details, ok := (*p.Details).(spark.PaymentDetailsLightning)
 	if !ok {
 		return
 	}
 
 	tx, err := l.srv.getFundTxByPR(details.Invoice)
 	if err == nil {
-		if ev.Payment.Amount != nil {
-			tx.Msat = ev.Payment.Amount.Int64() * 1000
+		if p.Amount != nil {
+			tx.Msat = p.Amount.Int64() * 1000
 		}
-		if ev.Payment.Fees != nil {
-			tx.FeeMsat = ev.Payment.Fees.Int64() * 1000
+		if p.Fees != nil {
+			tx.FeeMsat = p.Fees.Int64() * 1000
 		}
 		tx.PaymentHash = details.HtlcDetails.PaymentHash
 		if details.HtlcDetails.Preimage != nil {
@@ -46,6 +75,22 @@ func (l *SparkListener) OnEvent(e spark.SdkEvent) {
 			slog.Error("update fund tx confirmed", "err", err)
 		}
 	}
+}
+
+// u128OrNil renders a u128 amount for logging, tolerating nil.
+func u128OrNil(v *big.Int) any {
+	if v == nil {
+		return nil
+	}
+	return v.Int64()
+}
+
+// paymentDetailsType names the payment details variant for logging.
+func paymentDetailsType(details *spark.PaymentDetails) string {
+	if details == nil {
+		return "none"
+	}
+	return fmt.Sprintf("%T", *details)
 }
 
 // sdkErr unwraps the typed nil that uniffiRustCallAsync produces when Rust
@@ -58,9 +103,11 @@ func sdkErr(err error) error {
 	return err
 }
 
-func NewBreezClient(mnemonic, apiKey, storageDirectory string, network spark.Network) (*spark.BreezSdk, error) {
+func NewBreezClient(mnemonic, apiKey, storageDirectory string, network spark.Network, maxConcurrentClaims uint32) (*spark.BreezSdk, error) {
 	cfg := spark.DefaultConfig(network)
 	cfg.ApiKey = &apiKey
+	// Default is 4; we are a server receiving many concurrent payments.
+	cfg.MaxConcurrentClaims = maxConcurrentClaims
 
 	var seed spark.Seed = spark.SeedMnemonic{
 		Mnemonic:   mnemonic,
@@ -130,16 +177,33 @@ func (srv *Server) getCallbackBolt11(tx *FundTx, description string) error {
 }
 
 // getPaymentsCompleted searches completed receive payments since the given timestamp.
+// Pages through the full history window: without an explicit limit the SDK default
+// could truncate the result and a pending fund tx would never be caught up.
 func (srv *Server) getPaymentsCompleted(since uint64) ([]spark.Payment, error) {
 	typeFilter := []spark.PaymentType{spark.PaymentTypeReceive}
 	statusFilter := []spark.PaymentStatus{spark.PaymentStatusCompleted}
 	var assetFilter spark.AssetFilter = spark.AssetFilterBitcoin{}
-	listResp, err := srv.ln.ListPayments(spark.ListPaymentsRequest{
-		TypeFilter:    &typeFilter,
-		StatusFilter:  &statusFilter,
-		AssetFilter:   &assetFilter,
-		FromTimestamp: &since,
-	})
 
-	return listResp.Payments, sdkErr(err)
+	const pageSize = 500
+	var all []spark.Payment
+	for offset := uint32(0); ; offset += pageSize {
+		limit := uint32(pageSize)
+		listResp, rawErr := srv.ln.ListPayments(spark.ListPaymentsRequest{
+			TypeFilter:    &typeFilter,
+			StatusFilter:  &statusFilter,
+			AssetFilter:   &assetFilter,
+			FromTimestamp: &since,
+			Offset:        &offset,
+			Limit:         &limit,
+		})
+		if err := sdkErr(rawErr); err != nil {
+			return nil, err
+		}
+		all = append(all, listResp.Payments...)
+		if len(listResp.Payments) < pageSize {
+			break
+		}
+	}
+
+	return all, nil
 }

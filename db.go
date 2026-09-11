@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,10 @@ import (
 
 	_ "modernc.org/sqlite"
 )
+
+// errFundTxNotPending is returned by updateFundTXStatus when the row is missing or
+// has already left the pending state — i.e. the payment was already credited.
+var errFundTxNotPending = errors.New("fund tx not pending (already confirmed or not found)")
 
 // dbQuerier is satisfied by both *sql.DB and *sql.Tx, allowing query functions
 // to operate inside or outside a transaction.
@@ -103,6 +108,12 @@ func migrateSchema(db *sql.DB) error {
 		`ALTER TABLE refund_txs ADD COLUMN dust_msat        INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE vouchers ADD COLUMN regular_refund_immediate INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE refund_txs ADD COLUMN retry_count     INTEGER NOT NULL DEFAULT 0`,
+		// SDK payment id of a successful redeem send, stored before the status flip so
+		// a crash in between can be resolved via GetPayment at startup.
+		`ALTER TABLE redeem_txs ADD COLUMN payment_id TEXT NOT NULL DEFAULT ""`,
+		// SDK idempotency key used for the LnurlPay attempt. Set on the first attempt;
+		// rows that have one are safe to auto-retry (the SDK dedupes by key).
+		`ALTER TABLE refund_txs ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT ""`,
 	}
 
 	columnExists := func(table, col string) (bool, error) {
@@ -250,6 +261,7 @@ func initSchemaTables(db *sql.DB) error {
 			in_flight        INTEGER NOT NULL DEFAULT 0,
 			payment_hash     TEXT    NOT NULL DEFAULT "",
 			payment_preimage TEXT    NOT NULL DEFAULT "",
+			idempotency_key  TEXT    NOT NULL DEFAULT "",
 			error_msg        TEXT    NOT NULL DEFAULT "",
 			created_at       INTEGER NOT NULL,
 			updated_at       INTEGER NOT NULL DEFAULT 0
@@ -273,6 +285,7 @@ func initSchemaTables(db *sql.DB) error {
 			db_tx_fee     INTEGER NOT NULL DEFAULT 0,
 			status        TEXT NOT NULL,
 			actual_ln_fee INTEGER NOT NULL DEFAULT 0,
+			payment_id    TEXT    NOT NULL DEFAULT "",
 			created_at    INTEGER NOT NULL,
 			updated_at    INTEGER NOT NULL DEFAULT 0,
 			error_msg     TEXT    NOT NULL DEFAULT ""
@@ -382,6 +395,16 @@ func (srv *Server) updateRedeemTx(redeemID int64, status TxStatus, dbTxFee, actu
 	_, err := srv.db.Exec(
 		`UPDATE redeem_txs SET status = ?, db_tx_fee = ?, actual_ln_fee = ?, error_msg = ?, updated_at = ? WHERE id = ?`,
 		status, dbTxFee, actualLNFee, errMsg, time.Now().Unix(), redeemID,
+	)
+	return err
+}
+
+// setRedeemTxPaymentID stores the SDK payment id on a redeem tx so a crash between
+// SendPayment and the status update can be resolved via GetPayment at startup.
+func (srv *Server) setRedeemTxPaymentID(redeemID int64, paymentID string) error {
+	_, err := srv.db.Exec(
+		`UPDATE redeem_txs SET payment_id = ?, updated_at = ? WHERE id = ?`,
+		paymentID, time.Now().Unix(), redeemID,
 	)
 	return err
 }
@@ -522,7 +545,7 @@ func updateFundTXStatus(dbTx *sql.Tx, key string, status TxStatus, paymentHash, 
 		return err
 	}
 	if rows == 0 {
-		return fmt.Errorf("fund tx %s already confirmed or not found", key)
+		return fmt.Errorf("%w: %s", errFundTxNotPending, key)
 	}
 	return nil
 }
@@ -925,7 +948,7 @@ func (srv *Server) markVouchersRefunded(dbTx *sql.Tx, ids []int64) error {
 
 func (srv *Server) getPendingRefundTxs() ([]RefundTx, error) {
 	rows, err := srv.db.Query(
-		`SELECT id, voucher_id, refund_code, amount_msat, db_tx_fee
+		`SELECT id, voucher_id, refund_code, amount_msat, db_tx_fee, idempotency_key
 		 FROM refund_txs
 		 WHERE refunded = 0 AND in_flight = 0 AND retry_count < 3`,
 	)
@@ -937,7 +960,7 @@ func (srv *Server) getPendingRefundTxs() ([]RefundTx, error) {
 	var txs []RefundTx
 	for rows.Next() {
 		var rt RefundTx
-		if err := rows.Scan(&rt.ID, &rt.VoucherID, &rt.RefundCode, &rt.AmountMsat, &rt.DbTxFee); err != nil {
+		if err := rows.Scan(&rt.ID, &rt.VoucherID, &rt.RefundCode, &rt.AmountMsat, &rt.DbTxFee, &rt.IdempotencyKey); err != nil {
 			return nil, err
 		}
 		txs = append(txs, rt)
@@ -945,9 +968,13 @@ func (srv *Server) getPendingRefundTxs() ([]RefundTx, error) {
 	return txs, rows.Err()
 }
 
+// getInFlightRefundTxs returns only rows whose original payment attempt had no SDK
+// idempotency key (attempted before idempotency support). Keyed rows are returned to
+// pending by resetKeyedInFlightRefunds instead, since retrying them is safe.
 func (srv *Server) getInFlightRefundTxs() ([]RefundTx, error) {
 	rows, err := srv.db.Query(
-		`SELECT id, voucher_id, refund_code, amount_msat FROM refund_txs WHERE in_flight = 1 AND refunded = 0`,
+		`SELECT id, voucher_id, refund_code, amount_msat FROM refund_txs
+		 WHERE in_flight = 1 AND refunded = 0 AND idempotency_key = ""`,
 	)
 	if err != nil {
 		return nil, err
@@ -987,12 +1014,30 @@ func (srv *Server) getAbandonedRefundTxs() ([]RefundTx, error) {
 	return txs, rows.Err()
 }
 
-func (srv *Server) markRefundTxInFlight(id int64) error {
+// markRefundTxInFlight marks a refund tx as in-flight and records the SDK idempotency
+// key used for the payment attempt. The key makes a post-crash retry safe: the SDK
+// returns the original payment instead of paying twice.
+func (srv *Server) markRefundTxInFlight(id int64, idempotencyKey string) error {
 	_, err := srv.db.Exec(
-		`UPDATE refund_txs SET in_flight = 1, updated_at = ? WHERE id = ?`,
-		time.Now().Unix(), id,
+		`UPDATE refund_txs SET in_flight = 1, idempotency_key = ?, updated_at = ? WHERE id = ?`,
+		idempotencyKey, time.Now().Unix(), id,
 	)
 	return err
+}
+
+// resetKeyedInFlightRefunds returns in-flight refund txs that were attempted with an
+// SDK idempotency key back to the pending state so the worker retries them. Rows
+// without a key (attempted before idempotency support) stay in-flight for manual
+// review — their payment outcome is genuinely unknown.
+func (srv *Server) resetKeyedInFlightRefunds() (int64, error) {
+	res, err := srv.db.Exec(
+		`UPDATE refund_txs SET in_flight = 0, updated_at = ? WHERE in_flight = 1 AND refunded = 0 AND idempotency_key != ""`,
+		time.Now().Unix(),
+	)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (srv *Server) markRefundTxPaid(id, netDbTxFee, actualFee int64, paymentHash, paymentPreimage string) error {
@@ -1142,6 +1187,11 @@ type LedgerStatement struct {
 	ExplainedMsat int64 `json:"explained_msat"`
 	ImbalanceMsat int64 `json:"imbalance_msat"`
 	Balanced      bool  `json:"balanced"`
+
+	// What wallet_msat (spendable Spark leaves) excludes. UnclaimedDepositsMsat is
+	// nil (omitted) when the SDK query fails; TokenBalances is omitted when empty.
+	UnclaimedDepositsMsat *int64            `json:"unclaimed_deposits_msat,omitempty"`
+	TokenBalances         map[string]string `json:"token_balances,omitempty"`
 
 	Liabilities ledgerLiabilities   `json:"liabilities"`
 	Equity      ledgerEquity        `json:"equity"`
