@@ -27,6 +27,10 @@ func (srv *Server) ServeAPI() {
 	strict := newRateLimiter(rate.Every(20*time.Second), 2).Middleware
 	api := newRateLimiter(rate.Every(5*time.Second), 50).Middleware
 	lnurl := newRateLimiter(rate.Every(5*time.Second), 8).Middleware
+	// The admin UI drives several calls per action (ledger load, refresh after a
+	// deposit/withdraw), so it needs a much higher budget than the public strict
+	// limiter. Still per-IP and bearer-gated.
+	adminLimit := newRateLimiter(rate.Every(200*time.Millisecond), 30).Middleware
 
 	mux := http.NewServeMux()
 
@@ -41,9 +45,9 @@ func (srv *Server) ServeAPI() {
 	mux.Handle("POST /status", api(http.HandlerFunc(srv.handleVoucherStatusBatch)))
 	mux.Handle("GET /config", api(http.HandlerFunc(srv.handleConfig)))
 
-	// Admin (strict rate limit + bearer auth)
+	// Admin (dedicated rate limit + bearer auth)
 	admin := func(h http.HandlerFunc) http.Handler {
-		return strict(srv.adminAuth(h))
+		return adminLimit(srv.adminAuth(h))
 	}
 	mux.Handle("GET /admin/ledger", admin(srv.handleLedger))
 	mux.Handle("POST /admin/deposit", admin(srv.handleAdminDeposit))
