@@ -316,6 +316,23 @@ func initSchemaTables(db *sql.DB) error {
 			refund_code TEXT    NOT NULL,
 			share       INTEGER NOT NULL DEFAULT 1
 		)`,
+
+		`CREATE TABLE IF NOT EXISTS operator_txs (
+			id              INTEGER PRIMARY KEY,
+			kind            TEXT    NOT NULL,
+			status          TEXT    NOT NULL,
+			amount_msat     INTEGER NOT NULL,
+			fee_msat        INTEGER NOT NULL DEFAULT 0,
+			pr              TEXT    NOT NULL DEFAULT "",
+			destination     TEXT    NOT NULL DEFAULT "",
+			payment_id      TEXT    NOT NULL DEFAULT "",
+			payment_hash    TEXT    NOT NULL DEFAULT "",
+			payment_preimage TEXT   NOT NULL DEFAULT "",
+			idempotency_key TEXT    NOT NULL DEFAULT "",
+			error_msg       TEXT    NOT NULL DEFAULT "",
+			created_at      INTEGER NOT NULL,
+			updated_at      INTEGER NOT NULL DEFAULT 0
+		)`,
 	}
 
 	for _, stmt := range stmts {
@@ -341,6 +358,8 @@ func initSchemaIndexes(db *sql.DB) error {
 		`CREATE INDEX        IF NOT EXISTS idx_refund_txs_refunded   ON refund_txs(refunded)`,
 		`CREATE INDEX        IF NOT EXISTS idx_refund_txs_voucher_id ON refund_txs(voucher_id)`,
 		`CREATE INDEX        IF NOT EXISTS idx_vrc_voucher_id        ON voucher_refund_codes(voucher_id)`,
+		`CREATE INDEX        IF NOT EXISTS idx_operator_txs_status   ON operator_txs(status)`,
+		`CREATE INDEX        IF NOT EXISTS idx_operator_txs_kind     ON operator_txs(kind)`,
 	}
 
 	for _, idx := range indexes {
@@ -1258,6 +1277,12 @@ type ledgerRedeemPending struct {
 type ledgerEquity struct {
 	Fees ledgerFees `json:"fees"`
 	Dust ledgerDust `json:"dust"`
+	// Confirmed operator deposit amounts (audit only — deposits fill a wallet hole,
+	// they are not booked as equity). WithdrawnMsat is the confirmed gross that left
+	// the wallet (amount + routing fee). AvailableMsat is what can still be paid out.
+	DepositsMsat  int64 `json:"deposits_msat"`
+	WithdrawnMsat int64 `json:"withdrawn_msat"`
+	AvailableMsat int64 `json:"available_msat"`
 }
 
 type ledgerFees struct {
@@ -1280,6 +1305,12 @@ type ledgerActivity struct {
 	RedeemTxs   ledgerRedeemActivity   `json:"redeem_txs"`
 	RefundTxs   ledgerRefundActivity   `json:"refund_txs"`
 	TransferTxs ledgerTransferActivity `json:"transfer_txs"`
+	OperatorTxs ledgerOperatorActivity `json:"operator_txs"`
+}
+
+type ledgerOperatorActivity struct {
+	PendingDeposits  ledgerCountMsat `json:"pending_deposits"`
+	PendingWithdraws ledgerCountMsat `json:"pending_withdraws"`
 }
 
 type ledgerFundActivity struct {
@@ -1351,7 +1382,8 @@ func heldMsat(b ledgerHeldBucket) int64 {
 
 // finalize fills derived totals and the wallet identity.
 // explained = active and inactive voucher balances + unpaid refunds (amount+fee)
-// + pending redeems (amount+fee) + fees + dust.
+// + pending redeems (amount+fee) + equity still available (fees + dust - withdrawn).
+// balanced means the wallet covers the books: imbalance >= 0 (surplus is OK).
 func (s *LedgerStatement) finalize(walletMsat int64) {
 	s.WalletMsat = walletMsat
 
@@ -1379,14 +1411,16 @@ func (s *LedgerStatement) finalize(walletMsat int64) {
 	s.Equity.Dust.TransferMsat = s.Activity.TransferTxs.DustMsat
 	s.Equity.Dust.TotalMsat = s.Equity.Dust.FundMsat + s.Equity.Dust.TransferMsat + s.Equity.Dust.RefundMsat
 
+	// Equity still on the books: historical fees + dust minus confirmed withdrawals.
+	s.Equity.AvailableMsat = s.Equity.Fees.TotalMsat + s.Equity.Dust.TotalMsat - s.Equity.WithdrawnMsat
+
 	s.ExplainedMsat = s.Liabilities.Vouchers.Active.BalanceMsat +
 		s.Liabilities.Vouchers.Inactive.BalanceMsat +
 		s.Liabilities.Refunds.HeldMsat +
 		s.Liabilities.RedeemsPending.HeldMsat +
-		s.Equity.Fees.TotalMsat +
-		s.Equity.Dust.TotalMsat
+		s.Equity.AvailableMsat
 	s.ImbalanceMsat = s.WalletMsat - s.ExplainedMsat
-	s.Balanced = s.ImbalanceMsat == 0
+	s.Balanced = s.ImbalanceMsat >= 0
 }
 
 func (srv *Server) getLedgerStats() (LedgerStatement, error) {
@@ -1407,7 +1441,10 @@ func (srv *Server) getLedgerStats() (LedgerStatement, error) {
 			rd.failed_count, rd.failed_msat,
 			f.pending_count, f.pending_msat,
 			f.confirmed_count, f.confirmed_msat, f.confirmed_fee, f.dust,
-			t.n, t.amount, t.fee, t.dust
+			t.n, t.amount, t.fee, t.dust,
+			op.dep_confirmed_msat, op.wd_confirmed_gross,
+			op.dep_pending_count, op.dep_pending_msat,
+			op.wd_pending_count, op.wd_pending_msat
 		FROM
 			(
 				SELECT
@@ -1492,7 +1529,17 @@ func (srv *Server) getLedgerStats() (LedgerStatement, error) {
 					COALESCE(SUM(fee_msat), 0) AS fee,
 					COALESCE(SUM(dust_msat), 0) AS dust
 				FROM transfer_txs
-			) t
+			) t,
+			(
+				SELECT
+					COALESCE(SUM(CASE WHEN kind = 'deposit' AND status = (SELECT confirmed FROM st) THEN amount_msat ELSE 0 END), 0) AS dep_confirmed_msat,
+					COALESCE(SUM(CASE WHEN kind = 'withdraw' AND status = (SELECT confirmed FROM st) THEN amount_msat + fee_msat ELSE 0 END), 0) AS wd_confirmed_gross,
+					COALESCE(SUM(CASE WHEN kind = 'deposit' AND status = (SELECT pending FROM st) THEN 1 ELSE 0 END), 0) AS dep_pending_count,
+					COALESCE(SUM(CASE WHEN kind = 'deposit' AND status = (SELECT pending FROM st) THEN amount_msat ELSE 0 END), 0) AS dep_pending_msat,
+					COALESCE(SUM(CASE WHEN kind = 'withdraw' AND status = (SELECT pending FROM st) THEN 1 ELSE 0 END), 0) AS wd_pending_count,
+					COALESCE(SUM(CASE WHEN kind = 'withdraw' AND status = (SELECT pending FROM st) THEN amount_msat ELSE 0 END), 0) AS wd_pending_msat
+				FROM operator_txs
+			) op
 	`, time.Now().Unix(), TxPending, TxConfirmed, TxFailed)
 
 	var s LedgerStatement
@@ -1540,6 +1587,12 @@ func (srv *Server) getLedgerStats() (LedgerStatement, error) {
 		&s.Activity.TransferTxs.AmountMsat,
 		&s.Activity.TransferTxs.FeeMsat,
 		&s.Activity.TransferTxs.DustMsat,
+		&s.Equity.DepositsMsat,
+		&s.Equity.WithdrawnMsat,
+		&s.Activity.OperatorTxs.PendingDeposits.Count,
+		&s.Activity.OperatorTxs.PendingDeposits.Msat,
+		&s.Activity.OperatorTxs.PendingWithdraws.Count,
+		&s.Activity.OperatorTxs.PendingWithdraws.Msat,
 	)
 	if err != nil {
 		return s, err

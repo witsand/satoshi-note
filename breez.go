@@ -47,7 +47,8 @@ func (l *SparkListener) OnEvent(e spark.SdkEvent) {
 	}
 }
 
-// onPaymentSucceeded credits a voucher for a paid fund invoice. The SDK refreshes
+// onPaymentSucceeded credits a voucher for a paid fund invoice, or confirms an
+// operator deposit when the invoice is not a voucher fund invoice. The SDK refreshes
 // its cached balance before emitting this event, so GetInfo reflects the payment.
 func (l *SparkListener) onPaymentSucceeded(p spark.Payment) {
 	if p.Details == nil {
@@ -74,6 +75,20 @@ func (l *SparkListener) onPaymentSucceeded(p spark.Payment) {
 		if err := l.srv.updateFundTxConfirmed(tx); err != nil {
 			slog.Error("update fund tx confirmed", "err", err)
 		}
+		return
+	}
+
+	// Not a voucher fund invoice — try an operator deposit for the same invoice.
+	var amountMsat int64
+	if p.Amount != nil {
+		amountMsat = p.Amount.Int64() * 1000
+	}
+	preimage := ""
+	if details.HtlcDetails.Preimage != nil {
+		preimage = *details.HtlcDetails.Preimage
+	}
+	if err := l.srv.confirmOperatorDepositByPR(details.Invoice, amountMsat, details.HtlcDetails.PaymentHash, preimage); err == nil {
+		slog.Info("operator deposit confirmed", "pr", details.Invoice, "amount_msat", amountMsat)
 	}
 }
 

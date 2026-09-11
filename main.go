@@ -54,6 +54,9 @@ func main() {
 	}
 	slog.Info("pending funding payments caught up")
 
+	srv.checkPendingOperatorDeposits()
+	srv.resolvePendingOperatorWithdraws()
+
 	srv.resolvePendingRedeemTxs()
 
 	if srv.cfg.refundActive {

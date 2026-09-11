@@ -683,6 +683,11 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 		lnurlError(w, http.StatusOK, "redeem is currently disabled")
 		return
 	}
+	if err := srv.payoutsPaused(); err != nil {
+		slog.Warn("redeem paused: wallet does not cover the books", "err", err)
+		lnurlError(w, http.StatusOK, "redeem is currently disabled")
+		return
+	}
 
 	secret := r.PathValue("secret")
 	if len(secret) > maxPathParamLen {
@@ -750,6 +755,11 @@ func (srv *Server) handleLNURLWithdraw(w http.ResponseWriter, r *http.Request) {
 
 func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Request) {
 	if !srv.cfg.redeemActive {
+		lnurlError(w, http.StatusOK, "redeem is currently disabled")
+		return
+	}
+	if err := srv.payoutsPaused(); err != nil {
+		slog.Warn("redeem paused: wallet does not cover the books", "err", err)
 		lnurlError(w, http.StatusOK, "redeem is currently disabled")
 		return
 	}
@@ -1100,63 +1110,6 @@ func (srv *Server) getCallbackAmount(r *http.Request, n int64) (int64, error) {
 		return 0, fmt.Errorf("amount out of range")
 	}
 	return msats, nil
-}
-
-func (srv *Server) handleLedger(w http.ResponseWriter, r *http.Request) {
-	infoResp, err := srv.ln.GetInfo(spark.GetInfoRequest{})
-	if err := sdkErr(err); err != nil {
-		slog.Error("get sdk info", "err", err)
-		lnurlError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-
-	stmt, err := srv.getLedgerStats()
-	if err != nil {
-		slog.Error("get ledger stats", "err", err)
-		lnurlError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-
-	stmt.finalize(int64(infoResp.BalanceSats) * 1000)
-
-	// BalanceSats covers only spendable Spark leaves. Surface what it excludes so
-	// the ledger can be reconciled against another wallet showing the same mnemonic:
-	// unclaimed on-chain deposits and any token balances are not part of wallet_msat.
-	stmt.UnclaimedDepositsMsat = srv.unclaimedDepositsMsat()
-	stmt.TokenBalances = tokenBalancesToJSON(infoResp.TokenBalances)
-
-	writeJSON(w, http.StatusOK, stmt)
-}
-
-// unclaimedDepositsMsat returns the total msat held in on-chain deposits the SDK has
-// not (yet) claimed into the Spark tree. Returns nil when the query fails — the field
-// is then omitted from the ledger response rather than reported as zero.
-func (srv *Server) unclaimedDepositsMsat() *int64 {
-	resp, rawErr := srv.ln.ListUnclaimedDeposits(spark.ListUnclaimedDepositsRequest{})
-	if err := sdkErr(rawErr); err != nil {
-		slog.Error("list unclaimed deposits", "err", err)
-		return nil
-	}
-	var total int64
-	for _, d := range resp.Deposits {
-		total += int64(d.AmountSats) * 1000
-	}
-	return &total
-}
-
-// tokenBalancesToJSON renders SDK token balances as decimal strings (u128 does not
-// survive JSON round-trips through float64). Nil when there are no tokens.
-func tokenBalancesToJSON(balances map[string]spark.TokenBalance) map[string]string {
-	if len(balances) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(balances))
-	for id, tb := range balances {
-		if tb.Balance != nil {
-			out[id] = tb.Balance.String()
-		}
-	}
-	return out
 }
 
 func (srv *Server) handleConfig(w http.ResponseWriter, r *http.Request) {

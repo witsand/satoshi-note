@@ -11,9 +11,10 @@ import (
 )
 
 type Config struct {
-	baseURL  string
-	mnemonic string
-	apiKey   string
+	baseURL     string
+	mnemonic    string
+	apiKey      string
+	adminSecret string
 
 	port                        string
 	network                     spark.Network
@@ -62,6 +63,9 @@ func loadConfig() (*Server, error) {
 	if cfg.apiKey == "" {
 		return nil, errMissingEnv("BREEZ_API_KEY")
 	}
+
+	// Optional. When unset, all /admin/* routes return 503.
+	cfg.adminSecret = os.Getenv("ADMIN_SECRET")
 
 	cfg.port = os.Getenv("PORT")
 	if cfg.port == "" {

@@ -131,3 +131,106 @@ func (srv *Server) checkPendingFundTXs() error {
 
 	return nil
 }
+
+// checkPendingOperatorDeposits confirms operator deposit invoices that were paid
+// while the server was down. Idempotent via the pending-status guard.
+func (srv *Server) checkPendingOperatorDeposits() {
+	txs, err := srv.getPendingOperatorTxs(operatorKindDeposit)
+	if err != nil {
+		slog.Error("startup: check pending operator deposits", "err", err)
+		return
+	}
+	if len(txs) == 0 {
+		return
+	}
+
+	byPR := make(map[string]operatorTxRow, len(txs))
+	since := uint64(time.Now().Unix())
+	for _, tx := range txs {
+		byPR[tx.PR] = tx
+		if since > uint64(tx.CreatedAt) {
+			since = uint64(tx.CreatedAt)
+		}
+	}
+
+	ps, err := srv.getPaymentsCompleted(since - fundTxLookbackSecs)
+	if err != nil {
+		slog.Error("startup: list payments for operator deposits", "err", err)
+		return
+	}
+
+	for _, p := range ps {
+		if p.Details == nil {
+			continue
+		}
+		details, ok := (*p.Details).(spark.PaymentDetailsLightning)
+		if !ok {
+			continue
+		}
+		tx, yes := byPR[details.Invoice]
+		if !yes {
+			continue
+		}
+		var amountMsat int64
+		if p.Amount != nil {
+			amountMsat = p.Amount.Int64() * 1000
+		}
+		preimage := ""
+		if details.HtlcDetails.Preimage != nil {
+			preimage = *details.HtlcDetails.Preimage
+		}
+		if err := srv.confirmOperatorDepositByPR(details.Invoice, amountMsat, details.HtlcDetails.PaymentHash, preimage); err == nil {
+			slog.Info("startup: confirmed operator deposit", "id", tx.ID, "amount_msat", amountMsat)
+		}
+	}
+}
+
+// resolvePendingOperatorWithdraws settles withdraw rows left pending by a crash.
+// A row with a payment id is resolved via GetPayment (completed -> confirmed, failed
+// -> failed). A row without one never reached the SDK send, so it is marked failed
+// (no sats left; equity is not stuck).
+func (srv *Server) resolvePendingOperatorWithdraws() {
+	txs, err := srv.getPendingOperatorTxs(operatorKindWithdraw)
+	if err != nil {
+		slog.Error("startup: check pending operator withdraws", "err", err)
+		return
+	}
+	for _, tx := range txs {
+		if tx.PaymentID == "" {
+			if err := srv.markOperatorTxFailed(tx.ID, "interrupted before payment was sent"); err != nil {
+				slog.Error("startup: mark operator withdraw failed", "id", tx.ID, "err", err)
+			}
+			continue
+		}
+
+		resp, rawErr := srv.ln.GetPayment(spark.GetPaymentRequest{PaymentId: tx.PaymentID})
+		if err := sdkErr(rawErr); err != nil {
+			slog.Warn("startup: could not resolve operator withdraw via GetPayment — manual review required",
+				"id", tx.ID, "payment_id", tx.PaymentID, "err", err)
+			continue
+		}
+
+		switch resp.Payment.Status {
+		case spark.PaymentStatusCompleted:
+			var actualFeeMsat int64
+			if resp.Payment.Fees != nil {
+				actualFeeMsat = resp.Payment.Fees.Int64() * 1000
+			}
+			hash, preimage := paymentHashPreimage(resp.Payment.Details)
+			if err := srv.markOperatorTxConfirmed(tx.ID, actualFeeMsat, hash, preimage); err != nil {
+				slog.Error("startup: mark operator withdraw confirmed", "id", tx.ID, "err", err)
+				continue
+			}
+			slog.Info("startup: resolved operator withdraw as confirmed", "id", tx.ID, "payment_id", tx.PaymentID)
+		case spark.PaymentStatusFailed:
+			if err := srv.markOperatorTxFailed(tx.ID, "payment failed (resolved at startup)"); err != nil {
+				slog.Error("startup: mark operator withdraw failed", "id", tx.ID, "err", err)
+				continue
+			}
+			slog.Info("startup: resolved operator withdraw as failed", "id", tx.ID, "payment_id", tx.PaymentID)
+		default:
+			slog.Warn("startup: operator withdraw still in flight at the SDK — manual review required",
+				"id", tx.ID, "payment_id", tx.PaymentID, "status", resp.Payment.Status)
+		}
+	}
+}

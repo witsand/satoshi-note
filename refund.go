@@ -432,6 +432,13 @@ func (srv *Server) warnInFlightRefunds() {
 }
 
 func (srv *Server) doPendingRefunds() {
+	// Do not pay refunds while the wallet cannot cover the books — those sats are
+	// already claimed by vouchers/refunds. Retry on the next interval after a deposit.
+	if err := srv.payoutsPaused(); err != nil {
+		slog.Warn("refund worker: payouts paused, skipping refunds", "err", err)
+		return
+	}
+
 	if srv.cfg.retryAbandonedRefunds {
 		if err := srv.requeueAbandonedRefunds(); err != nil {
 			slog.Error("refund worker: requeue abandoned refunds", "err", err)
