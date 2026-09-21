@@ -578,9 +578,10 @@ func (srv *Server) payRefund(rt RefundTx) error {
 		return fmt.Errorf("lnurl pay: %w", err)
 	}
 
-	// True cost beyond the refund amount; Payment.Fees alone would under-book a
-	// Spark-transfer send (Fees == 0, fee in Payment.Amount) — see sendCostMsat.
-	actualFeeMsat := sendCostMsat(lnurlPayResp.Payment, rt.AmountMsat)
+	// True fee paid for the send. LNURL-pay only quotes a Lightning fee, which is
+	// also the fallback should the SDK ever route this over Spark — see
+	// actualSendFeeMsat.
+	actualFeeMsat := actualSendFeeMsat(lnurlPayResp.Payment, estimateFeeMsat)
 
 	if lnurlPayResp.Payment.Status != spark.PaymentStatusCompleted {
 		slog.Warn("refund worker: lnurl pay returned non-completed status",

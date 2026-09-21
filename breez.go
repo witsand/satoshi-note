@@ -104,29 +104,21 @@ func u128OrNil(v *big.Int) any {
 	return v.Int64()
 }
 
-// sendCostMsat returns the true msat cost of a completed send beyond the invoice
-// amount: the wallet's total spend (Payment.Amount + Payment.Fees) minus the
-// invoice amount. For a Lightning send the fee is reported in Payment.Fees and
-// Payment.Amount is the invoice amount; for a Spark-transfer send Payment.Fees is
-// 0 and the transfer fee is baked into Payment.Amount (the SDK's transfer→payment
-// conversion only separates the fee for LightningSendRequest). Reading
-// Payment.Fees alone would report 0 for Spark transfers and under-book the cost,
-// leaking the fee from the ledger identity (explained > wallet by the unbooked
-// fee, driving imbalance negative on every Spark-paid redeem/refund/withdraw).
-func sendCostMsat(p spark.Payment, invoiceAmountMsat int64) int64 {
-	if p.Amount == nil {
-		// No amount recorded — fall back to the reported fee alone.
-		if p.Fees != nil {
-			return p.Fees.Int64() * 1000
-		}
-		return 0
+// actualSendFeeMsat returns the true msat fee paid for a completed send. For a
+// Lightning send the SDK reports the charged routing fee in Payment.Fees. For a
+// Spark-transfer send the fee is NOT itemized on the payment — Payment.Fees is 0
+// and Payment.Amount is only the recipient amount, the transfer fee being a
+// separate wallet outflow — so the Spark transfer fee quoted at prepare time
+// (sparkQuoteMsat) is used instead. Booking 0 for a Spark send would credit equity
+// with the full reserved fee while the wallet spent amount + fee, leaking the fee
+// from the ledger identity (explained > wallet, driving imbalance negative on
+// every Spark-paid redeem/refund/withdraw).
+func actualSendFeeMsat(p spark.Payment, sparkQuoteMsat int64) int64 {
+	if p.Method == spark.PaymentMethodSpark {
+		return sparkQuoteMsat
 	}
-	totalMsat := p.Amount.Int64() * 1000
 	if p.Fees != nil {
-		totalMsat += p.Fees.Int64() * 1000
-	}
-	if cost := totalMsat - invoiceAmountMsat; cost > 0 {
-		return cost
+		return p.Fees.Int64() * 1000
 	}
 	return 0
 }

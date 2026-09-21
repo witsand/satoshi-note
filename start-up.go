@@ -56,7 +56,9 @@ func (srv *Server) resolvePendingRedeemTxs() {
 
 		switch resp.Payment.Status {
 		case spark.PaymentStatusCompleted:
-			actualFeeMsat := sendCostMsat(resp.Payment, msat)
+			// No prepare quote available on this crash-recovery path, so a
+			// Spark-paid send resolves with fee 0 (best-effort; Lightning is exact).
+			actualFeeMsat := actualSendFeeMsat(resp.Payment, 0)
 			if err := srv.updateRedeemTx(id, TxConfirmed, lnFee-actualFeeMsat, actualFeeMsat, ""); err != nil {
 				slog.Error("startup: mark resolved redeem tx confirmed", "id", id, "err", err)
 				continue
@@ -215,7 +217,9 @@ func (srv *Server) resolvePendingOperatorWithdraws() {
 
 		switch resp.Payment.Status {
 		case spark.PaymentStatusCompleted:
-			actualFeeMsat := sendCostMsat(resp.Payment, tx.AmountMsat)
+			// No prepare quote available on this crash-recovery path, so a
+			// Spark-paid send resolves with fee 0 (best-effort; Lightning is exact).
+			actualFeeMsat := actualSendFeeMsat(resp.Payment, 0)
 			hash, preimage := paymentHashPreimage(resp.Payment.Details)
 			if err := srv.markOperatorTxConfirmed(tx.ID, actualFeeMsat, hash, preimage); err != nil {
 				slog.Error("startup: mark operator withdraw confirmed", "id", tx.ID, "err", err)

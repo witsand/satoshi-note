@@ -312,6 +312,10 @@ func (srv *Server) sendAdminWithdrawBolt11(w http.ResponseWriter, requestedMsat,
 		return fmt.Errorf("zero-amount invoices are not supported")
 	}
 	estimateFeeMsat := int64(pm.LightningFeeSats) * 1000
+	var sparkFeeMsat int64
+	if pm.SparkTransferFeeSats != nil {
+		sparkFeeMsat = int64(*pm.SparkTransferFeeSats) * 1000
+	}
 	invoiceAmountMsat := int64(*pm.InvoiceDetails.AmountMsat)
 
 	// bolt11 invoices carry their own amount, which always wins.
@@ -341,7 +345,7 @@ func (srv *Server) sendAdminWithdrawBolt11(w http.ResponseWriter, requestedMsat,
 		return fmt.Errorf("send payment: %w", sendErr)
 	}
 
-	actualFeeMsat := sendCostMsat(sendResp.Payment, amountMsat)
+	actualFeeMsat := actualSendFeeMsat(sendResp.Payment, sparkFeeMsat)
 	if err := srv.setOperatorTxPaymentID(id, sendResp.Payment.Id); err != nil {
 		slog.Error("store operator withdraw payment id", "id", id, "err", err)
 	}
@@ -404,7 +408,7 @@ func (srv *Server) sendAdminWithdrawLnurl(w http.ResponseWriter, requestedMsat, 
 		return fmt.Errorf("lnurl pay: %w", err)
 	}
 
-	actualFeeMsat := sendCostMsat(lnurlPayResp.Payment, amountMsat)
+	actualFeeMsat := actualSendFeeMsat(lnurlPayResp.Payment, finalFeeMsat)
 	if err := srv.setOperatorTxPaymentID(id, lnurlPayResp.Payment.Id); err != nil {
 		slog.Error("store operator withdraw payment id", "id", id, "err", err)
 	}

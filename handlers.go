@@ -818,6 +818,7 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 	}
 
 	var estimateFeeMsat int64
+	var sparkFeeMsat int64
 	var amountMsat int64
 	switch pm := prepResp.PaymentMethod.(type) {
 	case spark.SendPaymentMethodBolt11Invoice:
@@ -826,6 +827,9 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 			return
 		}
 		estimateFeeMsat = int64(pm.LightningFeeSats) * 1000
+		if pm.SparkTransferFeeSats != nil {
+			sparkFeeMsat = int64(*pm.SparkTransferFeeSats) * 1000
+		}
 		amountMsat = int64(*pm.InvoiceDetails.AmountMsat)
 	default:
 		slog.Error("unsupported payment method", "type", fmt.Sprintf("%T", prepResp.PaymentMethod))
@@ -895,10 +899,10 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// True cost of the send beyond the invoice amount. Payment.Fees alone would
-	// under-book a Spark-transfer send (fee baked into Payment.Amount, Fees == 0)
-	// and leak the fee from the ledger identity — see sendCostMsat.
-	actualFeeMsat := sendCostMsat(sendResp.Payment, amountMsat)
+	// True fee paid for the send. A Spark-transfer send does not itemize its fee on
+	// the payment (Payment.Fees == 0), so the prepare-time Spark quote is used for
+	// those — see actualSendFeeMsat.
+	actualFeeMsat := actualSendFeeMsat(sendResp.Payment, sparkFeeMsat)
 
 	// Store the SDK payment id BEFORE marking confirmed, so a crash in between
 	// leaves a pending row that can be resolved via GetPayment at startup.
