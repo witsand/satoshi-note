@@ -578,10 +578,9 @@ func (srv *Server) payRefund(rt RefundTx) error {
 		return fmt.Errorf("lnurl pay: %w", err)
 	}
 
-	var actualFeeMsat int64
-	if lnurlPayResp.Payment.Fees != nil {
-		actualFeeMsat = lnurlPayResp.Payment.Fees.Int64() * 1000
-	}
+	// True cost beyond the refund amount; Payment.Fees alone would under-book a
+	// Spark-transfer send (Fees == 0, fee in Payment.Amount) — see sendCostMsat.
+	actualFeeMsat := sendCostMsat(lnurlPayResp.Payment, rt.AmountMsat)
 
 	if lnurlPayResp.Payment.Status != spark.PaymentStatusCompleted {
 		slog.Warn("refund worker: lnurl pay returned non-completed status",

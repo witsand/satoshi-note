@@ -895,10 +895,10 @@ func (srv *Server) handleLNURLWithdrawCallback(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var actualFeeMsat int64
-	if sendResp.Payment.Fees != nil {
-		actualFeeMsat = sendResp.Payment.Fees.Int64() * 1000
-	}
+	// True cost of the send beyond the invoice amount. Payment.Fees alone would
+	// under-book a Spark-transfer send (fee baked into Payment.Amount, Fees == 0)
+	// and leak the fee from the ledger identity — see sendCostMsat.
+	actualFeeMsat := sendCostMsat(sendResp.Payment, amountMsat)
 
 	// Store the SDK payment id BEFORE marking confirmed, so a crash in between
 	// leaves a pending row that can be resolved via GetPayment at startup.
@@ -962,7 +962,7 @@ func (srv *Server) updateFundTxConfirmed(tx *FundTx) error {
 	}
 	defer dbTx.Rollback()
 
-	if err := updateFundTXStatus(dbTx, tx.Key, TxConfirmed, tx.PaymentHash, tx.PaymentPreimage); err != nil {
+	if err := updateFundTXStatus(dbTx, tx.Key, TxConfirmed, tx.Msat, tx.FeeMsat, tx.PaymentHash, tx.PaymentPreimage); err != nil {
 		if errors.Is(err, errFundTxNotPending) {
 			// Already confirmed — the same paid invoice was seen twice (e.g. the
 			// payment-succeeded event plus the startup catch-up). No-op so a

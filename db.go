@@ -551,11 +551,14 @@ func (srv *Server) insertFundTX(tx *FundTx) error {
 	return err
 }
 
-func updateFundTXStatus(dbTx *sql.Tx, key string, status TxStatus, paymentHash, paymentPreimage string) error {
+// updateFundTXStatus flips a pending fund tx to its final status and records the
+// actual paid amount and receive fee reported by the SDK (at creation the row holds
+// the invoice amount and the estimated fee; the actuals can differ).
+func updateFundTXStatus(dbTx *sql.Tx, key string, status TxStatus, msat, feeMsat int64, paymentHash, paymentPreimage string) error {
 	res, err := dbTx.Exec(`
-		UPDATE fund_txs SET status = ?, payment_hash = ?, payment_preimage = ?, updated_at = ?
+		UPDATE fund_txs SET status = ?, msat = ?, fee_msat = ?, payment_hash = ?, payment_preimage = ?, updated_at = ?
 		WHERE key = ? AND status = ?`,
-		status, paymentHash, paymentPreimage, time.Now().Unix(), key, TxPending)
+		status, msat, feeMsat, paymentHash, paymentPreimage, time.Now().Unix(), key, TxPending)
 	if err != nil {
 		return err
 	}
@@ -1285,12 +1288,16 @@ type ledgerEquity struct {
 	AvailableMsat int64 `json:"available_msat"`
 }
 
+// ledgerFees holds operator-earned fee income. Fund receive fees are deliberately
+// absent: the Spark SSP deducts them from the payment before the sats reach the
+// wallet (the funder bears the cost — their voucher is credited amount − fee), so
+// they were never wallet-backed income. They remain visible as a cost under
+// activity.fund_txs.confirmed.fee_msat.
 type ledgerFees struct {
-	FundReceiveMsat int64 `json:"fund_receive_msat"`
-	TransferMsat    int64 `json:"transfer_msat"`
-	RedeemNetMsat   int64 `json:"redeem_net_msat"`
-	RefundNetMsat   int64 `json:"refund_net_msat"`
-	TotalMsat       int64 `json:"total_msat"`
+	TransferMsat  int64 `json:"transfer_msat"`
+	RedeemNetMsat int64 `json:"redeem_net_msat"`
+	RefundNetMsat int64 `json:"refund_net_msat"`
+	TotalMsat     int64 `json:"total_msat"`
 }
 
 type ledgerDust struct {
@@ -1384,6 +1391,9 @@ func heldMsat(b ledgerHeldBucket) int64 {
 // explained = active and inactive voucher balances + unpaid refunds (amount+fee)
 // + pending redeems (amount+fee) + equity still available (fees + dust - withdrawn).
 // balanced means the wallet covers the books: imbalance >= 0 (surplus is OK).
+// Equity counts only wallet-backed income: transfer fees, redeem/refund net fees
+// (reserved minus actual routing cost) and rounding dust. Fund receive fees are
+// excluded — see ledgerFees.
 func (s *LedgerStatement) finalize(walletMsat int64) {
 	s.WalletMsat = walletMsat
 
@@ -1398,12 +1408,10 @@ func (s *LedgerStatement) finalize(walletMsat int64) {
 	s.Activity.RedeemTxs.Pending.Msat = s.Liabilities.RedeemsPending.AmountMsat
 	s.Activity.RedeemTxs.Pending.FeeReservedMsat = s.Liabilities.RedeemsPending.FeeReservedMsat
 
-	s.Equity.Fees.FundReceiveMsat = s.Activity.FundTxs.Confirmed.FeeMsat
 	s.Equity.Fees.TransferMsat = s.Activity.TransferTxs.FeeMsat
 	s.Equity.Fees.RedeemNetMsat = s.Activity.RedeemTxs.Confirmed.ServiceFeeMsat - s.Activity.RedeemTxs.Confirmed.LnFeeMsat
 	s.Equity.Fees.RefundNetMsat = s.Activity.RefundTxs.Paid.ServiceFeeMsat - s.Activity.RefundTxs.Paid.LnFeeMsat
-	s.Equity.Fees.TotalMsat = s.Equity.Fees.FundReceiveMsat +
-		s.Equity.Fees.TransferMsat +
+	s.Equity.Fees.TotalMsat = s.Equity.Fees.TransferMsat +
 		s.Equity.Fees.RedeemNetMsat +
 		s.Equity.Fees.RefundNetMsat
 

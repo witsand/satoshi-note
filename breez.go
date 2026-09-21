@@ -63,10 +63,14 @@ func (l *SparkListener) onPaymentSucceeded(p spark.Payment) {
 	tx, err := l.srv.getFundTxByPR(details.Invoice)
 	if err == nil {
 		if p.Amount != nil {
-			tx.Msat = p.Amount.Int64() * 1000
-		}
-		if p.Fees != nil {
-			tx.FeeMsat = p.Fees.Int64() * 1000
+			// The SDK credits us net of the receive fee (the SSP deducts it before the
+			// payment reaches our leaves), so Payment.Amount is what actually arrived.
+			// The actual receive fee is the invoice amount minus what arrived. Keep
+			// tx.Msat as the invoice amount so the row reflects what the funder paid;
+			// updateFundBalance credits tx.Msat - tx.FeeMsat = net either way.
+			if fee := tx.Msat - p.Amount.Int64()*1000; fee >= 0 {
+				tx.FeeMsat = fee
+			}
 		}
 		tx.PaymentHash = details.HtlcDetails.PaymentHash
 		if details.HtlcDetails.Preimage != nil {
@@ -98,6 +102,33 @@ func u128OrNil(v *big.Int) any {
 		return nil
 	}
 	return v.Int64()
+}
+
+// sendCostMsat returns the true msat cost of a completed send beyond the invoice
+// amount: the wallet's total spend (Payment.Amount + Payment.Fees) minus the
+// invoice amount. For a Lightning send the fee is reported in Payment.Fees and
+// Payment.Amount is the invoice amount; for a Spark-transfer send Payment.Fees is
+// 0 and the transfer fee is baked into Payment.Amount (the SDK's transfer→payment
+// conversion only separates the fee for LightningSendRequest). Reading
+// Payment.Fees alone would report 0 for Spark transfers and under-book the cost,
+// leaking the fee from the ledger identity (explained > wallet by the unbooked
+// fee, driving imbalance negative on every Spark-paid redeem/refund/withdraw).
+func sendCostMsat(p spark.Payment, invoiceAmountMsat int64) int64 {
+	if p.Amount == nil {
+		// No amount recorded — fall back to the reported fee alone.
+		if p.Fees != nil {
+			return p.Fees.Int64() * 1000
+		}
+		return 0
+	}
+	totalMsat := p.Amount.Int64() * 1000
+	if p.Fees != nil {
+		totalMsat += p.Fees.Int64() * 1000
+	}
+	if cost := totalMsat - invoiceAmountMsat; cost > 0 {
+		return cost
+	}
+	return 0
 }
 
 // paymentDetailsType names the payment details variant for logging.

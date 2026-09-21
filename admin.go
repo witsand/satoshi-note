@@ -104,9 +104,10 @@ func tokenBalancesToJSON(balances map[string]spark.TokenBalance) map[string]stri
 }
 
 // handleAdminDeposit creates a bolt11 invoice the operator pays from a DIFFERENT
-// wallet to top up a deficit. Default amount is the current deficit (sat-rounded).
-// The deposit is not booked as equity — it only raises wallet_msat so imbalance
-// returns to >= 0.
+// wallet to top up a deficit. Default amount is the current deficit (sat-rounded),
+// grossed up by the estimated receive fee so the wallet actually receives the
+// deficit. The deposit is not booked as equity — it only raises wallet_msat so
+// imbalance returns to >= 0.
 func (srv *Server) handleAdminDeposit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AmountMsat int64 `json:"amount_msat"`
@@ -147,6 +148,20 @@ func (srv *Server) handleAdminDeposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The receive fee is deducted from the paid amount before the sats reach the
+	// wallet, so an invoice for exactly the deficit would under-fill it by the fee.
+	// When filling the deficit (blank amount), gross up by the estimated fee; an
+	// explicit amount_msat is left as requested.
+	if req.AmountMsat == 0 && tx.FeeMsat > 0 {
+		grossed := &FundTx{Msat: amountMsat + satRound(tx.FeeMsat)}
+		if err := srv.getCallbackBolt11(grossed, "Operator deposit"); err != nil {
+			slog.Error("create grossed-up deposit invoice", "err", err)
+			lnurlError(w, http.StatusInternalServerError, "failed to create invoice")
+			return
+		}
+		tx = grossed
+	}
+
 	id, err := srv.insertOperatorTx(operatorKindDeposit, tx.Msat, tx.FeeMsat, tx.PR, "")
 	if err != nil {
 		slog.Error("insert operator deposit", "err", err)
@@ -155,10 +170,11 @@ func (srv *Server) handleAdminDeposit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id":           id,
-		"pr":           tx.PR,
-		"amount_msat":  tx.Msat,
-		"deficit_msat": deficitMsat,
+		"id":                        id,
+		"pr":                        tx.PR,
+		"amount_msat":               tx.Msat,
+		"deficit_msat":              deficitMsat,
+		"receive_fee_estimate_msat": tx.FeeMsat,
 	})
 }
 
@@ -325,10 +341,7 @@ func (srv *Server) sendAdminWithdrawBolt11(w http.ResponseWriter, requestedMsat,
 		return fmt.Errorf("send payment: %w", sendErr)
 	}
 
-	var actualFeeMsat int64
-	if sendResp.Payment.Fees != nil {
-		actualFeeMsat = sendResp.Payment.Fees.Int64() * 1000
-	}
+	actualFeeMsat := sendCostMsat(sendResp.Payment, amountMsat)
 	if err := srv.setOperatorTxPaymentID(id, sendResp.Payment.Id); err != nil {
 		slog.Error("store operator withdraw payment id", "id", id, "err", err)
 	}
@@ -391,10 +404,7 @@ func (srv *Server) sendAdminWithdrawLnurl(w http.ResponseWriter, requestedMsat, 
 		return fmt.Errorf("lnurl pay: %w", err)
 	}
 
-	var actualFeeMsat int64
-	if lnurlPayResp.Payment.Fees != nil {
-		actualFeeMsat = lnurlPayResp.Payment.Fees.Int64() * 1000
-	}
+	actualFeeMsat := sendCostMsat(lnurlPayResp.Payment, amountMsat)
 	if err := srv.setOperatorTxPaymentID(id, lnurlPayResp.Payment.Id); err != nil {
 		slog.Error("store operator withdraw payment id", "id", id, "err", err)
 	}

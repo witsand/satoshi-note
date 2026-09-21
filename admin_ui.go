@@ -228,7 +228,6 @@ function renderLedger(s) {
     stat("Withdrawn (all time)", fmtMsat(E.withdrawn_msat)) +
     stat("Deposits (all time)", fmtMsat(E.deposits_msat)) +
     stat("Fees total", fmtMsat(E.fees && E.fees.total_msat)) +
-    stat("· fund receive", fmtMsat(E.fees && E.fees.fund_receive_msat)) +
     stat("· transfer", fmtMsat(E.fees && E.fees.transfer_msat)) +
     stat("· redeem net", fmtMsat(E.fees && E.fees.redeem_net_msat)) +
     stat("· refund net", fmtMsat(E.fees && E.fees.refund_net_msat)) +
@@ -240,6 +239,7 @@ function renderLedger(s) {
     '<div class="grid">' +
     stat("Fund confirmed", (f.confirmed && f.confirmed.count) || 0) +
     stat("Fund confirmed amount", fmtMsat(f.confirmed && f.confirmed.msat)) +
+    stat("Fund receive fees (cost, not equity)", fmtMsat(f.confirmed && f.confirmed.fee_msat)) +
     stat("Fund pending", (f.pending && f.pending.count) || 0) +
     stat("Redeem confirmed", (rt.confirmed && rt.confirmed.count) || 0) +
     stat("Redeem failed", (rt.failed && rt.failed.count) || 0) +
@@ -280,7 +280,8 @@ async function doDeposit() {
     const r = await api("/admin/deposit", { method: "POST", body: JSON.stringify(body) });
     el.innerHTML = '<div class="msg ok">Invoice created — pay it from a different wallet.</div>' +
       '<div class="inv">' + esc(r.pr) + "</div>" +
-      '<div class="msg">Amount: ' + fmtMsat(r.amount_msat) + " · deficit: " + fmtMsat(r.deficit_msat) + "</div>";
+      '<div class="msg">Amount: ' + fmtMsat(r.amount_msat) + " · deficit: " + fmtMsat(r.deficit_msat) +
+      (r.receive_fee_estimate_msat ? " · receive fee est: " + fmtMsat(r.receive_fee_estimate_msat) : "") + "</div>";
     loadLedger();
   } catch (e) { out(el, e.message, true); }
   $("depGo").disabled = false;

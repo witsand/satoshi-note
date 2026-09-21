@@ -56,10 +56,7 @@ func (srv *Server) resolvePendingRedeemTxs() {
 
 		switch resp.Payment.Status {
 		case spark.PaymentStatusCompleted:
-			var actualFeeMsat int64
-			if resp.Payment.Fees != nil {
-				actualFeeMsat = resp.Payment.Fees.Int64() * 1000
-			}
+			actualFeeMsat := sendCostMsat(resp.Payment, msat)
 			if err := srv.updateRedeemTx(id, TxConfirmed, lnFee-actualFeeMsat, actualFeeMsat, ""); err != nil {
 				slog.Error("startup: mark resolved redeem tx confirmed", "id", id, "err", err)
 				continue
@@ -117,8 +114,14 @@ func (srv *Server) checkPendingFundTXs() error {
 
 		if details, ok := (*p.Details).(spark.PaymentDetailsLightning); ok {
 			if tx, yes := txMap[details.Invoice]; yes {
-				tx.Msat = p.Amount.Int64() * 1000
-				tx.FeeMsat = p.Fees.Int64() * 1000
+				// Same receive-fee derivation as the event path: Payment.Amount is net
+				// of the fee the SSP deducted, so the actual fee is invoice − net. This
+				// also avoids dereferencing p.Fees, which is nil for a zero-fee receive.
+				if p.Amount != nil {
+					if fee := tx.Msat - p.Amount.Int64()*1000; fee >= 0 {
+						tx.FeeMsat = fee
+					}
+				}
 				tx.PaymentHash = details.HtlcDetails.PaymentHash
 				tx.PaymentPreimage = *details.HtlcDetails.Preimage
 
@@ -212,10 +215,7 @@ func (srv *Server) resolvePendingOperatorWithdraws() {
 
 		switch resp.Payment.Status {
 		case spark.PaymentStatusCompleted:
-			var actualFeeMsat int64
-			if resp.Payment.Fees != nil {
-				actualFeeMsat = resp.Payment.Fees.Int64() * 1000
-			}
+			actualFeeMsat := sendCostMsat(resp.Payment, tx.AmountMsat)
 			hash, preimage := paymentHashPreimage(resp.Payment.Details)
 			if err := srv.markOperatorTxConfirmed(tx.ID, actualFeeMsat, hash, preimage); err != nil {
 				slog.Error("startup: mark operator withdraw confirmed", "id", tx.ID, "err", err)
